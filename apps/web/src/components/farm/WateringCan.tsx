@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../../lib/assets';
+import { sounds } from '../../lib/sounds';
 
 interface WateringCanProps {
   waterAmount: number;
@@ -93,7 +94,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
       <motion.button
         className="relative w-[96px] h-[96px] rounded-full bg-blue-100/80 backdrop-blur-sm flex items-center justify-center shadow-md border-2 border-white/60"
         whileTap={canDoSelected ? { scale: 0.88 } : {}}
-        onClick={() => canDoSelected && onWater(selectedBatch)}
+        onClick={() => { if (canDoSelected) { sounds.waterDrip(); onWater(selectedBatch); } }}
         disabled={!canDoSelected}
         animate={
           shaking

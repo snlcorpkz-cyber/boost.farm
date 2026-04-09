@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../../lib/assets';
+import { sounds } from '../../lib/sounds';
 
 interface StageCelebrationProps {
   active: boolean;
@@ -99,6 +100,7 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
       return;
     }
     setPhase('effects');
+    sounds.celebration();
     const modalTimer = setTimeout(() => setPhase('modal'), EFFECTS_DURATION);
     return () => clearTimeout(modalTimer);
   }, [active]);

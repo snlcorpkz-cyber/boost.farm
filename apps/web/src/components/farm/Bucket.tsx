@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { UI } from '../../lib/assets';
+import { sounds } from '../../lib/sounds';
 
 interface BucketProps {
   fillPercent: number;
@@ -27,6 +28,7 @@ export default function Bucket({
 
   const handleTap = () => {
     if (isCollecting || bucketLevel < 0.01 || shaking) return;
+    sounds.bucketPour();
     setShaking(true);
     onShakeCan();
     setTimeout(() => {

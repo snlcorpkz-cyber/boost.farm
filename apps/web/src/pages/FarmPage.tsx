@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { useFarm, useCollectBucket, useWater } from '../hooks/useFarm';
 import { useBucketTimer } from '../hooks/useBucketTimer';
 import { usePhase } from '../hooks/usePhase';
 import { api } from '../lib/api';
+import { sounds } from '../lib/sounds';
 import { AVATAR_IMAGES, PET_IMAGES, HAMSTER_FRAMES, MONKEY_FRAMES, RABBIT_FRAMES, UI, getCropBase } from '../lib/assets';
 import Background from '../components/farm/Background';
 import Plant, { getPlantLayout } from '../components/farm/Plant';
@@ -47,6 +48,16 @@ export default function FarmPage() {
   const [showChallengeModal, setShowChallengeModal] = useState(false);
   const [challengeRewardAmount, setChallengeRewardAmount] = useState(0);
   const prevStageRef = useRef<number | null>(null);
+  const soundEnabled = useSyncExternalStore(
+    (cb) => sounds.subscribe(cb),
+    () => sounds.enabled,
+  );
+
+  useEffect(() => {
+    const startBg = () => { sounds.initBackground(); document.removeEventListener('pointerdown', startBg); };
+    document.addEventListener('pointerdown', startBg);
+    return () => document.removeEventListener('pointerdown', startBg);
+  }, []);
 
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
@@ -80,6 +91,7 @@ export default function FarmPage() {
       qc.invalidateQueries({ queryKey: ['farm'] });
       setChallengeRewardAmount(res.rewardAmount);
       setShowChallengeModal(true);
+      sounds.rewardChime();
       showReward('water', res.rewardAmount);
     },
   });
@@ -247,7 +259,26 @@ export default function FarmPage() {
             </span>
           </div>
 
-          <div className="w-9" />
+          <button
+            className="relative w-9 h-9 rounded-full bg-white/70 backdrop-blur-sm flex items-center justify-center shadow-sm border border-white/50"
+            onClick={() => sounds.toggle()}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={soundEnabled ? 'text-gray-700' : 'text-gray-400'}>
+              {soundEnabled ? (
+                <>
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </>
+              ) : (
+                <>
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </>
+              )}
+            </svg>
+          </button>
         </div>
 
         {/* ═══ DAILY CHALLENGE WIDGET ═══ */}
