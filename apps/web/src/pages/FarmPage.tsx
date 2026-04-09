@@ -53,6 +53,12 @@ export default function FarmPage() {
     () => sounds.enabled,
   );
 
+  useEffect(() => {
+    const startBg = () => { sounds.initBackground(); document.removeEventListener('pointerdown', startBg); };
+    document.addEventListener('pointerdown', startBg);
+    return () => document.removeEventListener('pointerdown', startBg);
+  }, []);
+
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
 

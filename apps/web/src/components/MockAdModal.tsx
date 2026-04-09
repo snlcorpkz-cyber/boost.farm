@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
+import { sounds } from '../lib/sounds';
 
 export interface MockAdModalProps {
   open: boolean;
@@ -22,6 +23,7 @@ export default function MockAdModal({
 
   useEffect(() => {
     if (!open) return;
+    sounds.pauseBackground();
     setSecondsLeft(COUNTDOWN_START);
     let remaining = COUNTDOWN_START;
     const id = window.setInterval(() => {
@@ -29,7 +31,10 @@ export default function MockAdModal({
       setSecondsLeft(Math.max(0, remaining));
       if (remaining <= 0) window.clearInterval(id);
     }, 1000);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      sounds.resumeBackground();
+    };
   }, [open]);
 
   const progress = secondsLeft / COUNTDOWN_START;

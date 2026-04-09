@@ -1,9 +1,17 @@
 const STORAGE_KEY = 'eco_sound_on';
+const BG_MUSIC_URL = '/sounds/bg-music.mp3';
+const BG_VOLUME = 0.12;
+const CROSSFADE_SEC = 3;
 
 class SoundManager {
   private ctx: AudioContext | null = null;
   private _enabled: boolean;
   private listeners = new Set<() => void>();
+
+  private bgAudioA: HTMLAudioElement | null = null;
+  private bgAudioB: HTMLAudioElement | null = null;
+  private bgFadeTimer: number | null = null;
+  private bgStarted = false;
 
   constructor() {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -17,6 +25,11 @@ class SoundManager {
   toggle() {
     this._enabled = !this._enabled;
     localStorage.setItem(STORAGE_KEY, this._enabled ? '1' : '0');
+    if (this._enabled) {
+      this.resumeBackground();
+    } else {
+      this.pauseBackground();
+    }
     this.listeners.forEach((fn) => fn());
   }
 
@@ -41,6 +54,99 @@ class SoundManager {
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     return buf;
+  }
+
+  // ── Background music: seamless loop with crossfade ──
+
+  initBackground() {
+    if (this.bgStarted || !this._enabled) return;
+    this.bgStarted = true;
+
+    this.bgAudioA = this.createBgAudio();
+    this.bgAudioB = this.createBgAudio();
+
+    this.bgAudioA.volume = BG_VOLUME;
+    this.bgAudioA.play().catch(() => {});
+
+    this.scheduleCrossfade(this.bgAudioA, this.bgAudioB);
+  }
+
+  private createBgAudio(): HTMLAudioElement {
+    const audio = new Audio(BG_MUSIC_URL);
+    audio.preload = 'auto';
+    audio.loop = false;
+    audio.volume = 0;
+    return audio;
+  }
+
+  private scheduleCrossfade(current: HTMLAudioElement, next: HTMLAudioElement) {
+    const checkAndFade = () => {
+      if (!this.bgStarted) return;
+      if (!current.duration || current.paused) {
+        this.bgFadeTimer = window.setTimeout(checkAndFade, 500);
+        return;
+      }
+
+      const timeLeft = current.duration - current.currentTime;
+
+      if (timeLeft <= CROSSFADE_SEC && timeLeft > 0) {
+        next.currentTime = 0;
+        next.volume = 0;
+        next.play().catch(() => {});
+
+        const steps = 30;
+        const stepMs = (CROSSFADE_SEC * 1000) / steps;
+        let step = 0;
+
+        const fadeInterval = window.setInterval(() => {
+          step++;
+          const progress = step / steps;
+          current.volume = Math.max(0, BG_VOLUME * (1 - progress));
+          next.volume = BG_VOLUME * progress;
+
+          if (step >= steps) {
+            window.clearInterval(fadeInterval);
+            current.pause();
+            current.currentTime = 0;
+            this.scheduleCrossfade(next, current);
+          }
+        }, stepMs);
+        return;
+      }
+
+      const waitMs = Math.max(100, (timeLeft - CROSSFADE_SEC - 0.5) * 1000);
+      this.bgFadeTimer = window.setTimeout(checkAndFade, waitMs);
+    };
+
+    this.bgFadeTimer = window.setTimeout(checkAndFade, 1000);
+  }
+
+  pauseBackground() {
+    if (this.bgFadeTimer) {
+      window.clearTimeout(this.bgFadeTimer);
+      this.bgFadeTimer = null;
+    }
+    if (this.bgAudioA && !this.bgAudioA.paused) {
+      this.bgAudioA.pause();
+    }
+    if (this.bgAudioB && !this.bgAudioB.paused) {
+      this.bgAudioB.pause();
+    }
+  }
+
+  resumeBackground() {
+    if (!this.bgStarted || !this._enabled) return;
+
+    const active = this.bgAudioA && this.bgAudioA.currentTime > 0 && this.bgAudioA.currentTime < (this.bgAudioA.duration || Infinity)
+      ? this.bgAudioA
+      : this.bgAudioB;
+    const other = active === this.bgAudioA ? this.bgAudioB! : this.bgAudioA!;
+
+    if (active) {
+      active.volume = BG_VOLUME;
+      active.play().catch(() => {});
+      this.scheduleCrossfade(active, other);
+    }
   }
 
   // ── Watering: realistic water pouring (noise + bubbles) ──
