@@ -446,7 +446,7 @@ export async function mockApi(path: string, options: RequestInit = {}): Promise<
     return { friends: state.friends };
   }
   if (path === '/friends/invite-code' && method === 'GET') {
-    const link = `${window.location.origin}/?ref=${state.referral_code}`;
+    const link = `https://boostfarm.io/?ref=${state.referral_code}`;
     return { code: state.referral_code, link };
   }
   if (path === '/friends/add' && method === 'POST') {

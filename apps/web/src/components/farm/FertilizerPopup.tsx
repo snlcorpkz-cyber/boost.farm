@@ -385,7 +385,7 @@ function FriendWaterList({ friends, waterInCan, toast, onWater, waterPending, t 
     );
   }
 
-  const canWater = waterInCan >= 10;
+  const canWater = waterInCan >= 20;
 
   return (
     <div className="space-y-2">

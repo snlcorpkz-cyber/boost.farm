@@ -19,7 +19,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
   const [selectedBatch, setSelectedBatch] = useState<BatchSize>(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const requiredWater = selectedBatch * 10;
+  const requiredWater = selectedBatch * 20;
   const canDoSelected = canWater && waterAmount >= requiredWater && !isWatering;
 
   useEffect(() => {
@@ -57,7 +57,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
               transition={{ duration: 0.12 }}
             >
               {BATCH_OPTIONS.map((size) => {
-                const enough = waterAmount >= size * 10;
+                const enough = waterAmount >= size * 20;
                 const isActive = selectedBatch === size;
                 return (
                   <button
@@ -79,7 +79,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
                   >
                     <span>{t('farm.water_x', { count: size })}</span>
                     <span className={`text-[9px] font-semibold ${isActive ? 'text-blue-400' : 'text-gray-400'}`}>
-                      {size * 10}g
+                      {size * 20}g
                     </span>
                   </button>
                 );

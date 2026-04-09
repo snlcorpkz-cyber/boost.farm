@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../../lib/assets';
@@ -12,7 +12,7 @@ interface StageCelebrationProps {
 const NUM_BUTTERFLIES = 7;
 const GLOW_DURATION = 3;
 const EFFECTS_DURATION = 2000;
-const MODAL_DURATION = 2000;
+const MODAL_DURATION = 2500;
 
 function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
@@ -90,6 +90,8 @@ function Sparkle({ index }: { index: number }) {
 export default function StageCelebration({ active, stage, onDismiss }: StageCelebrationProps) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<'idle' | 'effects' | 'modal'>('idle');
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
 
   useEffect(() => {
     if (!active) {
@@ -105,10 +107,10 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
     if (phase !== 'modal') return;
     const closeTimer = setTimeout(() => {
       setPhase('idle');
-      onDismiss();
+      onDismissRef.current();
     }, MODAL_DURATION);
     return () => clearTimeout(closeTimer);
-  }, [phase, onDismiss]);
+  }, [phase]);
 
   return (
     <AnimatePresence>
@@ -167,15 +169,19 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            onClick={() => { setPhase('idle'); onDismissRef.current(); }}
           />
           <motion.div
-            className="fixed inset-0 z-[99] flex items-center justify-center px-4"
+            className="fixed inset-0 z-[99] flex items-center justify-center px-4 pointer-events-none"
             initial={{ opacity: 0, scale: 0.7 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             transition={{ type: 'spring', damping: 22, stiffness: 300 }}
           >
-            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden text-center max-w-[340px] w-full">
+            <div
+              className="bg-white rounded-3xl shadow-2xl overflow-hidden text-center max-w-[340px] w-full pointer-events-auto cursor-pointer"
+              onClick={() => { setPhase('idle'); onDismissRef.current(); }}
+            >
               <div className="bg-gradient-to-br from-yellow-300 via-amber-400 to-orange-400 px-6 pt-8 pb-5">
                 <motion.div
                   className="text-6xl mb-2"
@@ -192,11 +198,12 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
                 <p className="text-lg font-bold text-gray-800 mb-1">
                   {t('farm.stage', { current: stage })}
                 </p>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-500 mb-3">
                   {stage < 6
                     ? t('farm.until_next_stage', { percent: '0' })
                     : t('farm.harvested')}
                 </p>
+                <p className="text-xs text-gray-400">{t('common.tap_to_close', 'Tap to close')}</p>
               </div>
             </div>
           </motion.div>
