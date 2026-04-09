@@ -118,7 +118,7 @@ friendsRouter.post('/add', async (req: Request, res: Response) => {
 
 friendsRouter.delete('/:id', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const friendId = req.params.id;
+  const friendId = req.params.id as string;
 
   await execute(`DELETE FROM friends WHERE user_id = $1 AND friend_id = $2`, [userId, friendId]);
   await execute(`DELETE FROM friends WHERE user_id = $1 AND friend_id = $2`, [friendId, userId]);
@@ -128,7 +128,7 @@ friendsRouter.delete('/:id', async (req: Request, res: Response) => {
 
 friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const friendId = req.params.id;
+  const friendId = req.params.id as string;
   const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
 
   const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
@@ -179,7 +179,7 @@ friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
 
 friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const friendId = req.params.id;
+  const friendId = req.params.id as string;
   const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
 
   const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
