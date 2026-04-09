@@ -2,8 +2,8 @@ const STORAGE_KEY = 'eco_sound_on';
 
 class SoundManager {
   private ctx: AudioContext | null = null;
-  private bgGain: GainNode | null = null;
-  private bgOscillators: OscillatorNode[] = [];
+  private bgNodes: AudioNode[] = [];
+  private bgTimers: number[] = [];
   private bgRunning = false;
   private _enabled: boolean;
   private listeners = new Set<() => void>();
@@ -43,12 +43,18 @@ class SoundManager {
     return this.ctx;
   }
 
-  // ── Ambient background music (generated) ──
+  private makeNoise(ctx: AudioContext, seconds: number): AudioBuffer {
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  // ── Background: gentle pentatonic melody + soft pad + bird chirps ──
 
   initBackground() {
-    if (this._enabled) {
-      this.startBackground();
-    }
+    if (this._enabled) this.startBackground();
   }
 
   private startBackground() {
@@ -56,185 +62,310 @@ class SoundManager {
     const ctx = this.getCtx();
     this.bgRunning = true;
 
-    this.bgGain = ctx.createGain();
-    this.bgGain.gain.value = 0;
-    this.bgGain.gain.linearRampToValueAtTime(0.06, ctx.currentTime + 2);
-    this.bgGain.connect(ctx.destination);
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    master.gain.linearRampToValueAtTime(1, ctx.currentTime + 3);
+    master.connect(ctx.destination);
+    this.bgNodes.push(master);
 
-    const chords = [
-      [261.63, 329.63, 392.00], // C major
-      [293.66, 369.99, 440.00], // D major
-      [246.94, 311.13, 369.99], // B minor-ish
-      [220.00, 277.18, 329.63], // A minor
-    ];
+    // Soft pad (warm chord)
+    const padGain = ctx.createGain();
+    padGain.gain.value = 0.035;
+    padGain.connect(master);
+    this.bgNodes.push(padGain);
 
-    const chord = chords[Math.floor(Math.random() * chords.length)];
-
-    chord.forEach((freq) => {
+    const padNotes = [130.81, 196.00, 261.63]; // C3, G3, C4
+    padNotes.forEach((freq) => {
       const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = freq * 0.5;
-
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
       const lfo = ctx.createOscillator();
       lfo.type = 'sine';
-      lfo.frequency.value = 0.08 + Math.random() * 0.04;
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 2;
-      lfo.connect(lfoGain).connect(osc.frequency);
-      lfo.start();
-
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = 400;
-      filter.Q.value = 1;
-
-      osc.connect(filter).connect(this.bgGain!);
+      lfo.frequency.value = 0.15 + Math.random() * 0.1;
+      const lfoG = ctx.createGain();
+      lfoG.gain.value = 1.5;
+      lfo.connect(lfoG).connect(osc.detune);
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = 500;
+      filt.Q.value = 0.7;
+      osc.connect(filt).connect(padGain);
       osc.start();
-      this.bgOscillators.push(osc, lfo);
+      lfo.start();
+      this.bgNodes.push(osc, lfo, filt);
     });
 
-    const padOsc = ctx.createOscillator();
-    padOsc.type = 'triangle';
-    padOsc.frequency.value = chord[0] * 0.25;
-    const padFilter = ctx.createBiquadFilter();
-    padFilter.type = 'lowpass';
-    padFilter.frequency.value = 200;
-    padOsc.connect(padFilter).connect(this.bgGain!);
-    padOsc.start();
-    this.bgOscillators.push(padOsc);
+    // Melody: pentatonic notes played gently in a loop
+    const pentatonic = [523.25, 587.33, 659.25, 783.99, 880.00]; // C5 D5 E5 G5 A5
+    const melodyGain = ctx.createGain();
+    melodyGain.gain.value = 0.07;
+    const melodyReverb = ctx.createBiquadFilter();
+    melodyReverb.type = 'lowpass';
+    melodyReverb.frequency.value = 2000;
+    melodyGain.connect(melodyReverb).connect(master);
+    this.bgNodes.push(melodyGain, melodyReverb);
+
+    const playNote = () => {
+      if (!this.bgRunning) return;
+      const c = this.getCtx();
+      const t = c.currentTime;
+      const freq = pentatonic[Math.floor(Math.random() * pentatonic.length)];
+      const osc = c.createOscillator();
+      osc.type = Math.random() > 0.5 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.6, t + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
+      osc.connect(g).connect(melodyGain);
+      osc.start(t);
+      osc.stop(t + 1.8);
+      const next = 1500 + Math.random() * 2500;
+      this.bgTimers.push(window.setTimeout(playNote, next));
+    };
+    this.bgTimers.push(window.setTimeout(playNote, 2000));
+
+    // Bird chirps
+    const chirp = () => {
+      if (!this.bgRunning) return;
+      const c = this.getCtx();
+      const t = c.currentTime;
+      const baseFreq = 2500 + Math.random() * 1500;
+      for (let i = 0; i < 3; i++) {
+        const osc = c.createOscillator();
+        osc.type = 'sine';
+        const nt = t + i * 0.08;
+        osc.frequency.setValueAtTime(baseFreq + i * 200, nt);
+        osc.frequency.exponentialRampToValueAtTime(baseFreq + i * 400, nt + 0.04);
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.025, nt);
+        g.gain.exponentialRampToValueAtTime(0.001, nt + 0.06);
+        osc.connect(g).connect(master);
+        osc.start(nt);
+        osc.stop(nt + 0.06);
+      }
+      const next = 4000 + Math.random() * 8000;
+      this.bgTimers.push(window.setTimeout(chirp, next));
+    };
+    this.bgTimers.push(window.setTimeout(chirp, 5000));
   }
 
   private stopBackground() {
     if (!this.bgRunning) return;
     this.bgRunning = false;
-    const ctx = this.ctx;
-    if (ctx && this.bgGain) {
-      this.bgGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+    this.bgTimers.forEach((t) => clearTimeout(t));
+    this.bgTimers = [];
+    const master = this.bgNodes[0] as GainNode | undefined;
+    if (master && this.ctx) {
+      master.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.8);
     }
     setTimeout(() => {
-      this.bgOscillators.forEach((osc) => {
-        try { osc.stop(); } catch {}
+      this.bgNodes.forEach((n) => {
+        try {
+          if ('stop' in n && typeof (n as any).stop === 'function') (n as any).stop();
+        } catch {}
+        try { n.disconnect(); } catch {}
       });
-      this.bgOscillators = [];
-      if (this.bgGain) {
-        this.bgGain.disconnect();
-        this.bgGain = null;
-      }
-    }, 600);
+      this.bgNodes = [];
+    }, 900);
   }
 
-  // ── SFX: Water drip (watering the plant) ──
+  // ── Watering: realistic water pouring (noise + bubbles) ──
 
   waterDrip() {
     if (!this._enabled) return;
     const ctx = this.getCtx();
     const now = ctx.currentTime;
+    const dur = 1.2;
 
-    for (let i = 0; i < 6; i++) {
+    // Water stream: filtered noise
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.makeNoise(ctx, dur);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(3000, now);
+    bp.frequency.linearRampToValueAtTime(1500, now + dur);
+    bp.Q.value = 0.8;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 400;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0, now);
+    ng.gain.linearRampToValueAtTime(0.18, now + 0.05);
+    ng.gain.setValueAtTime(0.15, now + dur * 0.3);
+    ng.gain.linearRampToValueAtTime(0.08, now + dur * 0.8);
+    ng.gain.linearRampToValueAtTime(0, now + dur);
+    noise.connect(bp).connect(hp).connect(ng).connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    // Bubbles / splashes
+    for (let i = 0; i < 12; i++) {
+      const t = now + 0.05 + Math.random() * (dur - 0.2);
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
       osc.type = 'sine';
-      const t = now + i * 0.07;
-      const freq = 520 - i * 35 + Math.random() * 20;
-      osc.frequency.setValueAtTime(freq, t);
-      osc.frequency.exponentialRampToValueAtTime(freq * 0.7, t + 0.1);
-      gain.gain.setValueAtTime(0.15, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-      osc.connect(gain).connect(ctx.destination);
+      const f = 300 + Math.random() * 600;
+      osc.frequency.setValueAtTime(f, t);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.4, t + 0.08);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.06 + Math.random() * 0.04, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      osc.connect(g).connect(ctx.destination);
       osc.start(t);
-      osc.stop(t + 0.12);
+      osc.stop(t + 0.08);
     }
   }
 
-  // ── SFX: Bucket pour (collecting water from bucket into can) ──
+  // ── Bucket pour: heavier water pour ──
 
   bucketPour() {
     if (!this._enabled) return;
     const ctx = this.getCtx();
     const now = ctx.currentTime;
-    const duration = 0.7;
+    const dur = 0.9;
 
-    const bufferSize = Math.floor(ctx.sampleRate * duration);
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1);
+    // Heavy pour: lower frequency noise
+    const noise = ctx.createBufferSource();
+    noise.buffer = this.makeNoise(ctx, dur);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1200, now);
+    bp.frequency.exponentialRampToValueAtTime(600, now + dur);
+    bp.Q.value = 1.2;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 3000;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0, now);
+    ng.gain.linearRampToValueAtTime(0.25, now + 0.06);
+    ng.gain.setValueAtTime(0.22, now + dur * 0.4);
+    ng.gain.linearRampToValueAtTime(0.05, now + dur * 0.85);
+    ng.gain.linearRampToValueAtTime(0, now + dur);
+    noise.connect(bp).connect(lp).connect(ng).connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    // Splash at start
+    const splash = ctx.createBufferSource();
+    splash.buffer = this.makeNoise(ctx, 0.15);
+    const sf = ctx.createBiquadFilter();
+    sf.type = 'highpass';
+    sf.frequency.value = 2000;
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.12, now);
+    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    splash.connect(sf).connect(sg).connect(ctx.destination);
+    splash.start(now);
+    splash.stop(now + 0.15);
+
+    // Bubbles
+    for (let i = 0; i < 8; i++) {
+      const t = now + 0.1 + Math.random() * 0.5;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      const f = 200 + Math.random() * 400;
+      osc.frequency.setValueAtTime(f, t);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.3, t + 0.06);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.07, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.06);
     }
-
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(800, now);
-    filter.frequency.exponentialRampToValueAtTime(300, now + duration);
-    filter.Q.value = 3;
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.12, now);
-    gain.gain.setValueAtTime(0.18, now + 0.05);
-    gain.gain.linearRampToValueAtTime(0.06, now + duration * 0.6);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-    source.connect(filter).connect(gain).connect(ctx.destination);
-    source.start(now);
-    source.stop(now + duration);
   }
 
-  // ── SFX: Celebration (stage change) ──
+  // ── Celebration: bright fanfare with harmonics ──
 
   celebration() {
     if (!this._enabled) return;
     const ctx = this.getCtx();
     const now = ctx.currentTime;
-    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+    // C major arpeggio up + octave
+    const notes = [
+      { f: 523.25, t: 0 },    // C5
+      { f: 659.25, t: 0.1 },  // E5
+      { f: 783.99, t: 0.2 },  // G5
+      { f: 1046.5, t: 0.35 }, // C6
+      { f: 1318.5, t: 0.5 },  // E6
+    ];
 
-    notes.forEach((freq, i) => {
+    notes.forEach(({ f, t: dt }) => {
+      // Fundamental
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
       osc.type = 'triangle';
-      const t = now + i * 0.13;
-      osc.frequency.setValueAtTime(freq, t);
-      gain.gain.setValueAtTime(0.22, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.5);
+      osc.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, now + dt);
+      g.gain.linearRampToValueAtTime(0.18, now + dt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dt + 0.8);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(now + dt);
+      osc.stop(now + dt + 0.8);
+
+      // Harmonic for brightness
+      const h = ctx.createOscillator();
+      h.type = 'sine';
+      h.frequency.value = f * 2;
+      const hg = ctx.createGain();
+      hg.gain.setValueAtTime(0, now + dt);
+      hg.gain.linearRampToValueAtTime(0.06, now + dt + 0.02);
+      hg.gain.exponentialRampToValueAtTime(0.001, now + dt + 0.4);
+      h.connect(hg).connect(ctx.destination);
+      h.start(now + dt);
+      h.stop(now + dt + 0.4);
     });
 
-    const shimmer = ctx.createOscillator();
-    const shimmerGain = ctx.createGain();
-    shimmer.type = 'sine';
-    shimmer.frequency.setValueAtTime(2093, now + 0.5);
-    shimmerGain.gain.setValueAtTime(0.08, now + 0.5);
-    shimmerGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-    shimmer.connect(shimmerGain).connect(ctx.destination);
-    shimmer.start(now + 0.5);
-    shimmer.stop(now + 1.2);
+    // Shimmer sweep at the end
+    const shNoise = ctx.createBufferSource();
+    shNoise.buffer = this.makeNoise(ctx, 0.6);
+    const shF = ctx.createBiquadFilter();
+    shF.type = 'bandpass';
+    shF.frequency.setValueAtTime(4000, now + 0.5);
+    shF.frequency.linearRampToValueAtTime(8000, now + 1.1);
+    shF.Q.value = 2;
+    const shG = ctx.createGain();
+    shG.gain.setValueAtTime(0.04, now + 0.5);
+    shG.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+    shNoise.connect(shF).connect(shG).connect(ctx.destination);
+    shNoise.start(now + 0.5);
+    shNoise.stop(now + 1.1);
   }
 
-  // ── SFX: Reward chime (daily challenge, gifts) ──
+  // ── Reward chime: bright coin-like sound ──
 
   rewardChime() {
     if (!this._enabled) return;
     const ctx = this.getCtx();
     const now = ctx.currentTime;
 
-    [880, 1174.66, 1318.51].forEach((freq, i) => {
+    // Two bright "ding" sounds, like coins
+    [0, 0.15].forEach((dt, i) => {
+      const freq = i === 0 ? 1200 : 1800;
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
       osc.type = 'sine';
-      const t = now + i * 0.1;
-      osc.frequency.setValueAtTime(freq, t);
-      gain.gain.setValueAtTime(0.16, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.25);
+      osc.frequency.setValueAtTime(freq, now + dt);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.2, now + dt);
+      g.gain.exponentialRampToValueAtTime(0.001, now + dt + 0.5);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(now + dt);
+      osc.stop(now + dt + 0.5);
+
+      // Overtone
+      const h = ctx.createOscillator();
+      h.type = 'sine';
+      h.frequency.setValueAtTime(freq * 2.756, now + dt);
+      const hg = ctx.createGain();
+      hg.gain.setValueAtTime(0.08, now + dt);
+      hg.gain.exponentialRampToValueAtTime(0.001, now + dt + 0.3);
+      h.connect(hg).connect(ctx.destination);
+      h.start(now + dt);
+      h.stop(now + dt + 0.3);
     });
   }
 
-  // ── SFX: Button tap ──
+  // ── Button tap ──
 
   buttonTap() {
     if (!this._enabled) return;
@@ -243,12 +374,13 @@ class SoundManager {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(1200, now);
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    osc.frequency.setValueAtTime(1400, now);
+    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.04);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
     osc.connect(gain).connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.04);
+    osc.stop(now + 0.05);
   }
 }
 
