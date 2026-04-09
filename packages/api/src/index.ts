@@ -1,4 +1,7 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { resolve } from 'path';
+dotenv.config({ path: resolve(process.cwd(), '.env') });
+dotenv.config({ path: resolve(process.cwd(), '../../.env') });
 import express from 'express';
 import cors from 'cors';
 import { authRouter } from './routes/auth.js';
