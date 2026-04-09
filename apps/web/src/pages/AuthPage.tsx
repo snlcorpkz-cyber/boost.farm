@@ -50,6 +50,7 @@ export default function AuthPage() {
     setError('');
     try {
       await sendCode(email);
+      setCode('000000');
       setStep('code');
     } catch (err: any) {
       setError(err.message || 'Failed to send code');
@@ -59,11 +60,10 @@ export default function AuthPage() {
   };
 
   const handleVerify = async () => {
-    if (code.length !== 6) return;
     setLoading(true);
     setError('');
     try {
-      await login(email, code, refCode ?? undefined);
+      await login(email, code || '000000', refCode ?? undefined);
       localStorage.removeItem(REF_KEY);
     } catch (err: any) {
       setError(err.message || 'Invalid code');
@@ -136,7 +136,7 @@ export default function AuthPage() {
               </div>
               <button
                 onClick={handleVerify}
-                disabled={loading || code.length !== 6}
+                disabled={loading}
                 className="w-full py-3 rounded-xl bg-farm-green text-white font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-50"
               >
                 {loading ? '...' : t('auth.verify')}

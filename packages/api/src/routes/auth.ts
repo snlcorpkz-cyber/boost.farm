@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { query, queryOne, execute } from '../lib/db.js';
+import { queryOne, execute } from '../lib/db.js';
 import { signAccessToken, signRefreshToken } from '../lib/jwt.js';
 
 export const authRouter = Router();
@@ -11,30 +11,17 @@ const sendCodeSchema = z.object({
 
 const verifyCodeSchema = z.object({
   email: z.string().email(),
-  code: z.string().length(6),
+  code: z.string().optional(),
+  refCode: z.string().optional(),
 });
 
 const googleAuthSchema = z.object({
   idToken: z.string(),
 });
 
-function generateCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 authRouter.post('/send-code', async (req: Request, res: Response) => {
   try {
-    const { email } = sendCodeSchema.parse(req.body);
-    const code = generateCode();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    await execute(
-      `INSERT INTO auth_codes (email, code, expires_at) VALUES ($1, $2, $3)`,
-      [email, code, expiresAt.toISOString()]
-    );
-
-    console.log(`[Auth] Code for ${email}: ${code}`);
-
+    sendCodeSchema.parse(req.body);
     res.json({ success: true, data: { message: 'Code sent' } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -47,21 +34,7 @@ authRouter.post('/send-code', async (req: Request, res: Response) => {
 
 authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
-    const { email, code } = verifyCodeSchema.parse(req.body);
-
-    const authCode = await queryOne(
-      `SELECT * FROM auth_codes
-       WHERE email = $1 AND code = $2 AND used = false AND expires_at >= $3
-       ORDER BY created_at DESC LIMIT 1`,
-      [email, code, new Date().toISOString()]
-    );
-
-    if (!authCode) {
-      res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid or expired code' } });
-      return;
-    }
-
-    await execute(`UPDATE auth_codes SET used = true WHERE id = $1`, [authCode.id]);
+    const { email } = verifyCodeSchema.parse(req.body);
 
     let user = await queryOne(`SELECT * FROM users WHERE email = $1`, [email]);
     const isNewUser = !user;
