@@ -2,9 +2,6 @@ const STORAGE_KEY = 'eco_sound_on';
 
 class SoundManager {
   private ctx: AudioContext | null = null;
-  private bgNodes: AudioNode[] = [];
-  private bgTimers: number[] = [];
-  private bgRunning = false;
   private _enabled: boolean;
   private listeners = new Set<() => void>();
 
@@ -20,11 +17,6 @@ class SoundManager {
   toggle() {
     this._enabled = !this._enabled;
     localStorage.setItem(STORAGE_KEY, this._enabled ? '1' : '0');
-    if (this._enabled) {
-      this.startBackground();
-    } else {
-      this.stopBackground();
-    }
     this.listeners.forEach((fn) => fn());
   }
 
@@ -51,125 +43,6 @@ class SoundManager {
     return buf;
   }
 
-  // ── Background: gentle pentatonic melody + soft pad + bird chirps ──
-
-  initBackground() {
-    if (this._enabled) this.startBackground();
-  }
-
-  private startBackground() {
-    if (this.bgRunning) return;
-    const ctx = this.getCtx();
-    this.bgRunning = true;
-
-    const master = ctx.createGain();
-    master.gain.value = 0;
-    master.gain.linearRampToValueAtTime(1, ctx.currentTime + 3);
-    master.connect(ctx.destination);
-    this.bgNodes.push(master);
-
-    // Soft pad (warm chord)
-    const padGain = ctx.createGain();
-    padGain.gain.value = 0.035;
-    padGain.connect(master);
-    this.bgNodes.push(padGain);
-
-    const padNotes = [130.81, 196.00, 261.63]; // C3, G3, C4
-    padNotes.forEach((freq) => {
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = freq;
-      const lfo = ctx.createOscillator();
-      lfo.type = 'sine';
-      lfo.frequency.value = 0.15 + Math.random() * 0.1;
-      const lfoG = ctx.createGain();
-      lfoG.gain.value = 1.5;
-      lfo.connect(lfoG).connect(osc.detune);
-      const filt = ctx.createBiquadFilter();
-      filt.type = 'lowpass';
-      filt.frequency.value = 500;
-      filt.Q.value = 0.7;
-      osc.connect(filt).connect(padGain);
-      osc.start();
-      lfo.start();
-      this.bgNodes.push(osc, lfo, filt);
-    });
-
-    // Melody: pentatonic notes played gently in a loop
-    const pentatonic = [523.25, 587.33, 659.25, 783.99, 880.00]; // C5 D5 E5 G5 A5
-    const melodyGain = ctx.createGain();
-    melodyGain.gain.value = 0.07;
-    const melodyReverb = ctx.createBiquadFilter();
-    melodyReverb.type = 'lowpass';
-    melodyReverb.frequency.value = 2000;
-    melodyGain.connect(melodyReverb).connect(master);
-    this.bgNodes.push(melodyGain, melodyReverb);
-
-    const playNote = () => {
-      if (!this.bgRunning) return;
-      const c = this.getCtx();
-      const t = c.currentTime;
-      const freq = pentatonic[Math.floor(Math.random() * pentatonic.length)];
-      const osc = c.createOscillator();
-      osc.type = Math.random() > 0.5 ? 'triangle' : 'sine';
-      osc.frequency.setValueAtTime(freq, t);
-      const g = c.createGain();
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.6, t + 0.08);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
-      osc.connect(g).connect(melodyGain);
-      osc.start(t);
-      osc.stop(t + 1.8);
-      const next = 1500 + Math.random() * 2500;
-      this.bgTimers.push(window.setTimeout(playNote, next));
-    };
-    this.bgTimers.push(window.setTimeout(playNote, 2000));
-
-    // Bird chirps
-    const chirp = () => {
-      if (!this.bgRunning) return;
-      const c = this.getCtx();
-      const t = c.currentTime;
-      const baseFreq = 2500 + Math.random() * 1500;
-      for (let i = 0; i < 3; i++) {
-        const osc = c.createOscillator();
-        osc.type = 'sine';
-        const nt = t + i * 0.08;
-        osc.frequency.setValueAtTime(baseFreq + i * 200, nt);
-        osc.frequency.exponentialRampToValueAtTime(baseFreq + i * 400, nt + 0.04);
-        const g = c.createGain();
-        g.gain.setValueAtTime(0.025, nt);
-        g.gain.exponentialRampToValueAtTime(0.001, nt + 0.06);
-        osc.connect(g).connect(master);
-        osc.start(nt);
-        osc.stop(nt + 0.06);
-      }
-      const next = 4000 + Math.random() * 8000;
-      this.bgTimers.push(window.setTimeout(chirp, next));
-    };
-    this.bgTimers.push(window.setTimeout(chirp, 5000));
-  }
-
-  private stopBackground() {
-    if (!this.bgRunning) return;
-    this.bgRunning = false;
-    this.bgTimers.forEach((t) => clearTimeout(t));
-    this.bgTimers = [];
-    const master = this.bgNodes[0] as GainNode | undefined;
-    if (master && this.ctx) {
-      master.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.8);
-    }
-    setTimeout(() => {
-      this.bgNodes.forEach((n) => {
-        try {
-          if ('stop' in n && typeof (n as any).stop === 'function') (n as any).stop();
-        } catch {}
-        try { n.disconnect(); } catch {}
-      });
-      this.bgNodes = [];
-    }, 900);
-  }
-
   // ── Watering: realistic water pouring (noise + bubbles) ──
 
   waterDrip() {
@@ -178,7 +51,6 @@ class SoundManager {
     const now = ctx.currentTime;
     const dur = 1.2;
 
-    // Water stream: filtered noise
     const noise = ctx.createBufferSource();
     noise.buffer = this.makeNoise(ctx, dur);
     const bp = ctx.createBiquadFilter();
@@ -199,7 +71,6 @@ class SoundManager {
     noise.start(now);
     noise.stop(now + dur);
 
-    // Bubbles / splashes
     for (let i = 0; i < 12; i++) {
       const t = now + 0.05 + Math.random() * (dur - 0.2);
       const osc = ctx.createOscillator();
@@ -224,7 +95,6 @@ class SoundManager {
     const now = ctx.currentTime;
     const dur = 0.9;
 
-    // Heavy pour: lower frequency noise
     const noise = ctx.createBufferSource();
     noise.buffer = this.makeNoise(ctx, dur);
     const bp = ctx.createBiquadFilter();
@@ -245,7 +115,6 @@ class SoundManager {
     noise.start(now);
     noise.stop(now + dur);
 
-    // Splash at start
     const splash = ctx.createBufferSource();
     splash.buffer = this.makeNoise(ctx, 0.15);
     const sf = ctx.createBiquadFilter();
@@ -258,7 +127,6 @@ class SoundManager {
     splash.start(now);
     splash.stop(now + 0.15);
 
-    // Bubbles
     for (let i = 0; i < 8; i++) {
       const t = now + 0.1 + Math.random() * 0.5;
       const osc = ctx.createOscillator();
@@ -281,17 +149,15 @@ class SoundManager {
     if (!this._enabled) return;
     const ctx = this.getCtx();
     const now = ctx.currentTime;
-    // C major arpeggio up + octave
     const notes = [
-      { f: 523.25, t: 0 },    // C5
-      { f: 659.25, t: 0.1 },  // E5
-      { f: 783.99, t: 0.2 },  // G5
-      { f: 1046.5, t: 0.35 }, // C6
-      { f: 1318.5, t: 0.5 },  // E6
+      { f: 523.25, t: 0 },
+      { f: 659.25, t: 0.1 },
+      { f: 783.99, t: 0.2 },
+      { f: 1046.5, t: 0.35 },
+      { f: 1318.5, t: 0.5 },
     ];
 
     notes.forEach(({ f, t: dt }) => {
-      // Fundamental
       const osc = ctx.createOscillator();
       osc.type = 'triangle';
       osc.frequency.value = f;
@@ -303,7 +169,6 @@ class SoundManager {
       osc.start(now + dt);
       osc.stop(now + dt + 0.8);
 
-      // Harmonic for brightness
       const h = ctx.createOscillator();
       h.type = 'sine';
       h.frequency.value = f * 2;
@@ -316,7 +181,6 @@ class SoundManager {
       h.stop(now + dt + 0.4);
     });
 
-    // Shimmer sweep at the end
     const shNoise = ctx.createBufferSource();
     shNoise.buffer = this.makeNoise(ctx, 0.6);
     const shF = ctx.createBiquadFilter();
@@ -339,7 +203,6 @@ class SoundManager {
     const ctx = this.getCtx();
     const now = ctx.currentTime;
 
-    // Two bright "ding" sounds, like coins
     [0, 0.15].forEach((dt, i) => {
       const freq = i === 0 ? 1200 : 1800;
       const osc = ctx.createOscillator();
@@ -352,7 +215,6 @@ class SoundManager {
       osc.start(now + dt);
       osc.stop(now + dt + 0.5);
 
-      // Overtone
       const h = ctx.createOscillator();
       h.type = 'sine';
       h.frequency.setValueAtTime(freq * 2.756, now + dt);
