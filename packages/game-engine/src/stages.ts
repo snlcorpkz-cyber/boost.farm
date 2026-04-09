@@ -9,7 +9,7 @@ import { DIFFICULTY_MULTIPLIERS } from './constants.js';
  * for a ★1 crop at x2.0 is ~4000 waterings ≈ 40,000g water.
  */
 const BASE_STAGE_CONFIG: StageConfig[] = [
-  { stageNumber: 1, percentPerWateringX1: 8.4 },
+  { stageNumber: 1, percentPerWateringX1: 7.5 },
   { stageNumber: 2, percentPerWateringX1: 1.65 },
   { stageNumber: 3, percentPerWateringX1: 0.31 },
   { stageNumber: 4, percentPerWateringX1: 0.079 },

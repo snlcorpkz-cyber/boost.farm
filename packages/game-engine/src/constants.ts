@@ -1,6 +1,6 @@
 export const BUCKET_CAPACITY = 30;
 export const BUCKET_FILL_RATE = 0.6; // grams per minute (30g in 50 min)
-export const WATER_PER_CLICK = 20;
+export const WATER_PER_CLICK = 10;
 export const NUTRITION_PER_WATERING = 1;
 
 export const MULTIPLIER_THRESHOLDS = {
@@ -32,7 +32,7 @@ export const REFERRAL_REWARDS = {
   NUTRITION: 100,
 } as const;
 
-export const FRIEND_WATERING_COST = 20;
+export const FRIEND_WATERING_COST = 10;
 export const WATERING_BATCH_SIZES = [1, 5, 20] as const;
 
 // ── Rank system ──
