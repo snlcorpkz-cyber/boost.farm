@@ -9,6 +9,7 @@ import {
   getRankForWater,
   REFERRAL_REWARDS,
 } from '@eco-farm/game-engine';
+import { notify, getUserNickname } from '../lib/notify.js';
 
 export const friendsRouter = Router();
 friendsRouter.use(requireAuth);
@@ -107,6 +108,11 @@ friendsRouter.post('/add', async (req: Request, res: Response) => {
     [fertReward, referral.inviter_id]
   );
 
+  const joinerName = await getUserNickname(userId);
+  const inviterName = await getUserNickname(referral.inviter_id);
+  await notify(referral.inviter_id, 'invite', 'notif.friend_joined', { name: joinerName, fert: fertReward });
+  await notify(userId, 'invite', 'notif.friend_joined', { name: inviterName, fert: fertReward });
+
   res.json({ success: true, data: { friendId: referral.inviter_id, fertReward } });
 });
 
@@ -165,10 +171,8 @@ friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
     [waterReward, userId]
   );
 
-  await execute(
-    `INSERT INTO notifications (user_id, type, payload) VALUES ($1, 'greet', $2)`,
-    [friendId, JSON.stringify({ from_user_id: userId })]
-  );
+  const actorName = await getUserNickname(userId);
+  await notify(friendId, 'greet', 'notif.greeted_you', { name: actorName, amount: waterReward });
 
   res.json({ success: true, data: { waterEarned: waterReward } });
 });
@@ -224,10 +228,8 @@ friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
     [friendId]
   );
 
-  await execute(
-    `INSERT INTO notifications (user_id, type, payload) VALUES ($1, 'friend_water', $2)`,
-    [friendId, JSON.stringify({ from_user_id: userId })]
-  );
+  const actorName = await getUserNickname(userId);
+  await notify(friendId, 'water', 'notif.watered_you', { name: actorName, amount: FRIEND_WATERING_COST });
 
   res.json({
     success: true,

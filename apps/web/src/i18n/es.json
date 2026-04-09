@@ -196,5 +196,11 @@
   "notif.just_now": "ahora",
   "notif.minutes_ago": "hace {{m}}m",
   "notif.hours_ago": "hace {{h}}h",
-  "notif.days_ago": "hace {{d}}d"
+  "notif.days_ago": "hace {{d}}d",
+  "notif.bucket_collected": "Cubo recogido: +{{amount}}g agua",
+  "notif.harvest_complete": "¡Tu cultivo ha crecido! ¡Cupón recibido!",
+  "notif.daily_challenge_done": "¡Desafío diario completado! +{{reward}}g agua",
+  "notif.game_reward": "Recompensa del juego: +{{reward}} {{unit}}",
+  "notif.ad_reward": "Recompensa por anuncio: +{{amount}} {{unit}}",
+  "notif.load_more": "Cargar más"
 }

@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
-const ACCESS_TOKEN_EXPIRY = '15m';
-const REFRESH_TOKEN_EXPIRY = '30d';
+const ACCESS_TOKEN_EXPIRY = '7d';
+const REFRESH_TOKEN_EXPIRY = '90d';
 
 export interface TokenPayload {
   userId: string;

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getCurrentPhase, getRankForWater } from '@eco-farm/game-engine';
+import { notify } from '../lib/notify.js';
 
 export const questsRouter = Router();
 questsRouter.use(requireAuth);
@@ -109,6 +110,11 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
     }
   }
 
+  await notify(userId, 'quest', 'notif.quest_done', {
+    reward: quest.reward_amount,
+    unit: quest.reward_type === 'water' ? 'water' : 'nutrition',
+  });
+
   res.json({
     success: true,
     data: { rewardType: quest.reward_type, rewardAmount: quest.reward_amount },
@@ -170,6 +176,8 @@ questsRouter.post('/daily-challenge/claim', async (req: Request, res: Response) 
     `UPDATE farms SET water_in_can = water_in_can + $1 WHERE user_id = $2 AND harvested = false`,
     [rank.dailyChallengeReward, userId]
   );
+
+  await notify(userId, 'gift', 'notif.daily_challenge_done', { reward: rank.dailyChallengeReward });
 
   res.json({
     success: true,

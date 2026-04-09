@@ -15,12 +15,25 @@ interface Notification {
   read: boolean;
 }
 
-const NOTIF_IMG: Record<string, string> = {
-  greet: UI.greetHand,
-  water: UI.waterDrop,
-  quest: UI.gift,
-  invite: UI.greetHand,
-  gift: UI.gift,
+interface NotifResponse {
+  notifications: Notification[];
+  unreadCount: number;
+  hasMore: boolean;
+  nextOffset: number;
+}
+
+const PAGE_SIZE = 20;
+
+const NOTIF_ICON: Record<string, { src: string; bg: string }> = {
+  greet: { src: UI.greetHand, bg: 'bg-amber-100' },
+  water: { src: UI.waterDrop, bg: 'bg-blue-100' },
+  bucket: { src: UI.bucket, bg: 'bg-blue-50' },
+  stage: { src: UI.rainbow, bg: 'bg-green-100' },
+  harvest: { src: UI.coupon, bg: 'bg-yellow-100' },
+  quest: { src: UI.gift, bg: 'bg-purple-100' },
+  invite: { src: UI.greetHand, bg: 'bg-pink-100' },
+  gift: { src: UI.gift, bg: 'bg-orange-100' },
+  game: { src: UI.gift, bg: 'bg-indigo-100' },
 };
 
 const LANGUAGES = [
@@ -49,15 +62,44 @@ export default function NotificationsPopup({
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const qc = useQueryClient();
-  const [page, setPage] = useState<'list' | 'settings'>('list');
+  const [tab, setTab] = useState<'list' | 'settings'>('list');
   const scrollRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const [allNotifications, setAllNotifications] = useState<Notification[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const { data } = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => api<{ notifications: Notification[]; unreadCount: number }>('/user/notifications'),
-    refetchInterval: open ? 5000 : false,
+  const { data, isLoading } = useQuery({
+    queryKey: ['notifications', 0],
+    queryFn: () => api<NotifResponse>(`/user/notifications?limit=${PAGE_SIZE}&offset=0`),
+    enabled: open,
+    refetchInterval: open ? 10000 : false,
   });
+
+  useEffect(() => {
+    if (data) {
+      setAllNotifications(data.notifications);
+      setHasMore(data.hasMore);
+      setNextOffset(data.nextOffset);
+      setUnreadCount(data.unreadCount);
+    }
+  }, [data]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const resp = await api<NotifResponse>(`/user/notifications?limit=${PAGE_SIZE}&offset=${nextOffset}`);
+      setAllNotifications((prev) => [...prev, ...resp.notifications]);
+      setHasMore(resp.hasMore);
+      setNextOffset(resp.nextOffset);
+      setUnreadCount(resp.unreadCount);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, nextOffset]);
 
   const markRead = useMutation({
     mutationFn: (ids: string[]) =>
@@ -81,7 +123,7 @@ export default function NotificationsPopup({
   }, [markRead]);
 
   useEffect(() => {
-    if (!open || page !== 'list') return;
+    if (!open || tab !== 'list') return;
 
     observerRef.current = new IntersectionObserver(
       (entries) => {
@@ -107,16 +149,14 @@ export default function NotificationsPopup({
         flushMarkRead();
       }
     };
-  }, [open, page, data?.notifications, flushMarkRead]);
+  }, [open, tab, allNotifications.length, flushMarkRead]);
 
   useEffect(() => {
     if (!open) {
-      setPage('list');
+      setTab('list');
       if (pendingIds.current.size > 0) flushMarkRead();
     }
   }, [open, flushMarkRead]);
-
-  const notifications = data?.notifications ?? [];
 
   const handleLangChange = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -127,21 +167,31 @@ export default function NotificationsPopup({
     });
   };
 
-  const renderNotifIcon = (n: Notification) => {
-    if (n.type === 'stage') {
-      const stage = Number(n.params.stage) || 1;
-      const cropImg = CROP_STAGES['product.potato']?.[stage]?.open;
-      if (cropImg) return <img src={cropImg} alt="" className="w-7 h-7 object-contain" />;
-    }
-    const src = NOTIF_IMG[n.type] ?? UI.bell;
-    return <img src={src} alt="" className="w-6 h-6 object-contain" />;
-  };
-
   const translateParams = (n: Notification) => {
     const p = { ...n.params };
     if (p.unit === 'water') p.unit = t('notif.unit_water');
     else if (p.unit === 'nutrition') p.unit = t('notif.unit_nutrition');
     return p;
+  };
+
+  const getIcon = (n: Notification) => {
+    const info = NOTIF_ICON[n.type] ?? { src: UI.bell, bg: 'bg-gray-100' };
+    if (n.type === 'stage') {
+      const stage = Number(n.params.stage) || 1;
+      const cropImg = CROP_STAGES['product.potato']?.[stage]?.open;
+      if (cropImg) {
+        return (
+          <div className={`w-10 h-10 rounded-full ${info.bg} flex items-center justify-center flex-shrink-0 border-2 border-white shadow-sm`}>
+            <img src={cropImg} alt="" className="w-7 h-7 object-contain" />
+          </div>
+        );
+      }
+    }
+    return (
+      <div className={`w-10 h-10 rounded-full ${info.bg} flex items-center justify-center flex-shrink-0 border-2 border-white shadow-sm`}>
+        <img src={info.src} alt="" className="w-5 h-5 object-contain" />
+      </div>
+    );
   };
 
   return (
@@ -156,107 +206,150 @@ export default function NotificationsPopup({
             onClick={onClose}
           />
           <motion.div
-            className="fixed top-0 inset-x-0 mx-auto max-w-[390px] z-[91] max-h-[85dvh] flex flex-col bg-white rounded-b-3xl shadow-2xl overflow-hidden"
+            className="fixed top-0 inset-x-0 mx-auto max-w-[430px] z-[91] max-h-[85dvh] flex flex-col rounded-b-3xl shadow-2xl overflow-hidden"
+            style={{
+              background: 'linear-gradient(180deg, #FFF8E7 0%, #FAECC8 30%, #F5E1B0 100%)',
+              boxShadow: '0 8px 32px rgba(120,80,20,0.18), 0 2px 8px rgba(120,80,20,0.10)',
+            }}
             initial={{ y: '-100%' }}
             animate={{ y: 0 }}
             exit={{ y: '-100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 320 }}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 bg-white border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                {page === 'settings' && (
+            <div
+              className="flex items-center justify-between px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5"
+              style={{
+                background: 'linear-gradient(180deg, #A0784A 0%, #7B5C35 50%, #6B4E2C 100%)',
+                boxShadow: '0 2px 6px rgba(80,50,10,0.3)',
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                {tab === 'settings' && (
                   <button
-                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
-                    onClick={() => setPage('list')}
+                    className="w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                    onClick={() => setTab('list')}
                   >
-                    <span className="text-gray-500 text-sm">←</span>
+                    <span className="text-white text-sm font-bold">←</span>
                   </button>
                 )}
-                <h2 className="text-base font-extrabold text-gray-800">
-                  {page === 'list' ? t('notif.title') : t('notif.settings')}
+                <img src={UI.bell} alt="" className="w-5 h-5 opacity-90" />
+                <h2
+                  className="text-base font-extrabold text-white"
+                  style={{ textShadow: '0 1px 3px rgba(0,0,0,0.35)' }}
+                >
+                  {tab === 'list' ? t('notif.title') : t('notif.settings')}
                 </h2>
+                {tab === 'list' && unreadCount > 0 && (
+                  <span className="ml-1 min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold shadow-sm">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
-                {page === 'list' && (
+                {tab === 'list' && (
                   <button
-                    className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
-                    onClick={() => setPage('settings')}
+                    className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
+                    onClick={() => setTab('settings')}
                   >
-                    <span className="text-gray-500 text-sm">⚙️</span>
+                    <span className="text-white text-sm">⚙️</span>
                   </button>
                 )}
                 <button
-                  className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                  className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
                   onClick={onClose}
                 >
-                  <span className="text-gray-400 text-sm font-bold">✕</span>
+                  <span className="text-white text-sm font-bold">✕</span>
                 </button>
               </div>
             </div>
 
             {/* Content */}
-            {page === 'list' ? (
+            {tab === 'list' ? (
               <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
-                {notifications.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                    <img src={UI.bell} alt="" className="w-10 h-10 opacity-30 mb-3" />
-                    <p className="text-sm">{t('notif.empty')}</p>
+                {allNotifications.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-amber-700/50">
+                    <img src={UI.bell} alt="" className="w-12 h-12 opacity-30 mb-3" />
+                    <p className="text-sm font-medium">{t('notif.empty')}</p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-50">
-                    {notifications.map((n) => (
-                      <div
-                        key={n.id}
-                        data-notif-id={n.read ? undefined : n.id}
-                        className={`flex items-start gap-3 px-4 py-3 transition-colors ${
-                          n.read ? 'bg-white' : 'bg-blue-50/50'
-                        }`}
-                      >
-                        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          {renderNotifIcon(n)}
+                  <>
+                    <div className="px-2 py-2 space-y-1.5">
+                      {allNotifications.map((n) => (
+                        <div
+                          key={n.id}
+                          data-notif-id={n.read ? undefined : n.id}
+                          className={`flex items-start gap-3 px-3 py-2.5 rounded-2xl transition-colors ${
+                            n.read
+                              ? 'bg-white/40'
+                              : 'bg-white/80 shadow-sm'
+                          }`}
+                          style={{
+                            border: n.read ? '1px solid rgba(200,170,120,0.15)' : '1px solid rgba(200,170,120,0.3)',
+                          }}
+                        >
+                          {getIcon(n)}
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm leading-snug ${n.read ? 'text-amber-800/70' : 'text-amber-900 font-semibold'}`}>
+                              {t(n.message_key, translateParams(n))}
+                            </p>
+                            <p className="text-[10px] text-amber-600/60 mt-0.5">
+                              {timeAgo(n.created_at, t)}
+                            </p>
+                          </div>
+                          {!n.read && (
+                            <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-2 flex-shrink-0 shadow-sm" />
+                          )}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm leading-snug ${n.read ? 'text-gray-600' : 'text-gray-800 font-medium'}`}>
-                            {t(n.message_key, translateParams(n))}
-                          </p>
-                          <p className="text-[10px] text-gray-400 mt-0.5">
-                            {timeAgo(n.created_at, t)}
-                          </p>
-                        </div>
-                        {!n.read && (
-                          <div className="w-2 h-2 rounded-full bg-blue-500 mt-2 flex-shrink-0" />
-                        )}
+                      ))}
+                    </div>
+
+                    {hasMore && (
+                      <div className="flex justify-center py-3 pb-4">
+                        <button
+                          onClick={loadMore}
+                          disabled={loadingMore}
+                          className="px-5 py-2 rounded-full text-sm font-bold text-white transition-all active:scale-95 disabled:opacity-50"
+                          style={{
+                            background: 'linear-gradient(180deg, #8BC34A 0%, #689F38 100%)',
+                            boxShadow: '0 3px 8px rgba(104,159,56,0.35), inset 0 1px 0 rgba(255,255,255,0.25)',
+                          }}
+                        >
+                          {loadingMore ? '...' : t('notif.load_more')}
+                        </button>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-4">
+              <div className="flex-1 overflow-y-auto overscroll-contain p-4 space-y-3">
                 {/* User info */}
-                <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                <div className="bg-white/60 rounded-2xl p-4 flex items-center gap-4" style={{ border: '1px solid rgba(200,170,120,0.2)' }}>
                   <div className="w-14 h-14 rounded-full bg-gradient-to-br from-green-200 to-green-300 flex items-center justify-center border-2 border-white shadow-md overflow-hidden">
                     <img src={AVATAR_IMAGES[user?.avatar_id ?? 'bear'] || AVATAR_IMAGES.bear} alt="" className="w-12 h-12 object-contain" />
                   </div>
                   <div>
-                    <p className="text-base font-bold text-gray-800">{user?.nickname}</p>
-                    <p className="text-xs text-gray-400">{user?.email}</p>
+                    <p className="text-base font-bold text-amber-900">{user?.nickname}</p>
+                    <p className="text-xs text-amber-700/60">{user?.email}</p>
                   </div>
                 </div>
 
                 {/* Language */}
-                <div className="bg-gray-50 rounded-2xl p-4">
-                  <p className="text-sm font-bold text-gray-700 mb-3">{t('profile.language')}</p>
+                <div className="bg-white/60 rounded-2xl p-4" style={{ border: '1px solid rgba(200,170,120,0.2)' }}>
+                  <p className="text-sm font-bold text-amber-900 mb-3">{t('profile.language')}</p>
                   <div className="flex gap-2">
                     {LANGUAGES.map((lang) => (
                       <button
                         key={lang.code}
-                        className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                        className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all active:scale-95 ${
                           i18n.language === lang.code
-                            ? 'bg-green-500 text-white shadow-sm'
-                            : 'bg-white text-gray-600 border border-gray-200'
+                            ? 'text-white shadow-sm'
+                            : 'bg-white/80 text-amber-800 border border-amber-200'
                         }`}
+                        style={i18n.language === lang.code ? {
+                          background: 'linear-gradient(180deg, #8BC34A 0%, #689F38 100%)',
+                        } : undefined}
                         onClick={() => handleLangChange(lang.code)}
                       >
                         {lang.label}
@@ -267,7 +360,8 @@ export default function NotificationsPopup({
 
                 {/* Logout */}
                 <button
-                  className="w-full bg-gray-50 rounded-2xl p-4 text-left text-sm font-semibold text-red-500 hover:bg-red-50 transition-colors"
+                  className="w-full bg-white/60 rounded-2xl p-4 text-left text-sm font-semibold text-red-500 hover:bg-red-50/60 transition-colors active:scale-[0.98]"
+                  style={{ border: '1px solid rgba(200,170,120,0.2)' }}
                   onClick={() => { logout(); onClose(); }}
                 >
                   {t('profile.logout')} →

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { notify } from '../lib/notify.js';
 
 export const gamesRouter = Router();
 gamesRouter.use(requireAuth);
@@ -70,6 +71,11 @@ gamesRouter.post('/:id/claim', async (req: Request, res: Response) => {
       [game.reward_amount, userId]
     );
   }
+
+  await notify(userId, 'game', 'notif.game_reward', {
+    reward: game.reward_amount,
+    unit: game.reward_type === 'water' ? 'water' : 'nutrition',
+  });
 
   res.json({
     success: true,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, setToken, getToken } from '../lib/api';
+import { api, setToken, setRefreshToken, getToken } from '../lib/api';
 
 interface User {
   id: string;
@@ -60,6 +60,7 @@ export function useAuth() {
       body: JSON.stringify({ email, code, refCode }),
     });
     setToken(data.accessToken);
+    setRefreshToken(data.refreshToken);
     globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
     notify();
     return data;
@@ -74,6 +75,7 @@ export function useAuth() {
 
   const logout = useCallback(() => {
     setToken(null);
+    setRefreshToken(null);
     globalAuthState = { user: null, isAuthenticated: false, isLoading: false };
     notify();
   }, []);

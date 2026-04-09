@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { queryOne, execute } from '../lib/db.js';
-import { signAccessToken, signRefreshToken } from '../lib/jwt.js';
+import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID } from 'crypto';
 
 export const authRouter = Router();
@@ -130,5 +130,18 @@ authRouter.post('/google', async (req: Request, res: Response) => {
     }
     console.error('[auth/google]', err);
     res.status(500).json({ success: false, error: { code: 'AUTH_ERROR', message: 'Authentication failed' } });
+  }
+});
+
+authRouter.post('/refresh', async (req: Request, res: Response) => {
+  const { refreshToken } = z.object({ refreshToken: z.string() }).parse(req.body);
+
+  try {
+    const payload = verifyToken(refreshToken);
+    const newAccess = signAccessToken({ userId: payload.userId, email: payload.email });
+    const newRefresh = signRefreshToken({ userId: payload.userId, email: payload.email });
+    res.json({ success: true, data: { accessToken: newAccess, refreshToken: newRefresh } });
+  } catch {
+    res.status(401).json({ success: false, error: { code: 'REFRESH_EXPIRED', message: 'Refresh token expired' } });
   }
 });

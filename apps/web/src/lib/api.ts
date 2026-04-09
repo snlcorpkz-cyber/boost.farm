@@ -3,7 +3,9 @@ import { mockApi } from './mock-api';
 const API_BASE = '/api';
 
 let accessToken: string | null = localStorage.getItem('eco_token');
+let refreshToken: string | null = localStorage.getItem('eco_refresh');
 let useMock = false;
+let isRefreshing: Promise<boolean> | null = null;
 const MOCK_FALLBACK_ENABLED = true;
 
 export function setToken(token: string | null) {
@@ -15,12 +17,42 @@ export function setToken(token: string | null) {
   }
 }
 
+export function setRefreshToken(token: string | null) {
+  refreshToken = token;
+  if (token) {
+    localStorage.setItem('eco_refresh', token);
+  } else {
+    localStorage.removeItem('eco_refresh');
+  }
+}
+
 export function getToken(): string | null {
   return accessToken;
 }
 
 export function isUsingMock(): boolean {
   return useMock;
+}
+
+async function tryRefresh(): Promise<boolean> {
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    if (json.data?.accessToken) {
+      setToken(json.data.accessToken);
+      setRefreshToken(json.data.refreshToken);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export async function api<T = any>(
@@ -74,6 +106,19 @@ export async function api<T = any>(
       useMock = true;
       return mockApi(path, options) as T;
     }
+
+    if (res.status === 401 && refreshToken && !path.includes('/auth/refresh')) {
+      if (!isRefreshing) {
+        isRefreshing = tryRefresh().finally(() => { isRefreshing = null; });
+      }
+      const ok = await isRefreshing;
+      if (ok) {
+        return api<T>(path, options);
+      }
+      setToken(null);
+      setRefreshToken(null);
+    }
+
     throw new ApiError(json.error?.code || 'UNKNOWN', json.error?.message || 'Request failed', res.status);
   }
 

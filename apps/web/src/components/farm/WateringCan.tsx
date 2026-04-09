@@ -20,8 +20,9 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
   const [selectedBatch, setSelectedBatch] = useState<BatchSize>(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const displayAmount = Math.round(waterAmount);
   const requiredWater = selectedBatch * 10;
-  const canDoSelected = canWater && waterAmount >= requiredWater && !isWatering;
+  const canDoSelected = canWater && displayAmount >= requiredWater && !isWatering;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -58,7 +59,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
               transition={{ duration: 0.12 }}
             >
               {BATCH_OPTIONS.map((size) => {
-                const enough = waterAmount >= size * 10;
+                const enough = displayAmount >= size * 10;
                 const isActive = selectedBatch === size;
                 return (
                   <button
@@ -169,7 +170,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
         transition={{ duration: 0.6 }}
       >
         <span className="text-[11px] font-extrabold text-blue-700 tabular-nums">
-          {waterAmount.toFixed(0)}g
+          {displayAmount}g
         </span>
       </motion.div>
     </div>

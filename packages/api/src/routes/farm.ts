@@ -10,6 +10,7 @@ import {
   getMultiplier,
   getRankForWater,
 } from '@eco-farm/game-engine';
+import { notify } from '../lib/notify.js';
 
 export const farmRouter = Router();
 farmRouter.use(requireAuth);
@@ -100,6 +101,10 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
     [result.newWaterInCan, now.toISOString(), farm.id]
   );
 
+  if (result.collected > 0) {
+    await notify(userId, 'bucket', 'notif.bucket_collected', { amount: Math.round(result.collected) });
+  }
+
   res.json({ success: true, data: { collected: result.collected, waterInCan: result.newWaterInCan } });
 });
 
@@ -170,6 +175,10 @@ farmRouter.post(
          result.newNutrition, farm.total_waterings_today + body.times, result.harvested, farm.id]
       );
 
+      if (result.newStage > farm.current_stage) {
+        await notify(userId, 'stage', 'notif.stage_up', { stage: result.newStage });
+      }
+
       if (result.harvested) {
         const couponCode = `ECO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
         const expiresAt = new Date(Date.now() + farm.products.coupon_validity_days * 24 * 60 * 60 * 1000);
@@ -178,6 +187,8 @@ farmRouter.post(
           `INSERT INTO coupons (user_id, product_id, code, expires_at) VALUES ($1, $2, $3, $4)`,
           [userId, farm.product_id, couponCode, expiresAt.toISOString()]
         );
+
+        await notify(userId, 'harvest', 'notif.harvest_complete', { product: farm.products.name_key });
       }
 
       const today = todayStr();

@@ -54,15 +54,39 @@ userRouter.patch('/profile', async (req: Request, res: Response) => {
 
 userRouter.get('/notifications', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+  const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
 
-  const notifications = await query(
-    `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,
+  const rows = await query(
+    `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [userId, limit + 1, offset]
+  );
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+
+  const notifications = page.map((n: any) => {
+    const payload = typeof n.payload === 'string' ? JSON.parse(n.payload) : (n.payload || {});
+    const { message_key, ...params } = payload;
+    return {
+      id: n.id,
+      type: n.type,
+      message_key: message_key || `notif.${n.type}`,
+      params,
+      created_at: n.created_at,
+      read: n.read,
+    };
+  });
+
+  const unreadRow = await queryOne(
+    `SELECT count(*)::int AS cnt FROM notifications WHERE user_id = $1 AND read = false`,
     [userId]
   );
 
-  const unreadCount = notifications.filter((n: any) => !n.read).length;
-
-  res.json({ success: true, data: { notifications, unreadCount } });
+  res.json({
+    success: true,
+    data: { notifications, unreadCount: unreadRow?.cnt ?? 0, hasMore, nextOffset: offset + limit },
+  });
 });
 
 userRouter.post('/notifications/mark-read', async (req: Request, res: Response) => {

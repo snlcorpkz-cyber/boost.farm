@@ -72,7 +72,7 @@ interface MockPetsState {
 
 interface MockNotification {
   id: string;
-  type: 'greet' | 'water' | 'quest' | 'invite' | 'gift' | 'stage';
+  type: 'greet' | 'water' | 'quest' | 'invite' | 'gift' | 'stage' | 'bucket' | 'harvest' | 'game';
   message_key: string;
   params: Record<string, string | number>;
   created_at: string;
@@ -354,6 +354,9 @@ export async function mockApi(path: string, options: RequestInit = {}): Promise<
     state.farm.water_in_can = parseFloat((state.farm.water_in_can + collected).toFixed(2));
     addMonthlyWater(state.farm, collected);
     state.farm.bucket_last_collected_at = new Date().toISOString();
+    if (collected > 0) {
+      pushNotification('bucket', 'notif.bucket_collected', { amount: Math.round(collected) });
+    }
     saveState(state);
     return { collected, waterInCan: state.farm.water_in_can };
   }
@@ -383,12 +386,20 @@ export async function mockApi(path: string, options: RequestInit = {}): Promise<
       product.difficulty_stars,
       activePet
     );
+    const oldStage = state.farm.current_stage;
     state.farm.growth_percent = result.newGrowthPercent;
     state.farm.current_stage = result.newStage;
     state.farm.water_in_can = result.newWaterInCan;
     state.farm.nutrition = result.newNutrition;
     state.farm.total_waterings_today += times;
     state.farm.harvested = result.harvested;
+
+    if (result.newStage > oldStage) {
+      pushNotification('stage', 'notif.stage_up', { stage: result.newStage });
+    }
+    if (result.harvested) {
+      pushNotification('harvest', 'notif.harvest_complete', {});
+    }
 
     const today = todayStr();
     if (state.dailyChallenge.date !== today) {
@@ -624,9 +635,14 @@ export async function mockApi(path: string, options: RequestInit = {}): Promise<
   }
 
   // NOTIFICATIONS
-  if (path === '/user/notifications' && method === 'GET') {
-    const unreadCount = state.notifications.filter((n) => !n.read).length;
-    return { notifications: state.notifications, unreadCount };
+  if (path.startsWith('/user/notifications') && !path.includes('mark-read') && method === 'GET') {
+    const url = new URL(path, 'http://x');
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 50);
+    const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
+    const all = state.notifications;
+    const page = all.slice(offset, offset + limit);
+    const unreadCount = all.filter((n) => !n.read).length;
+    return { notifications: page, unreadCount, hasMore: offset + limit < all.length, nextOffset: offset + limit };
   }
   if (path === '/user/notifications/mark-read' && method === 'POST') {
     const ids: string[] = body.ids || [];
