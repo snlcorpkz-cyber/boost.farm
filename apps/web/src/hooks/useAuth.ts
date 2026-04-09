@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, setToken, getToken } from '../lib/api';
-import { resetMockState } from '../lib/mock-api';
 
 interface User {
   id: string;
@@ -75,7 +74,6 @@ export function useAuth() {
 
   const logout = useCallback(() => {
     setToken(null);
-    resetMockState();
     globalAuthState = { user: null, isAuthenticated: false, isLoading: false };
     notify();
   }, []);

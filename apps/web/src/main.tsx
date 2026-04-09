@@ -24,9 +24,9 @@ class ErrorBoundary extends React.Component<
           <pre style={{ whiteSpace: 'pre-wrap', fontSize: 11, color: '#666' }}>
             {this.state.error.stack}
           </pre>
-          <button onClick={() => { localStorage.removeItem('eco_mock_state'); location.reload(); }}
+          <button onClick={() => { location.reload(); }}
             style={{ marginTop: 16, padding: '8px 16px', background: '#333', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-            Reset State & Reload
+            Reload
           </button>
         </div>
       );

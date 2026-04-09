@@ -95,7 +95,7 @@ export default function FriendFarmPage() {
   });
 
   const handleWater = useCallback(
-    (_times: 1 | 5) => {
+    (_times: 1 | 5 | 20) => {
       setIsWatering(true);
       waterMutation.mutate(undefined, {
         onSettled: () => {

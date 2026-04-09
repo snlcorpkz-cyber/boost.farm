@@ -1,6 +1,3 @@
-import { mockApi } from './mock-api';
-
-const USE_MOCK = true; // Set to false when real backend is ready
 const API_BASE = '/api';
 
 let accessToken: string | null = localStorage.getItem('eco_token');
@@ -22,10 +19,6 @@ export async function api<T = any>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  if (USE_MOCK) {
-    return mockApi(path, options) as Promise<T>;
-  }
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Timezone-Offset': String(new Date().getTimezoneOffset()),

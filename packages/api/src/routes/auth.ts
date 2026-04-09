@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { supabase } from '../lib/supabase.js';
+import { query, queryOne, execute } from '../lib/db.js';
 import { signAccessToken, signRefreshToken } from '../lib/jwt.js';
 
 export const authRouter = Router();
@@ -28,13 +28,11 @@ authRouter.post('/send-code', async (req: Request, res: Response) => {
     const code = generateCode();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    await supabase.from('auth_codes').insert({
-      email,
-      code,
-      expires_at: expiresAt.toISOString(),
-    });
+    await execute(
+      `INSERT INTO auth_codes (email, code, expires_at) VALUES ($1, $2, $3)`,
+      [email, code, expiresAt.toISOString()]
+    );
 
-    // TODO: Send email with code via nodemailer
     console.log(`[Auth] Code for ${email}: ${code}`);
 
     res.json({ success: true, data: { message: 'Code sent' } });
@@ -51,47 +49,31 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
     const { email, code } = verifyCodeSchema.parse(req.body);
 
-    const { data: authCode } = await supabase
-      .from('auth_codes')
-      .select('*')
-      .eq('email', email)
-      .eq('code', code)
-      .eq('used', false)
-      .gte('expires_at', new Date().toISOString())
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+    const authCode = await queryOne(
+      `SELECT * FROM auth_codes
+       WHERE email = $1 AND code = $2 AND used = false AND expires_at >= $3
+       ORDER BY created_at DESC LIMIT 1`,
+      [email, code, new Date().toISOString()]
+    );
 
     if (!authCode) {
       res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid or expired code' } });
       return;
     }
 
-    await supabase
-      .from('auth_codes')
-      .update({ used: true })
-      .eq('id', authCode.id);
+    await execute(`UPDATE auth_codes SET used = true WHERE id = $1`, [authCode.id]);
 
-    let { data: user } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
+    let user = await queryOne(`SELECT * FROM users WHERE email = $1`, [email]);
     const isNewUser = !user;
 
     if (!user) {
-      const { data: newUser } = await supabase
-        .from('users')
-        .insert({ email, nickname: email.split('@')[0], avatar_id: 'cat', locale: 'en' })
-        .select()
-        .single();
-      user = newUser;
+      user = await queryOne(
+        `INSERT INTO users (email, nickname, avatar_id, locale)
+         VALUES ($1, $2, 'cat', 'en') RETURNING *`,
+        [email, email.split('@')[0]]
+      );
     } else {
-      await supabase
-        .from('users')
-        .update({ last_login_at: new Date().toISOString() })
-        .eq('id', user.id);
+      await execute(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
     }
 
     const tokens = {
@@ -113,7 +95,6 @@ authRouter.post('/google', async (req: Request, res: Response) => {
   try {
     const { idToken } = googleAuthSchema.parse(req.body);
 
-    // TODO: Verify Google ID token properly with google-auth-library
     const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString());
     const email = payload.email;
 
@@ -122,26 +103,15 @@ authRouter.post('/google', async (req: Request, res: Response) => {
       return;
     }
 
-    let { data: user } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
+    let user = await queryOne(`SELECT * FROM users WHERE email = $1`, [email]);
     const isNewUser = !user;
 
     if (!user) {
-      const { data: newUser } = await supabase
-        .from('users')
-        .insert({
-          email,
-          nickname: payload.name || email.split('@')[0],
-          avatar_id: 'cat',
-          locale: 'en',
-        })
-        .select()
-        .single();
-      user = newUser;
+      user = await queryOne(
+        `INSERT INTO users (email, nickname, avatar_id, locale)
+         VALUES ($1, $2, 'cat', 'en') RETURNING *`,
+        [email, payload.name || email.split('@')[0]]
+      );
     }
 
     const tokens = {

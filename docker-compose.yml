@@ -1,6 +1,23 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      target: frontend
     ports:
       - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      target: api
+    env_file:
+      - .env
+    environment:
+      - PORT=3001
+      - CLIENT_URL=http://localhost:3000
+    expose:
+      - "3001"
     restart: unless-stopped

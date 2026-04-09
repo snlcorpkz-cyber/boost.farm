@@ -81,7 +81,7 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
       qc.invalidateQueries({ queryKey: ['farm'] });
       setCompletedIds((prev) => new Set(prev).add(questId));
       const q = WATER_QUESTS.find((w) => w.id === questId);
-      if (q) {
+      if (q && q.reward) {
         setReward({ amount: q.reward, id: questId });
         setTimeout(() => setReward(null), 1500);
         showReward('water', q.reward);

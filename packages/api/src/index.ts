@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { authRouter } from './routes/auth.js';
@@ -5,6 +6,9 @@ import { farmRouter } from './routes/farm.js';
 import { userRouter } from './routes/user.js';
 import { friendsRouter } from './routes/friends.js';
 import { questsRouter } from './routes/quests.js';
+import { gamesRouter } from './routes/games.js';
+import { petsRouter } from './routes/pets.js';
+import { productsRouter } from './routes/products.js';
 import { errorHandler } from './middleware/error-handler.js';
 
 const app = express();
@@ -25,6 +29,9 @@ app.use('/farm', farmRouter);
 app.use('/user', userRouter);
 app.use('/friends', friendsRouter);
 app.use('/quests', questsRouter);
+app.use('/games', gamesRouter);
+app.use('/pets', petsRouter);
+app.use('/admin/products', productsRouter);
 
 app.use(errorHandler);
 
