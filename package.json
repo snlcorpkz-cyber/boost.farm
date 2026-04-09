@@ -1,0 +1,21 @@
+{
+  "name": "eco-farm",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "npm run dev -w packages/api",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "build:web": "npm run build -w apps/web",
+    "build:api": "npm run build -w packages/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "sharp": "^0.34.5",
+    "typescript": "^5.7.0"
+  }
+}
