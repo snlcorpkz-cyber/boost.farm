@@ -13,7 +13,7 @@ export default function App() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-farm-green/10">
+      <div className="h-full flex items-center justify-center bg-farm-green/10">
         <div className="animate-bounce-slow text-6xl">🌱</div>
       </div>
     );

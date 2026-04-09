@@ -73,7 +73,7 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-100 via-green-50 to-white flex flex-col items-center justify-center px-6">
+    <div className="h-full min-h-[100dvh] bg-gradient-to-b from-green-100 via-green-50 to-white flex flex-col items-center justify-center px-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

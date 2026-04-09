@@ -109,7 +109,7 @@ export default function FriendFarmPage() {
   if (!friendId || isLoading) {
     return (
       <Background>
-        <div className="min-h-screen flex items-center justify-center">
+        <div className="h-full flex items-center justify-center">
           <div className="animate-bounce text-6xl">🌱</div>
         </div>
       </Background>
@@ -119,7 +119,7 @@ export default function FriendFarmPage() {
   if (!friend) {
     return (
       <Background>
-        <div className="flex flex-col min-h-screen px-4 pt-4">
+        <div className="flex flex-col h-full px-4 pt-4">
           <button
             type="button"
             onClick={() => navigate(-1)}

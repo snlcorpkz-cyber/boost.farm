@@ -19,7 +19,7 @@ export default function Background({ children }: { children: React.ReactNode }) 
   const bgImage = night ? BG.night : PHASE_BG[phase] || BG.afternoon;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#1a3a2a]">
+    <div className="relative h-full overflow-hidden bg-[#1a3a2a]">
       <img
         src={bgImage}
         alt=""

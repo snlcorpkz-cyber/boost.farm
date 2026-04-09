@@ -205,7 +205,7 @@ export default function FarmPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-green-50">
+      <div className="h-full flex items-center justify-center bg-green-50">
         <div className="animate-bounce text-5xl">🌱</div>
       </div>
     );

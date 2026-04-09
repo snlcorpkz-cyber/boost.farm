@@ -25,7 +25,7 @@ export default function CropSelectPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-green-100 to-white px-4 pt-8 pb-8">
+    <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white px-4 pt-8 pb-8">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-extrabold text-center text-gray-800 mb-2">
           {t('farm.select_crop')}
@@ -40,10 +40,17 @@ export default function CropSelectPage() {
             const photo = PRODUCT_PHOTOS[product.name_key];
             const available = product.name_key === 'product.potato';
             return (
-              <motion.div
+              <motion.button
                 key={product.id}
-                className="rounded-2xl p-4 shadow-md border-2 bg-white border-transparent transition-all flex flex-col items-center gap-2 relative"
+                type="button"
+                className={`rounded-2xl p-4 shadow-md border-2 bg-white transition-all flex flex-col items-center gap-2 relative ${
+                  available
+                    ? 'border-transparent active:border-farm-green'
+                    : 'border-transparent opacity-70'
+                }`}
                 whileTap={available ? { scale: 0.95 } : {}}
+                onClick={() => available && !newCrop.isPending && handleSelect(product.id)}
+                disabled={!available || newCrop.isPending}
               >
                 {photo ? (
                   <img
@@ -71,19 +78,15 @@ export default function CropSelectPage() {
                   {t(`difficulty.${stars}`)}
                 </span>
                 {available ? (
-                  <button
-                    className="mt-1 px-5 py-1.5 bg-farm-green text-white text-xs font-bold rounded-full shadow active:scale-95 transition-transform"
-                    onClick={() => handleSelect(product.id)}
-                    disabled={newCrop.isPending}
-                  >
+                  <span className="mt-1 px-5 py-1.5 bg-farm-green text-white text-xs font-bold rounded-full shadow">
                     {t('farm.select_crop')}
-                  </button>
+                  </span>
                 ) : (
                   <span className="mt-1 px-5 py-1.5 bg-gray-200 text-gray-400 text-xs font-bold rounded-full">
                     Soon
                   </span>
                 )}
-              </motion.div>
+              </motion.button>
             );
           })}
         </div>

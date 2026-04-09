@@ -31,7 +31,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white pb-20">
+    <div className="h-full overflow-y-auto bg-gradient-to-b from-gray-50 to-white pb-20">
       <div className="bg-white/80 backdrop-blur-md px-4 pt-4 pb-3 shadow-sm">
         <h1 className="text-xl font-extrabold text-gray-800">{t('profile.title')}</h1>
       </div>
