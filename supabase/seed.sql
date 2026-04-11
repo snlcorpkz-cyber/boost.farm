@@ -1,10 +1,10 @@
 -- Seed products
-insert into public.products (name_key, difficulty_stars, base_water_required, coupon_validity_days) values
-  ('product.potato', 1, 10000, 60),
-  ('product.tomato', 3, 10000, 60),
-  ('product.carrot', 1, 10000, 60),
-  ('product.cucumber', 2, 10000, 60),
-  ('product.onion', 3, 10000, 60);
+insert into public.products (name_key, difficulty_stars, base_water_required, coupon_value_cents, coupon_validity_days) values
+  ('product.potato',   1, 21000, 150, 60),
+  ('product.carrot',   1, 21000, 150, 60),
+  ('product.onion',    2, 35000, 300, 60),
+  ('product.cucumber', 2, 35000, 350, 60),
+  ('product.tomato',   3, 50000, 500, 60);
 
 -- Seed quests
 insert into public.quests (quest_key, reward_type, reward_amount, limit_per_phase) values

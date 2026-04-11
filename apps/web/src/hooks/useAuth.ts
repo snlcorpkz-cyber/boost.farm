@@ -37,21 +37,55 @@ export function useAuth() {
   }, []);
 
   useEffect(() => {
-    if (getToken()) {
-      api('/user/profile')
-        .then((data) => {
+    let cancelled = false;
+
+    async function bootstrap() {
+      const tgInit =
+        typeof window !== 'undefined' ? window.Telegram?.WebApp?.initData : undefined;
+
+      if (getToken()) {
+        try {
+          const data = await api<{ user: User }>('/user/profile');
+          if (cancelled) return;
           globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
-        })
-        .catch(() => {
+          return;
+        } catch {
           setToken(null);
-          globalAuthState = { user: null, isAuthenticated: false, isLoading: false };
+          setRefreshToken(null);
+        }
+      }
+
+      if (tgInit) {
+        try {
+          const data = await api<{
+            accessToken: string;
+            refreshToken: string;
+            user: User;
+          }>('/auth/telegram', {
+            method: 'POST',
+            body: JSON.stringify({ initData: tgInit }),
+          });
+          if (cancelled) return;
+          setToken(data.accessToken);
+          setRefreshToken(data.refreshToken);
+          globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
-        });
-    } else {
+          return;
+        } catch (e) {
+          console.warn('[auth] Telegram Mini App login failed', e);
+        }
+      }
+
+      if (cancelled) return;
       globalAuthState = { user: null, isAuthenticated: false, isLoading: false };
       notify();
     }
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = useCallback(async (email: string, code: string, refCode?: string) => {

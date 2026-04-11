@@ -77,6 +77,11 @@ export default function CropSelectPage() {
                 <span className="text-[10px] text-gray-400">
                   {t(`difficulty.${stars}`)}
                 </span>
+                {product.coupon_value_cents > 0 && (
+                  <span className="text-[11px] font-semibold text-emerald-600">
+                    🎟️ ${(product.coupon_value_cents / 100).toFixed(2)} {t('coupon.discount')}
+                  </span>
+                )}
                 {available ? (
                   <span className="mt-1 px-5 py-1.5 bg-farm-green text-white text-xs font-bold rounded-full shadow">
                     {t('farm.select_crop')}

@@ -2,19 +2,22 @@ import { StageConfig } from './types.js';
 import { DIFFICULTY_MULTIPLIERS } from './constants.js';
 
 /**
- * Base percent-per-watering at x1.0 multiplier for a ★1 (easiest) crop.
- * Kauche-style non-linear progression: early stages fly, late stages grind.
+ * Base percent-per-watering at x1.0 nutrition multiplier for a ★1 (easiest) crop.
+ * Kauche-style non-linear progression: early stages fast, late stages grind.
  *
- * At x2.0 multiplier, the values double. The total waterings to reach 100%
- * for a ★1 crop at x2.0 is ~4000 waterings ≈ 40,000g water.
+ * Calibrated so that a ★1 crop at x2.0 nutrition takes ~2,100 waterings
+ * (~21,000g water, ~21 days at 1000g/day).
+ *
+ * ★2 crops (DIFF_MULT 1.65) → ~3,450 waterings, ~35 days
+ * ★3 crops (DIFF_MULT 2.40) → ~5,000 waterings, ~50 days
  */
 const BASE_STAGE_CONFIG: StageConfig[] = [
-  { stageNumber: 1, percentPerWateringX1: 7.5 },
-  { stageNumber: 2, percentPerWateringX1: 1.65 },
-  { stageNumber: 3, percentPerWateringX1: 0.31 },
-  { stageNumber: 4, percentPerWateringX1: 0.079 },
-  { stageNumber: 5, percentPerWateringX1: 0.044 },
-  { stageNumber: 6, percentPerWateringX1: 0.026 },
+  { stageNumber: 1, percentPerWateringX1: 2.10 },
+  { stageNumber: 2, percentPerWateringX1: 0.56 },
+  { stageNumber: 3, percentPerWateringX1: 0.10 },
+  { stageNumber: 4, percentPerWateringX1: 0.027 },
+  { stageNumber: 5, percentPerWateringX1: 0.015 },
+  { stageNumber: 6, percentPerWateringX1: 0.0075 },
 ];
 
 /**

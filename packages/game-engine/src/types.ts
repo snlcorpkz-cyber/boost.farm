@@ -19,6 +19,7 @@ export interface Product {
   nameKey: string;
   difficultyStars: number;
   baseWaterRequired: number;
+  couponValueCents: number;
   imageUrl: string;
   active: boolean;
   couponValidityDays: number;

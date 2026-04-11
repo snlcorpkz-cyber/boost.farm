@@ -3,6 +3,11 @@ import { z } from 'zod';
 import { queryOne, execute } from '../lib/db.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID } from 'crypto';
+import {
+  verifyTelegramInitData,
+  parseTelegramUser,
+  syntheticTelegramEmail,
+} from '../lib/telegram-auth.js';
 
 export const authRouter = Router();
 
@@ -18,6 +23,10 @@ const verifyCodeSchema = z.object({
 
 const googleAuthSchema = z.object({
   idToken: z.string(),
+});
+
+const telegramInitSchema = z.object({
+  initData: z.string().min(1),
 });
 
 function makeDemoUser(email: string) {
@@ -36,6 +45,21 @@ function makeTokens(userId: string, email: string) {
     accessToken: signAccessToken({ userId, email }),
     refreshToken: signRefreshToken({ userId, email }),
   };
+}
+
+function localeFromTelegram(code: string | undefined): string {
+  if (!code) return 'en';
+  const c = code.toLowerCase();
+  if (c.startsWith('ru')) return 'ru';
+  if (c.startsWith('es')) return 'es';
+  return 'en';
+}
+
+function nicknameFromTelegram(tg: { id: number; first_name?: string; last_name?: string; username?: string }): string {
+  if (tg.username) return tg.username.slice(0, 20);
+  const name = [tg.first_name, tg.last_name].filter(Boolean).join(' ').trim();
+  if (name) return name.slice(0, 20);
+  return `Farmer${tg.id}`.slice(0, 20);
 }
 
 authRouter.post('/send-code', async (req: Request, res: Response) => {
@@ -130,6 +154,78 @@ authRouter.post('/google', async (req: Request, res: Response) => {
     }
     console.error('[auth/google]', err);
     res.status(500).json({ success: false, error: { code: 'AUTH_ERROR', message: 'Authentication failed' } });
+  }
+});
+
+authRouter.post('/telegram', async (req: Request, res: Response) => {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) {
+    res.status(503).json({
+      success: false,
+      error: { code: 'TELEGRAM_DISABLED', message: 'Telegram auth is not configured' },
+    });
+    return;
+  }
+
+  try {
+    const { initData } = telegramInitSchema.parse(req.body);
+
+    if (!verifyTelegramInitData(initData, botToken)) {
+      res.status(401).json({ success: false, error: { code: 'INVALID_INIT_DATA', message: 'Bad Telegram signature' } });
+      return;
+    }
+
+    const tgUser = parseTelegramUser(initData);
+    if (!tgUser?.id) {
+      res.status(400).json({ success: false, error: { code: 'NO_USER', message: 'No user in init data' } });
+      return;
+    }
+
+    const email = syntheticTelegramEmail(tgUser.id);
+    const nickname = nicknameFromTelegram(tgUser);
+    const locale = localeFromTelegram(tgUser.language_code);
+
+    let user: any = await queryOne(`SELECT * FROM users WHERE telegram_id = $1`, [tgUser.id]);
+    let isNewUser = false;
+
+    if (!user) {
+      user = await queryOne(`SELECT * FROM users WHERE email = $1`, [email]);
+      if (user) {
+        await execute(`UPDATE users SET telegram_id = $1, last_login_at = NOW() WHERE id = $2`, [tgUser.id, user.id]);
+        user = await queryOne(`SELECT * FROM users WHERE id = $1`, [user.id]);
+      }
+    }
+
+    if (!user) {
+      try {
+        user = await queryOne(
+          `INSERT INTO users (email, nickname, avatar_id, locale, telegram_id)
+           VALUES ($1, $2, 'bear', $3, $4) RETURNING *`,
+          [email, nickname, locale, tgUser.id]
+        );
+        isNewUser = true;
+      } catch (e: any) {
+        if (e.code === '23505') {
+          user = await queryOne(
+            `SELECT * FROM users WHERE telegram_id = $1 OR email = $2`,
+            [tgUser.id, email]
+          );
+        }
+        if (!user) throw e;
+      }
+    } else {
+      await execute(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
+    }
+
+    const tokens = makeTokens(user.id, user.email);
+    res.json({ success: true, data: { ...tokens, user, isNewUser } });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION', message: err.message } });
+      return;
+    }
+    console.error('[auth/telegram]', err);
+    res.status(500).json({ success: false, error: { code: 'AUTH_ERROR', message: 'Telegram auth failed' } });
   }
 });
 

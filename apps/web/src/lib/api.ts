@@ -107,7 +107,7 @@ export async function api<T = any>(
       return mockApi(path, options) as T;
     }
 
-    if (res.status === 401 && refreshToken && !path.includes('/auth/refresh')) {
+    if (res.status === 401 && refreshToken && !path.startsWith('/auth/')) {
       if (!isRefreshing) {
         isRefreshing = tryRefresh().finally(() => { isRefreshing = null; });
       }

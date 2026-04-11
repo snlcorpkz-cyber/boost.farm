@@ -223,5 +223,6 @@
   "quests.ad_fert": "Watch ad (fertilizer)",
   "quests.ad_limit_2": "2 per phase",
   "quests.invite_friend": "Invite friend",
-  "quests.invite_reward": "+100 fertilizer for both"
+  "quests.invite_reward": "+100 fertilizer for both",
+  "coupon.discount": "coupon"
 }

@@ -223,5 +223,6 @@
   "quests.ad_fert": "Просмотр рекламы (удобрения)",
   "quests.ad_limit_2": "2 раза за фазу",
   "quests.invite_friend": "Пригласить друга",
-  "quests.invite_reward": "+100 удобрений обоим"
+  "quests.invite_reward": "+100 удобрений обоим",
+  "coupon.discount": "купон"
 }

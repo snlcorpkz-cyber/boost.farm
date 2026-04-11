@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import FarmPage from './pages/FarmPage';
@@ -10,6 +11,14 @@ import ProfilePage from './pages/ProfilePage';
 
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isAuthenticated || typeof window === 'undefined') return;
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return;
+    tg.ready();
+    tg.expand();
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (

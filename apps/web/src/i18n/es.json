@@ -202,5 +202,6 @@
   "notif.daily_challenge_done": "¡Desafío diario completado! +{{reward}}g agua",
   "notif.game_reward": "Recompensa del juego: +{{reward}} {{unit}}",
   "notif.ad_reward": "Recompensa por anuncio: +{{amount}} {{unit}}",
-  "notif.load_more": "Cargar más"
+  "notif.load_more": "Cargar más",
+  "coupon.discount": "cupón"
 }

@@ -13,11 +13,11 @@ import {
 } from '@eco-farm/game-engine';
 
 const PRODUCTS = [
-  { id: 'p1', name_key: 'product.potato', difficulty_stars: 1, base_water_required: 10000, coupon_validity_days: 60, active: true, image_url: null },
-  { id: 'p2', name_key: 'product.tomato', difficulty_stars: 3, base_water_required: 10000, coupon_validity_days: 60, active: true, image_url: null },
-  { id: 'p3', name_key: 'product.carrot', difficulty_stars: 1, base_water_required: 10000, coupon_validity_days: 60, active: true, image_url: null },
-  { id: 'p4', name_key: 'product.cucumber', difficulty_stars: 2, base_water_required: 10000, coupon_validity_days: 60, active: true, image_url: null },
-  { id: 'p5', name_key: 'product.onion', difficulty_stars: 1, base_water_required: 10000, coupon_validity_days: 60, active: true, image_url: null },
+  { id: 'p1', name_key: 'product.potato',   difficulty_stars: 1, base_water_required: 21000, coupon_value_cents: 150, coupon_validity_days: 60, active: true, image_url: null },
+  { id: 'p2', name_key: 'product.carrot',   difficulty_stars: 1, base_water_required: 21000, coupon_value_cents: 150, coupon_validity_days: 60, active: true, image_url: null },
+  { id: 'p3', name_key: 'product.onion',    difficulty_stars: 2, base_water_required: 35000, coupon_value_cents: 300, coupon_validity_days: 60, active: true, image_url: null },
+  { id: 'p4', name_key: 'product.cucumber', difficulty_stars: 2, base_water_required: 35000, coupon_value_cents: 350, coupon_validity_days: 60, active: true, image_url: null },
+  { id: 'p5', name_key: 'product.tomato',   difficulty_stars: 3, base_water_required: 50000, coupon_value_cents: 500, coupon_validity_days: 60, active: true, image_url: null },
 ];
 
 const REF_FERT_REWARD = REFERRAL_REWARDS.NUTRITION;
@@ -311,6 +311,9 @@ export async function mockApi(path: string, options: RequestInit = {}): Promise<
       user: state.user,
       isNewUser,
     };
+  }
+  if (path === '/auth/telegram' && method === 'POST') {
+    throw new Error('Mock API: Telegram login requires the real API and TELEGRAM_BOT_TOKEN');
   }
 
   // USER
