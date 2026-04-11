@@ -1,12 +1,8 @@
-import { mockApi } from './mock-api';
-
 const API_BASE = '/api';
 
 let accessToken: string | null = localStorage.getItem('eco_token');
 let refreshToken: string | null = localStorage.getItem('eco_refresh');
-let useMock = false;
 let isRefreshing: Promise<boolean> | null = null;
-const MOCK_FALLBACK_ENABLED = true;
 
 export function setToken(token: string | null) {
   accessToken = token;
@@ -31,7 +27,7 @@ export function getToken(): string | null {
 }
 
 export function isUsingMock(): boolean {
-  return useMock;
+  return false;
 }
 
 async function tryRefresh(): Promise<boolean> {
@@ -59,10 +55,6 @@ export async function api<T = any>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  if (useMock) {
-    return mockApi(path, options) as T;
-  }
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Timezone-Offset': String(new Date().getTimezoneOffset()),
@@ -80,11 +72,6 @@ export async function api<T = any>(
       headers,
     });
   } catch {
-    if (MOCK_FALLBACK_ENABLED) {
-      console.warn('[api] Backend unavailable, switching to mock mode');
-      useMock = true;
-      return mockApi(path, options) as T;
-    }
     throw new ApiError('NETWORK', 'Backend unavailable', 0);
   }
 
@@ -92,21 +79,10 @@ export async function api<T = any>(
   try {
     json = await res.json();
   } catch {
-    if (MOCK_FALLBACK_ENABLED) {
-      console.warn('[api] Invalid JSON response, switching to mock mode');
-      useMock = true;
-      return mockApi(path, options) as T;
-    }
     throw new ApiError('PARSE', 'Invalid response', res.status);
   }
 
   if (!res.ok) {
-    if ((json?.error?.code === 'INTERNAL_ERROR' || res.status >= 500) && MOCK_FALLBACK_ENABLED) {
-      console.warn('[api] Server error, switching to mock mode');
-      useMock = true;
-      return mockApi(path, options) as T;
-    }
-
     if (res.status === 401 && refreshToken && !path.startsWith('/auth/')) {
       if (!isRefreshing) {
         isRefreshing = tryRefresh().finally(() => { isRefreshing = null; });
@@ -119,7 +95,11 @@ export async function api<T = any>(
       setRefreshToken(null);
     }
 
-    throw new ApiError(json.error?.code || 'UNKNOWN', json.error?.message || 'Request failed', res.status);
+    throw new ApiError(
+      json?.error?.code || 'UNKNOWN',
+      json?.error?.message || 'Request failed',
+      res.status
+    );
   }
 
   return json.data;
