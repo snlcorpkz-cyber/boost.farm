@@ -48,4 +48,4 @@ COPY --from=builder /app/packages/api/package.json packages/api/
 
 EXPOSE 3001
 
-CMD ["node", "packages/api/dist/index.js"]
+CMD ["node", "--dns-result-order=ipv4first", "packages/api/dist/index.js"]
