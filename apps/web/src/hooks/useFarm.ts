@@ -57,6 +57,11 @@ export function useNewCrop() {
         method: 'POST',
         body: JSON.stringify({ productId }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['farm'] }),
+    onSuccess: (data) => {
+      qc.setQueryData(['farm'], {
+        farm: data.farm,
+        needsCropSelection: false,
+      });
+    },
   });
 }

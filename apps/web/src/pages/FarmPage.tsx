@@ -223,8 +223,15 @@ export default function FarmPage() {
     );
   }
 
-  if (!farm || data?.needsCropSelection) {
-    navigate('/select-crop');
+  const shouldSelectCrop = !farm || data?.needsCropSelection;
+
+  useEffect(() => {
+    if (!isLoading && shouldSelectCrop) {
+      navigate('/select-crop', { replace: true });
+    }
+  }, [isLoading, shouldSelectCrop, navigate]);
+
+  if (shouldSelectCrop) {
     return null;
   }
 
