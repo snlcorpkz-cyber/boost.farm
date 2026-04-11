@@ -28,7 +28,7 @@ import { useRewardToast } from '../components/RewardToast';
 export default function FarmPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { data, isLoading } = useFarm();
+  const { data, isLoading, error: farmError } = useFarm();
   const { phase } = usePhase();
   const hour = new Date().getHours();
   const isNight = hour >= 22 || hour < 4;
@@ -215,7 +215,7 @@ export default function FarmPage() {
     }
   };
 
-  const shouldSelectCrop = !isLoading && (!farm || data?.needsCropSelection);
+  const shouldSelectCrop = !isLoading && !farmError && (!farm || data?.needsCropSelection);
 
   useEffect(() => {
     if (shouldSelectCrop) {
@@ -227,6 +227,23 @@ export default function FarmPage() {
     return (
       <div className="h-full flex items-center justify-center bg-green-50">
         <div className="animate-bounce text-5xl">🌱</div>
+      </div>
+    );
+  }
+
+  if (farmError) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center bg-green-50 px-6 gap-4">
+        <span className="text-5xl">⚠️</span>
+        <p className="text-sm text-gray-600 text-center">
+          {(farmError as any)?.message || 'Connection error'}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-2 bg-green-500 text-white rounded-xl font-bold text-sm"
+        >
+          {t('notif.load_more') || 'Retry'}
+        </button>
       </div>
     );
   }

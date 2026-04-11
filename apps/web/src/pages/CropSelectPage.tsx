@@ -10,9 +10,11 @@ export default function CropSelectPage() {
   const navigate = useNavigate();
   const newCrop = useNewCrop();
 
-  const { data: productsData } = useQuery({
+  const { data: productsData, isLoading, error, refetch } = useQuery({
     queryKey: ['products'],
     queryFn: () => api('/admin/products'),
+    retry: 3,
+    retryDelay: 1000,
   });
 
   const products = productsData?.products || [];
@@ -22,6 +24,31 @@ export default function CropSelectPage() {
       onSuccess: () => navigate('/'),
     });
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white flex items-center justify-center">
+        <div className="animate-bounce text-5xl">🌱</div>
+      </div>
+    );
+  }
+
+  if (error || products.length === 0) {
+    return (
+      <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white flex flex-col items-center justify-center px-6 gap-4">
+        <span className="text-5xl">⚠️</span>
+        <p className="text-sm text-gray-600 text-center">
+          {(error as any)?.message || 'Failed to load products'}
+        </p>
+        <button
+          onClick={() => refetch()}
+          className="px-6 py-2 bg-farm-green text-white rounded-xl font-bold text-sm"
+        >
+          {t('notif.load_more') || 'Retry'}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white px-4 pt-8 pb-8">
