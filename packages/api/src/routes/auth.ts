@@ -66,7 +66,7 @@ function nicknameFromTelegram(tg: { id: number; first_name?: string; last_name?:
 
 async function processReferral(newUserId: string, refCode: string) {
   const referral = await queryOne(
-    `SELECT inviter_id FROM referrals WHERE invite_code = $1`,
+    `SELECT inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
     [refCode]
   );
   if (!referral || referral.inviter_id === newUserId) return;
@@ -137,7 +137,7 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       isNewUser = true;
     }
 
-    if (isNewUser && refCode && user?.id) {
+    if (refCode && user?.id) {
       try {
         await processReferral(user.id, refCode);
       } catch (refErr) {

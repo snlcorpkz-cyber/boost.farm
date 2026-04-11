@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
+import { api } from './lib/api';
 import FarmPage from './pages/FarmPage';
 import AuthPage from './pages/AuthPage';
 import CropSelectPage from './pages/CropSelectPage';
@@ -9,8 +10,38 @@ import FriendsPage from './pages/FriendsPage';
 import FriendFarmPage from './pages/FriendFarmPage';
 import ProfilePage from './pages/ProfilePage';
 
+const REF_KEY = 'eco_ref_code';
+
+function captureRefFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const ref = params.get('ref');
+  if (ref) {
+    localStorage.setItem(REF_KEY, ref);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
+  const refProcessed = useRef(false);
+
+  captureRefFromUrl();
+
+  useEffect(() => {
+    if (!isAuthenticated || refProcessed.current) return;
+    const code = localStorage.getItem(REF_KEY);
+    if (!code) return;
+
+    refProcessed.current = true;
+    localStorage.removeItem(REF_KEY);
+
+    api('/friends/add', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }).catch((err: any) => {
+      console.warn('[ref] add friend failed:', err.message);
+    });
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated || typeof window === 'undefined') return;

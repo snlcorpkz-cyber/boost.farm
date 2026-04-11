@@ -70,7 +70,7 @@ friendsRouter.post('/add', async (req: Request, res: Response) => {
   const { code } = z.object({ code: z.string() }).parse(req.body);
 
   const referral = await queryOne(
-    `SELECT inviter_id FROM referrals WHERE invite_code = $1`,
+    `SELECT inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
     [code]
   );
 
