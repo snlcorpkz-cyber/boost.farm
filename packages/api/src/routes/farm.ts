@@ -167,12 +167,16 @@ farmRouter.post(
         [body.idempotencyKey, userId]
       );
 
+      const currentMonth = new Date().toISOString().slice(0, 7);
       await execute(
         `UPDATE farms SET growth_percent = $1, current_stage = $2, water_in_can = $3,
-         nutrition = $4, total_waterings_today = $5, harvested = $6
-         WHERE id = $7`,
+         nutrition = $4, total_waterings_today = $5, harvested = $6,
+         total_water_this_month = CASE WHEN water_month = $7 THEN total_water_this_month + $8 ELSE $8 END,
+         water_month = $7
+         WHERE id = $9`,
         [result.newGrowthPercent, result.newStage, result.newWaterInCan,
-         result.newNutrition, farm.total_waterings_today + body.times, result.harvested, farm.id]
+         result.newNutrition, farm.total_waterings_today + body.times, result.harvested,
+         currentMonth, result.waterConsumed, farm.id]
       );
 
       if (result.newStage > farm.current_stage) {
@@ -228,7 +232,7 @@ farmRouter.post(
 
 farmRouter.post('/fertilize', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { amount } = z.object({ amount: z.number().int().positive() }).parse(req.body);
+  const { amount } = z.object({ amount: z.number().int().positive().max(1000) }).parse(req.body);
 
   const farm = await queryOne(
     `SELECT * FROM farms WHERE user_id = $1 AND harvested = false`,

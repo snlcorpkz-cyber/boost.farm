@@ -203,5 +203,8 @@
   "notif.game_reward": "Recompensa del juego: +{{reward}} {{unit}}",
   "notif.ad_reward": "Recompensa por anuncio: +{{amount}} {{unit}}",
   "notif.load_more": "Cargar más",
+  "event.friend_joined": "{{name}} se unió al juego!",
+  "event.friend_watered": "{{name}} regó tu jardín!",
+  "event.friend_greeted": "{{name}} te saludó!",
   "coupon.discount": "cupón"
 }

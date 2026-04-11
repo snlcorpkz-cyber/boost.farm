@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,6 +23,7 @@ import StageCelebration from '../components/farm/StageCelebration';
 import NotificationsPopup from '../components/NotificationsPopup';
 import InvitePopup from '../components/InvitePopup';
 import { useRewardToast } from '../components/RewardToast';
+import { useEventToast } from '../components/EventToast';
 
 
 export default function FarmPage() {
@@ -61,16 +62,18 @@ export default function FarmPage() {
 
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
+  const { showEvent } = useEventToast();
 
   const { data: friendsData } = useQuery({
     queryKey: ['friends'],
     queryFn: () => api('/friends'),
+    refetchInterval: 15_000,
   });
 
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api<{ notifications: any[]; unreadCount: number }>('/user/notifications'),
-    refetchInterval: 10000,
+    refetchInterval: 20_000,
   });
 
   const { data: petsData } = useQuery({
@@ -81,7 +84,7 @@ export default function FarmPage() {
   const { data: dailyChallengeData } = useQuery({
     queryKey: ['daily-challenge'],
     queryFn: () => api<{ waterGiven: number; required: number; completed: boolean; rewardClaimed: boolean; reward: number; streakDays: number; progress: number }>('/quests/daily-challenge'),
-    refetchInterval: 15000,
+    refetchInterval: 30_000,
   });
 
   const claimChallenge = useMutation({
@@ -106,6 +109,24 @@ export default function FarmPage() {
   });
 
   const farm = data?.farm;
+
+  const lastNotifCount = useRef<number | null>(null);
+  useEffect(() => {
+    if (!notifData) return;
+    const current = notifData.unreadCount;
+    if (lastNotifCount.current !== null && current > lastNotifCount.current) {
+      const notifs = notifData.notifications || [];
+      const eventTypes = ['invite', 'water', 'greet'];
+      for (const n of notifs.slice(0, current - lastNotifCount.current)) {
+        if (!n.read && eventTypes.includes(n.type)) {
+          const name = n.params?.name || n.name || 'Someone';
+          showEvent(n.type as 'invite' | 'water' | 'greet', String(name));
+        }
+      }
+      qc.invalidateQueries({ queryKey: ['friends'] });
+    }
+    lastNotifCount.current = current;
+  }, [notifData?.unreadCount]);
 
   const prevChallengeCompleted = useRef(false);
   useEffect(() => {

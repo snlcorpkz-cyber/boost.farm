@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './hooks/useAuth';
 import { api } from './lib/api';
 import FarmPage from './pages/FarmPage';
@@ -23,6 +24,7 @@ function captureRefFromUrl() {
 
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
+  const qc = useQueryClient();
   const refProcessed = useRef(false);
 
   captureRefFromUrl();
@@ -38,6 +40,9 @@ export default function App() {
     api('/friends/add', {
       method: 'POST',
       body: JSON.stringify({ code }),
+    }).then(() => {
+      qc.invalidateQueries({ queryKey: ['friends'] });
+      qc.invalidateQueries({ queryKey: ['farm'] });
     }).catch((err: any) => {
       console.warn('[ref] add friend failed:', err.message);
     });

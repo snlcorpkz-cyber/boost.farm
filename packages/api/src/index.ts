@@ -13,15 +13,19 @@ import { gamesRouter } from './routes/games.js';
 import { petsRouter } from './routes/pets.js';
 import { productsRouter } from './routes/products.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { globalRateLimit } from './middleware/rate-limit.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+app.set('trust proxy', 1);
 
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+app.use(globalRateLimit(120));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

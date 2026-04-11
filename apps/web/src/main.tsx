@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import { RewardToastProvider } from './components/RewardToast';
+import { EventToastProvider } from './components/EventToast';
 import './index.css';
 import './i18n';
 
@@ -51,7 +52,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <RewardToastProvider>
-            <App />
+            <EventToastProvider>
+              <App />
+            </EventToastProvider>
           </RewardToastProvider>
         </BrowserRouter>
       </QueryClientProvider>
