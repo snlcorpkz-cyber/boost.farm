@@ -106,6 +106,9 @@ export default function FarmPage() {
       qc.invalidateQueries({ queryKey: ['farm'] });
       showReward('water', data.waterEarned);
     },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ['pets'] });
+    },
   });
 
   const farm = data?.farm;

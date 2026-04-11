@@ -112,12 +112,15 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
   });
 
   const claimCheckin = useMutation({
-    mutationFn: () => api('/quests/q1f/complete', { method: 'POST' }),
-    onSuccess: () => {
+    mutationFn: () => api('/quests/checkin', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'nutrition' }),
+    }),
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ['farm'] });
       setCheckinClaimed(true);
       sounds.rewardChime();
-      showReward('fertilizer', CHECKIN_FERT_REWARD);
+      showReward('fertilizer', data?.rewardAmount ?? CHECKIN_FERT_REWARD);
     },
   });
 

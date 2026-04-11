@@ -110,12 +110,15 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
   });
 
   const claimCheckin = useMutation({
-    mutationFn: () => api('/quests/q1/complete', { method: 'POST' }),
-    onSuccess: () => {
+    mutationFn: () => api('/quests/checkin', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'water' }),
+    }),
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ['farm'] });
       setCheckinClaimed(true);
       sounds.rewardChime();
-      showReward('water', CHECKIN_WATER_REWARD);
+      showReward('water', data?.rewardAmount ?? CHECKIN_WATER_REWARD);
     },
   });
 

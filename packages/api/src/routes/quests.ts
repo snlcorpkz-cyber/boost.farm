@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { getCurrentPhase, getRankForWater } from '@eco-farm/game-engine';
@@ -52,6 +53,60 @@ questsRouter.get('/', async (req: Request, res: Response) => {
   res.json({ success: true, data: { quests: questsWithProgress, phase, rank: rank.id } });
 });
 
+questsRouter.post('/checkin', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const { type } = z.object({ type: z.enum(['water', 'nutrition']) }).parse(req.body);
+  const questKey = type === 'nutrition' ? 'checkin_fert' : 'checkin';
+  const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+  const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+  const phase = getCurrentPhase(localHour);
+  const today = todayStr();
+
+  let quest = await queryOne(`SELECT * FROM quests WHERE quest_key = $1 AND active = true`, [questKey]);
+  if (!quest) {
+    quest = await queryOne(`SELECT * FROM quests WHERE quest_key = 'checkin' AND active = true`);
+  }
+  if (!quest) {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Check-in quest not found' } });
+    return;
+  }
+
+  const existing = await queryOne(
+    `SELECT * FROM quest_completions
+     WHERE user_id = $1 AND quest_id = $2 AND phase = $3 AND completion_date = $4`,
+    [userId, quest.id, phase, today]
+  );
+
+  if (existing && existing.count >= quest.limit_per_phase) {
+    res.status(400).json({ success: false, error: { code: 'ALREADY_CLAIMED', message: 'Already claimed today' } });
+    return;
+  }
+
+  if (existing) {
+    await execute(`UPDATE quest_completions SET count = count + 1 WHERE id = $1`, [existing.id]);
+  } else {
+    await execute(
+      `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count) VALUES ($1, $2, $3, $4, 1)`,
+      [userId, quest.id, phase, today]
+    );
+  }
+
+  const farm = await queryOne(
+    `SELECT id, water_in_can, nutrition FROM farms WHERE user_id = $1 AND harvested = false`,
+    [userId]
+  );
+
+  if (farm) {
+    if (quest.reward_type === 'water') {
+      await execute(`UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`, [quest.reward_amount, farm.id]);
+    } else if (quest.reward_type === 'nutrition') {
+      await execute(`UPDATE farms SET nutrition = nutrition + $1 WHERE id = $2`, [quest.reward_amount, farm.id]);
+    }
+  }
+
+  res.json({ success: true, data: { rewardType: quest.reward_type, rewardAmount: quest.reward_amount } });
+});
+
 questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const questId = req.params.id;
@@ -60,7 +115,7 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
   const phase = getCurrentPhase(localHour);
   const today = todayStr();
 
-  const quest = await queryOne(`SELECT * FROM quests WHERE id = $1`, [questId]);
+  const quest = await queryOne(`SELECT * FROM quests WHERE id = $1 AND active = true`, [questId]);
 
   if (!quest) {
     res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Quest not found' } });

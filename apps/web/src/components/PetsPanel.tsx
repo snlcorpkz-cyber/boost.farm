@@ -84,6 +84,9 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
       qc.invalidateQueries({ queryKey: ['pets'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
     },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ['pets'] });
+    },
   });
 
   const petsById = useMemo(() => {
