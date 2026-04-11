@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
 import { useNewCrop } from '../hooks/useFarm';
 import { api } from '../lib/api';
 import { PRODUCT_PHOTOS } from '../lib/assets';
@@ -26,7 +25,7 @@ export default function CropSelectPage() {
 
   return (
     <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white px-4 pt-8 pb-8">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <div>
         <h1 className="text-2xl font-extrabold text-center text-gray-800 mb-2">
           {t('farm.select_crop')}
         </h1>
@@ -40,31 +39,30 @@ export default function CropSelectPage() {
             const photo = PRODUCT_PHOTOS[product.name_key];
             const available = product.name_key === 'product.potato';
             return (
-              <motion.button
+              <button
                 key={product.id}
                 type="button"
-                className={`rounded-2xl p-4 shadow-md border-2 bg-white transition-all flex flex-col items-center gap-2 relative ${
+                className={`rounded-2xl p-4 shadow-md border-2 bg-white transition-all flex flex-col items-center gap-2 relative active:scale-95 ${
                   available
                     ? 'border-transparent active:border-farm-green'
                     : 'border-transparent opacity-70'
                 }`}
-                whileTap={available ? { scale: 0.95 } : {}}
-                onClick={() => available && !newCrop.isPending && handleSelect(product.id)}
+                onClick={() => handleSelect(product.id)}
                 disabled={!available || newCrop.isPending}
               >
                 {photo ? (
                   <img
                     src={photo}
                     alt=""
-                    className="w-36 h-36 object-contain rounded-lg"
+                    className="w-36 h-36 object-contain rounded-lg pointer-events-none"
                   />
                 ) : (
-                  <span className="text-5xl">🌱</span>
+                  <span className="text-5xl pointer-events-none">🌱</span>
                 )}
-                <span className="font-bold text-sm text-gray-800">
+                <span className="font-bold text-sm text-gray-800 pointer-events-none">
                   {t(product.name_key)}
                 </span>
-                <div className="flex gap-0.5">
+                <div className="flex gap-0.5 pointer-events-none">
                   {Array.from({ length: 3 }).map((_, i) => (
                     <span
                       key={i}
@@ -74,28 +72,28 @@ export default function CropSelectPage() {
                     </span>
                   ))}
                 </div>
-                <span className="text-[10px] text-gray-400">
+                <span className="text-[10px] text-gray-400 pointer-events-none">
                   {t(`difficulty.${stars}`)}
                 </span>
                 {product.coupon_value_cents > 0 && (
-                  <span className="text-[11px] font-semibold text-emerald-600">
+                  <span className="text-[11px] font-semibold text-emerald-600 pointer-events-none">
                     🎟️ ${(product.coupon_value_cents / 100).toFixed(2)} {t('coupon.discount')}
                   </span>
                 )}
                 {available ? (
-                  <span className="mt-1 px-5 py-1.5 bg-farm-green text-white text-xs font-bold rounded-full shadow">
+                  <span className="mt-1 px-5 py-1.5 bg-farm-green text-white text-xs font-bold rounded-full shadow pointer-events-none">
                     {t('farm.select_crop')}
                   </span>
                 ) : (
-                  <span className="mt-1 px-5 py-1.5 bg-gray-200 text-gray-400 text-xs font-bold rounded-full">
+                  <span className="mt-1 px-5 py-1.5 bg-gray-200 text-gray-400 text-xs font-bold rounded-full pointer-events-none">
                     Soon
                   </span>
                 )}
-              </motion.button>
+              </button>
             );
           })}
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

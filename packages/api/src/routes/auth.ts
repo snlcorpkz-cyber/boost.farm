@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { queryOne, execute } from '../lib/db.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID } from 'crypto';
+import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
+import { notify, getUserNickname } from '../lib/notify.js';
 import {
   verifyTelegramInitData,
   parseTelegramUser,
@@ -62,6 +64,40 @@ function nicknameFromTelegram(tg: { id: number; first_name?: string; last_name?:
   return `Farmer${tg.id}`.slice(0, 20);
 }
 
+async function processReferral(newUserId: string, refCode: string) {
+  const referral = await queryOne(
+    `SELECT inviter_id FROM referrals WHERE invite_code = $1`,
+    [refCode]
+  );
+  if (!referral || referral.inviter_id === newUserId) return;
+
+  const existing = await queryOne(
+    `SELECT id FROM friends WHERE user_id = $1 AND friend_id = $2`,
+    [newUserId, referral.inviter_id]
+  );
+  if (existing) return;
+
+  await execute(
+    `INSERT INTO friends (user_id, friend_id) VALUES ($1, $2), ($3, $4)`,
+    [newUserId, referral.inviter_id, referral.inviter_id, newUserId]
+  );
+
+  const fertReward = REFERRAL_REWARDS.NUTRITION;
+  await execute(
+    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
+    [fertReward, newUserId]
+  );
+  await execute(
+    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
+    [fertReward, referral.inviter_id]
+  );
+
+  const joinerName = await getUserNickname(newUserId);
+  const inviterName = await getUserNickname(referral.inviter_id);
+  await notify(referral.inviter_id, 'invite', 'notif.friend_joined', { name: joinerName, fert: fertReward });
+  await notify(newUserId, 'invite', 'notif.friend_joined', { name: inviterName, fert: fertReward });
+}
+
 authRouter.post('/send-code', async (req: Request, res: Response) => {
   try {
     sendCodeSchema.parse(req.body);
@@ -77,7 +113,7 @@ authRouter.post('/send-code', async (req: Request, res: Response) => {
 
 authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
-    const { email } = verifyCodeSchema.parse(req.body);
+    const { email, refCode } = verifyCodeSchema.parse(req.body);
 
     let user: any = null;
     let isNewUser = false;
@@ -99,6 +135,14 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       console.warn('[auth] DB unavailable, using demo user:', (dbErr as Error).message);
       user = makeDemoUser(email);
       isNewUser = true;
+    }
+
+    if (isNewUser && refCode && user?.id) {
+      try {
+        await processReferral(user.id, refCode);
+      } catch (refErr) {
+        console.warn('[auth] Referral processing failed:', (refErr as Error).message);
+      }
     }
 
     const tokens = makeTokens(user.id, email);
