@@ -215,6 +215,14 @@ export default function FarmPage() {
     }
   };
 
+  const shouldSelectCrop = !isLoading && (!farm || data?.needsCropSelection);
+
+  useEffect(() => {
+    if (shouldSelectCrop) {
+      navigate('/select-crop', { replace: true });
+    }
+  }, [shouldSelectCrop, navigate]);
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-green-50">
@@ -222,14 +230,6 @@ export default function FarmPage() {
       </div>
     );
   }
-
-  const shouldSelectCrop = !farm || data?.needsCropSelection;
-
-  useEffect(() => {
-    if (!isLoading && shouldSelectCrop) {
-      navigate('/select-crop', { replace: true });
-    }
-  }, [isLoading, shouldSelectCrop, navigate]);
 
   if (shouldSelectCrop) {
     return null;
