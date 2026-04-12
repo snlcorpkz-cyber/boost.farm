@@ -1,5 +1,7 @@
 const STORAGE_KEY = 'eco_sound_on';
 const BG_MUSIC_URL = '/sounds/bg-music.mp3';
+const BUCKET_COLLECT_URL = '/sounds/bucket-collect.mp3';
+const FARM_WATERING_URL = '/sounds/farm-watering.mp3';
 const BG_VOLUME = 0.12;
 const CROSSFADE_SEC = 3;
 
@@ -149,51 +151,37 @@ class SoundManager {
     }
   }
 
-  // ── Watering: realistic water pouring (noise + bubbles) ──
+  // ── Watering can on crop (own farm or friend): real sample ──
 
   waterDrip() {
     if (!this._enabled) return;
-    const ctx = this.getCtx();
-    const now = ctx.currentTime;
-    const dur = 1.2;
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.makeNoise(ctx, dur);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(3000, now);
-    bp.frequency.linearRampToValueAtTime(1500, now + dur);
-    bp.Q.value = 0.8;
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 400;
-    const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0, now);
-    ng.gain.linearRampToValueAtTime(0.18, now + 0.05);
-    ng.gain.setValueAtTime(0.15, now + dur * 0.3);
-    ng.gain.linearRampToValueAtTime(0.08, now + dur * 0.8);
-    ng.gain.linearRampToValueAtTime(0, now + dur);
-    noise.connect(bp).connect(hp).connect(ng).connect(ctx.destination);
-    noise.start(now);
-    noise.stop(now + dur);
-
-    for (let i = 0; i < 12; i++) {
-      const t = now + 0.05 + Math.random() * (dur - 0.2);
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      const f = 300 + Math.random() * 600;
-      osc.frequency.setValueAtTime(f, t);
-      osc.frequency.exponentialRampToValueAtTime(f * 0.4, t + 0.08);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.06 + Math.random() * 0.04, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-      osc.connect(g).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.08);
+    try {
+      const audio = new Audio(FARM_WATERING_URL);
+      audio.preload = 'auto';
+      audio.volume = 0.9;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    } catch {
+      /* ignore */
     }
   }
 
-  // ── Bucket pour: heavier water pour ──
+  // ── Bucket → can: real sample (flush / pour into container) ──
+
+  bucketCollectToCan() {
+    if (!this._enabled) return;
+    try {
+      const audio = new Audio(BUCKET_COLLECT_URL);
+      audio.preload = 'auto';
+      audio.volume = 0.9;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // ── Bucket pour: heavier water pour (synthesized fallback) ──
 
   bucketPour() {
     if (!this._enabled) return;

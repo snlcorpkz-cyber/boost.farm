@@ -28,7 +28,7 @@ export default function Bucket({
 
   const handleTap = () => {
     if (isCollecting || bucketLevel < 0.01 || shaking) return;
-    sounds.bucketPour();
+    sounds.bucketCollectToCan();
     setShaking(true);
     onShakeCan();
     setTimeout(() => {
