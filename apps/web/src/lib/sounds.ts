@@ -2,7 +2,7 @@ const STORAGE_KEY = 'eco_sound_on';
 const BG_MUSIC_URL = '/sounds/bg-music.mp3';
 const BUCKET_COLLECT_URL = '/sounds/bucket-collect.mp3';
 const FARM_WATERING_URL = '/sounds/farm-watering.mp3';
-const BG_VOLUME = 0.12;
+const BG_VOLUME = 0.35;
 const CROSSFADE_SEC = 3;
 
 class SoundManager {
