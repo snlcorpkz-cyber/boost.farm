@@ -289,7 +289,7 @@ export default function FarmPage() {
 
   return (
     <Background>
-      <div className="flex flex-col h-[100dvh]">
+      <div className="flex flex-col h-[100dvh] relative">
         {/* ═══ TOP BAR ═══ */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
@@ -492,8 +492,11 @@ export default function FarmPage() {
             );
           })()}
 
-          {/* ── Layer 4: Well + Bucket (z-22) — interactive ── */}
-          <div className="absolute left-0 -bottom-4 z-[22]">
+        </div>
+
+        {/* ── Well + Bucket — above control bar so taps register ── */}
+        <div className="absolute left-0 z-[35] pointer-events-none" style={{ bottom: 80 }}>
+          <div className="pointer-events-auto">
             <Bucket
               fillPercent={fillPercent}
               isFull={isFull}
