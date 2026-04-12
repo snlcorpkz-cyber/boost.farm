@@ -303,8 +303,8 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-bold text-amber-900">Quests</p>
                         <p className="text-[10px] text-amber-700/60 font-medium">Complete tasks for fertilizer</p>
+                        <p className="text-[9px] text-amber-500 font-semibold">up to 2,000</p>
                       </div>
-                      <RewardBadge amount="3-15" color="text-amber-700" />
                       <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
                     </TaskCard>
 
@@ -316,8 +316,8 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-bold text-amber-900">Games</p>
                         <p className="text-[10px] text-amber-700/60 font-medium">Play games for fertilizer</p>
+                        <p className="text-[9px] text-amber-500 font-semibold">up to 2,000</p>
                       </div>
-                      <RewardBadge amount="3-10" color="text-amber-700" />
                       <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
                     </TaskCard>
                   </div>

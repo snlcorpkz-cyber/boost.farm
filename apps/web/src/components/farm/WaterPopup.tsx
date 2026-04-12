@@ -323,8 +323,8 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-bold text-amber-900">Quests</p>
                         <p className="text-[10px] text-amber-700/60 font-medium">Complete tasks for water</p>
+                        <p className="text-[9px] text-blue-500 font-semibold">up to 50,000g</p>
                       </div>
-                      <RewardBadge amount="10-200" unit="g" color="text-blue-600" />
                       <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
                     </TaskCard>
 
@@ -336,8 +336,8 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-bold text-amber-900">Games</p>
                         <p className="text-[10px] text-amber-700/60 font-medium">Play games for water</p>
+                        <p className="text-[9px] text-blue-500 font-semibold">up to 50,000g</p>
                       </div>
-                      <RewardBadge amount="10-100" unit="g" color="text-blue-600" />
                       <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
                     </TaskCard>
                   </div>
