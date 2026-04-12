@@ -66,7 +66,6 @@ export function getRankForWater(waterLastMonth: number): RankDef {
 }
 
 export const DIFFICULTY_MULTIPLIERS: Record<number, number> = {
-  1: 1.0,   // Easy  (~21 days): potato, carrot   — coupon ~$1.50
-  2: 1.65,  // Medium (~35 days): onion, cucumber  — coupon ~$3.00-3.50
-  3: 2.4,   // Hard   (~50 days): tomato           — coupon ~$5.00
+  1: 1.0,    // Easy  (~40,420g): potato, carrot, onion
+  2: 1.546,  // Hard  (~62,500g): cucumber, tomato
 };
