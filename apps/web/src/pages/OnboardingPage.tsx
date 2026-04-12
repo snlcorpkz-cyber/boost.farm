@@ -3,17 +3,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const SLIDES = [
   {
-    image: '/assets/onboarding/vegetables.png',
+    image: '/assets/onboarding/vegetables.webp',
     title: 'Play & Grow Real Vegetables',
     subtitle: 'Choose a crop, take care of it — and receive real organic produce as a reward.',
   },
   {
-    image: '/assets/onboarding/watering.png',
+    image: '/assets/onboarding/watering.webp',
     title: 'Water Every Day',
     subtitle: 'A few taps a day is all it takes. Watch your plant grow from seed to harvest.',
   },
   {
-    image: '/assets/onboarding/delivery.png',
+    image: '/assets/onboarding/delivery.webp',
     title: 'Get Fresh Veggies Delivered Home',
     subtitle: 'Once your crop is fully grown, we deliver real vegetables straight to your door.',
   },
