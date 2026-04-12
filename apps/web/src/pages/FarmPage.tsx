@@ -24,6 +24,7 @@ import NotificationsPopup from '../components/NotificationsPopup';
 import InvitePopup from '../components/InvitePopup';
 import { useRewardToast } from '../components/RewardToast';
 import { useEventToast } from '../components/EventToast';
+import FarmTutorial from '../components/FarmTutorial';
 
 
 export default function FarmPage() {
@@ -421,6 +422,7 @@ export default function FarmPage() {
                 <button
                   className="absolute left-[26%] bottom-[38%] z-[15]"
                   onClick={() => setShowNutritionPopup(true)}
+                  data-tutorial="nutrition"
                 >
                   <div className="w-14 h-14 rounded-full bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg border-2 border-white/60 active:scale-95 transition-transform">
                     <span className="text-[24px] font-extrabold text-white leading-none">{farm.nutrition}</span>
@@ -493,7 +495,7 @@ export default function FarmPage() {
           })()}
 
           {/* ── Layer 4: Well + Bucket (z-22) — interactive ── */}
-          <div className="absolute left-0 -bottom-4 z-[22]">
+          <div className="absolute left-0 -bottom-4 z-[22]" data-tutorial="bucket">
             <Bucket
               fillPercent={fillPercent}
               isFull={isFull}
@@ -514,6 +516,7 @@ export default function FarmPage() {
             <button
               className="flex flex-col items-center"
               onClick={() => setShowWaterPopup(true)}
+              data-tutorial="water-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-blue-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
                 <img src={UI.waterDrop} alt="" className="w-11 h-11 object-contain" />
@@ -527,6 +530,7 @@ export default function FarmPage() {
             <button
               className="flex flex-col items-center"
               onClick={() => setShowFertPopup(true)}
+              data-tutorial="fert-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-amber-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
                 <img src={UI.fertilizer} alt="" className="w-11 h-11 object-contain" />
@@ -540,6 +544,7 @@ export default function FarmPage() {
             <button
               className="flex flex-col items-center"
               onClick={() => setShowPets(true)}
+              data-tutorial="pet-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-pink-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
                 <img src={PET_IMAGES[activePet || 'hamster']} alt="" className="w-11 h-11 object-contain" />
@@ -566,6 +571,7 @@ export default function FarmPage() {
             <button
               className="flex-shrink-0 flex flex-col items-center gap-0.5"
               onClick={() => setShowInvitePopup(true)}
+              data-tutorial="invite-btn"
             >
               <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center border border-dashed border-gray-300 shadow-sm">
                 <span className="text-gray-400 text-sm">+</span>
@@ -613,6 +619,8 @@ export default function FarmPage() {
         open={showInvitePopup}
         onClose={() => setShowInvitePopup(false)}
       />
+
+      <FarmTutorial />
 
       {/* Daily challenge completed modal */}
       <AnimatePresence>

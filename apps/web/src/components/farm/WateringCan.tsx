@@ -36,7 +36,7 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
   }, [menuOpen]);
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center" data-tutorial="watering-can">
       {/* Batch selector — single pill with dropdown */}
       <div className="relative mb-1.5 z-20" ref={menuRef}>
         <button
