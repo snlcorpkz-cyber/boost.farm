@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "simulate": "tsx src/index.ts"
+    "simulate": "tsx src/index.ts",
+    "smoke": "tsx src/smoke-test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
