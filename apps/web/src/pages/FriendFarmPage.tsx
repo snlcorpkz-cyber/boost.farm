@@ -47,6 +47,8 @@ export default function FriendFarmPage() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isWatering, setIsWatering] = useState(false);
+  const [greetDone, setGreetDone] = useState(false);
+  const [waterLimitHit, setWaterLimitHit] = useState(false);
 
   const { data: friendsData, isLoading } = useQuery({
     queryKey: ['friends'],
@@ -81,13 +83,16 @@ export default function FriendFarmPage() {
       return api<GreetResponse>(`/friends/${friendId}/greet`, { method: 'POST' });
     },
     onSuccess: (res) => {
+      setGreetDone(true);
       qc.invalidateQueries({ queryKey: ['friends'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
       showToast(t('friendFarm.toast_greet', { amount: res.waterEarned }));
       showReward('water', res.waterEarned);
     },
     onError: (err: any) => {
-      showToast(err?.error?.message || err?.message || 'Greet failed');
+      const code = err?.code || err?.error?.code || '';
+      if (code === 'ALREADY_GREETED' || code === 'LIMIT_REACHED') setGreetDone(true);
+      showToast(err?.message || 'Greet failed');
     },
   });
 
@@ -103,7 +108,9 @@ export default function FriendFarmPage() {
       showReward('fertilizer', res.nutritionEarned);
     },
     onError: (err: any) => {
-      showToast(err?.error?.message || err?.message || 'Water failed');
+      const code = err?.code || err?.error?.code || '';
+      if (code === 'LIMIT_REACHED' || code === 'ALREADY_WATERED') setWaterLimitHit(true);
+      showToast(err?.message || 'Water failed');
     },
   });
 
@@ -347,15 +354,21 @@ export default function FriendFarmPage() {
             {/* Greet hand button */}
             <div className="flex flex-col items-center">
               <motion.button
-                className="w-[80px] h-[80px] rounded-full bg-amber-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50 disabled:opacity-50"
-                whileTap={{ scale: 0.92 }}
-                onClick={() => greetMutation.mutate()}
-                disabled={greetMutation.isPending || waterMutation.isPending}
+                className={`w-[80px] h-[80px] rounded-full backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50 ${
+                  greetDone
+                    ? 'bg-gray-200/80 opacity-40 grayscale'
+                    : 'bg-amber-100/80'
+                }`}
+                whileTap={greetDone ? {} : { scale: 0.92 }}
+                onClick={() => !greetDone && greetMutation.mutate()}
+                disabled={greetDone || greetMutation.isPending || waterMutation.isPending}
               >
                 <img src={UI.greetHand} alt="greet" className="w-16 h-16 object-contain" />
               </motion.button>
-              <div className="-mt-2.5 bg-amber-100/90 rounded-full px-2.5 py-0.5 relative z-[1]">
-                <span className="text-[9px] font-bold text-amber-700">{t('friends.greet')}</span>
+              <div className={`-mt-2.5 rounded-full px-2.5 py-0.5 relative z-[1] ${greetDone ? 'bg-gray-200/90' : 'bg-amber-100/90'}`}>
+                <span className={`text-[9px] font-bold ${greetDone ? 'text-gray-400' : 'text-amber-700'}`}>
+                  {greetDone ? '✓ ' : ''}{t('friends.greet')}
+                </span>
               </div>
             </div>
 
@@ -368,7 +381,7 @@ export default function FriendFarmPage() {
               waterAmount={myWater}
               onWater={handleWater}
               isWatering={isWatering}
-              canWater={!!farm}
+              canWater={!!farm && !waterLimitHit}
               shaking={false}
             />
           </div>

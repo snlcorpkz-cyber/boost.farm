@@ -139,17 +139,25 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
     },
   });
 
+  const [greetDoneIds, setGreetDoneIds] = useState<Set<string>>(new Set());
+  const [waterLimitHit, setWaterLimitHit] = useState(false);
+
   const greetFriend = useMutation({
     mutationFn: (friendId: string) => api(`/friends/${friendId}/greet`, { method: 'POST' }),
-    onSuccess: (data: any) => {
+    onSuccess: (data: any, friendId: string) => {
+      setGreetDoneIds((s) => new Set(s).add(friendId));
       qc.invalidateQueries({ queryKey: ['farm'] });
       setToast(t('friendFarm.toast_greet', { amount: data.waterEarned }));
       setTimeout(() => setToast(null), 2000);
       showReward('water', data.waterEarned);
       try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
     },
-    onError: (err: any) => {
-      const msg = err?.error?.message || err?.message || 'Greet failed';
+    onError: (err: any, friendId: string) => {
+      const code = err?.code || err?.error?.code || '';
+      if (code === 'ALREADY_GREETED' || code === 'LIMIT_REACHED') {
+        setGreetDoneIds((s) => new Set(s).add(friendId));
+      }
+      const msg = err?.message || 'Greet failed';
       setMutationError(msg);
       setTimeout(() => setMutationError(null), 3000);
     },
@@ -165,7 +173,9 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
       try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
     },
     onError: (err: any) => {
-      const msg = err?.error?.message || err?.message || 'Water failed';
+      const code = err?.code || err?.error?.code || '';
+      if (code === 'LIMIT_REACHED' || code === 'ALREADY_WATERED') setWaterLimitHit(true);
+      const msg = err?.message || 'Water failed';
       setMutationError(msg);
       setTimeout(() => setMutationError(null), 3000);
     },
@@ -350,6 +360,8 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                     onWater={() => waterFriend.mutate(selectedFriend.id)}
                     greetPending={greetFriend.isPending}
                     waterPending={waterFriend.isPending}
+                    greetDone={greetDoneIds.has(selectedFriend.id)}
+                    waterLimitHit={waterLimitHit}
                     t={t}
                   />
                 )}
@@ -412,12 +424,15 @@ function FriendsList({ friends, onSelectFriend, t }: { friends: any[]; onSelectF
 }
 
 /* ─── Friend Farm View ─── */
-function FriendFarmView({ friend, waterInCan, toast, onGreet, onWater, greetPending, waterPending, t }: any) {
+function FriendFarmView({ friend, waterInCan, toast, onGreet, onWater, greetPending, waterPending, greetDone, waterLimitHit, t }: any) {
   const avatarKey = friend.avatar_id || friend.avatarId || 'bear';
   const avatarSrc = AVATAR_IMAGES[avatarKey];
   const crop = friend.farm?.products?.name_key ? t(friend.farm.products.name_key) : '—';
   const stage = friend.farm?.current_stage || 1;
   const percent = friend.farm?.growth_percent ? Math.round(friend.farm.growth_percent) : 0;
+
+  const notEnoughWater = waterInCan < 10;
+  const waterOff = waterLimitHit || notEnoughWater;
 
   return (
     <div className="space-y-3">
@@ -454,12 +469,33 @@ function FriendFarmView({ friend, waterInCan, toast, onGreet, onWater, greetPend
       </div>
 
       <div className="flex gap-3">
-        <FarmBtn variant="orange" onClick={onGreet} disabled={greetPending}>
-          <span className="text-sm px-3">{t('popup.greet_btn')}</span>
-        </FarmBtn>
-        <FarmBtn variant="blue" onClick={onWater} disabled={waterPending}>
-          <span className="text-sm px-3">{t('popup.water_btn')}</span>
-        </FarmBtn>
+        <div className="flex-1 flex flex-col items-center gap-0.5">
+          <FarmBtn
+            variant={greetDone ? 'disabled' : 'orange'}
+            onClick={greetDone ? undefined : onGreet}
+            disabled={greetDone || greetPending}
+          >
+            <span className="text-sm px-3">{greetDone ? '✓' : ''} {t('popup.greet_btn')}</span>
+          </FarmBtn>
+          {greetDone && (
+            <span className="text-[9px] text-gray-400 font-medium">{t('popup.limit_done', { defaultValue: 'Done' })}</span>
+          )}
+        </div>
+        <div className="flex-1 flex flex-col items-center gap-0.5">
+          <FarmBtn
+            variant={waterOff ? 'disabled' : 'blue'}
+            onClick={waterOff ? undefined : onWater}
+            disabled={waterOff || waterPending}
+          >
+            <span className="text-sm px-3">{t('popup.water_btn')}</span>
+          </FarmBtn>
+          {waterLimitHit && (
+            <span className="text-[9px] text-gray-400 font-medium">{t('popup.limit_done', { defaultValue: 'Limit reached' })}</span>
+          )}
+          {!waterLimitHit && notEnoughWater && (
+            <span className="text-[9px] text-red-400 font-medium">{t('popup.not_enough_water', { defaultValue: 'Not enough water' })}</span>
+          )}
+        </div>
       </div>
 
       <AnimatePresence>

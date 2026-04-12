@@ -228,6 +228,17 @@ friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
     return;
   }
 
+  const alreadyWatered = await queryOne(
+    `SELECT id FROM friend_actions
+     WHERE actor_id = $1 AND target_id = $2 AND action_type = 'water' AND phase = $3 AND action_date = $4`,
+    [userId, friendId, phase, today]
+  );
+
+  if (alreadyWatered) {
+    res.status(400).json({ success: false, error: { code: 'ALREADY_WATERED', message: 'Already watered this friend in this phase' } });
+    return;
+  }
+
   const myFarm = await queryOne(
     `SELECT id, water_in_can, nutrition, total_water_last_month FROM farms
      WHERE user_id = $1 AND harvested = false`,

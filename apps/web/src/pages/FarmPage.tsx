@@ -599,7 +599,7 @@ export default function FarmPage() {
 
       <PetsPanel open={showPets} onClose={() => setShowPets(false)} />
       <WaterPopup open={showWaterPopup} onClose={() => setShowWaterPopup(false)} waterInCan={farm.water_in_can} />
-      <FertilizerPopup open={showFertPopup} onClose={() => setShowFertPopup(false)} waterInCan={farm.water_in_can} />
+      <FertilizerPopup open={showFertPopup} onClose={() => setShowFertPopup(false)} />
       <NutritionPopup
         open={showNutritionPopup}
         onClose={() => setShowNutritionPopup(false)}

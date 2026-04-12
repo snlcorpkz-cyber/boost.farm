@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,10 +12,9 @@ import { useRewardToast } from '../RewardToast';
 interface FertilizerPopupProps {
   open: boolean;
   onClose: () => void;
-  waterInCan?: number;
 }
 
-type Page = 'main' | 'invite' | 'friends' | 'friend-farm';
+type Page = 'main' | 'invite' | 'friends';
 
 const AD_FERT_REWARD = 8;
 const CHECKIN_FERT_REWARD = 5;
@@ -95,14 +95,13 @@ function TaskIcon({ children, gradient }: { children: React.ReactNode; gradient:
   );
 }
 
-export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: FertilizerPopupProps) {
+export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
-  const [selectedFriend, setSelectedFriend] = useState<any>(null);
   const [showAd, setShowAd] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: friendsData } = useQuery({
@@ -141,25 +140,14 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
     },
   });
 
-  const waterFriend = useMutation({
-    mutationFn: (friendId: string) => api(`/friends/${friendId}/water`, { method: 'POST' }),
-    onSuccess: (data: any) => {
-      qc.invalidateQueries({ queryKey: ['farm'] });
-      setToast(t('friendFarm.toast_water', { spent: data.waterSpent, nutrition: data.nutritionEarned }));
-      setTimeout(() => setToast(null), 2000);
-      showReward('fertilizer', data.nutritionEarned);
-      try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
-    },
-    onError: (err: any) => {
-      const msg = err?.error?.message || err?.message || 'Water failed';
-      setMutationError(msg);
-      setTimeout(() => setMutationError(null), 3000);
-    },
-  });
-
   const handleClose = () => {
     onClose();
-    setTimeout(() => { setPage('main'); setSelectedFriend(null); }, 300);
+    setTimeout(() => { setPage('main'); }, 300);
+  };
+
+  const handleSelectFriend = (f: any) => {
+    handleClose();
+    navigate(`/friends/${f.id}`);
   };
 
   const handleAdComplete = async (r: { amount: number }) => {
@@ -179,17 +167,13 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
     }
   };
 
-  const goBack = () => {
-    if (page === 'friend-farm') { setPage('friends'); setSelectedFriend(null); }
-    else setPage('main');
-  };
+  const goBack = () => setPage('main');
 
   const pageTitle = (() => {
     switch (page) {
       case 'main': return t('farm.get_fertilizer');
       case 'invite': return 'Invite Friends';
       case 'friends': return t('popup.friends');
-      case 'friend-farm': return selectedFriend ? selectedFriend.nickname : '';
     }
   })();
 
@@ -344,20 +328,7 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
                 {page === 'friends' && (
                   <FriendWaterList
                     friends={friendsData?.friends || []}
-                    waterInCan={waterInCan}
-                    toast={toast}
-                    onSelectFriend={(f: any) => { setSelectedFriend(f); setPage('friend-farm'); }}
-                    t={t}
-                  />
-                )}
-
-                {page === 'friend-farm' && selectedFriend && (
-                  <FriendFarmView
-                    friend={selectedFriend}
-                    waterInCan={waterInCan}
-                    toast={toast}
-                    onWater={() => waterFriend.mutate(selectedFriend.id)}
-                    waterPending={waterFriend.isPending}
+                    onSelectFriend={handleSelectFriend}
                     t={t}
                   />
                 )}
@@ -439,7 +410,7 @@ function InviteSection({ t }: { t: any }) {
 }
 
 /* ─── Friend Water List ─── */
-function FriendWaterList({ friends, waterInCan, toast, onSelectFriend, t }: any) {
+function FriendWaterList({ friends, onSelectFriend, t }: any) {
   if (!friends.length) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-amber-600/60">
@@ -482,90 +453,6 @@ function FriendWaterList({ friends, waterInCan, toast, onSelectFriend, t }: any)
           </button>
         );
       })}
-
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white text-sm font-bold text-center py-2.5 px-4 rounded-xl shadow-md"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            {toast}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/* ─── Friend Farm View ─── */
-function FriendFarmView({ friend, waterInCan, toast, onWater, waterPending, t }: any) {
-  const avatarKey = friend.avatar_id || friend.avatarId || 'bear';
-  const avatarSrc = AVATAR_IMAGES[avatarKey];
-  const crop = friend.farm?.products?.name_key ? t(friend.farm.products.name_key) : '—';
-  const stage = friend.farm?.current_stage || 1;
-  const percent = friend.farm?.growth_percent ? Math.round(friend.farm.growth_percent) : 0;
-  const canWater = waterInCan >= 10;
-
-  return (
-    <div className="space-y-3">
-      <TaskCard>
-        <div className="w-full">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center overflow-hidden border-2 border-amber-300/50 shadow-sm">
-              <img src={avatarSrc || AVATAR_IMAGES.bear} alt="" className="w-10 h-10 object-contain" />
-            </div>
-            <div>
-              <p className="text-base font-bold text-amber-900">{friend.nickname}</p>
-              <p className="text-xs text-amber-700/60">{crop}</p>
-            </div>
-          </div>
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-amber-800">
-              {t('friendFarm.stage_progress', { stage, percent })}
-            </span>
-          </div>
-          <div className="w-full h-3 rounded-full bg-amber-200/50 overflow-hidden">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500"
-              initial={{ width: 0 }}
-              animate={{ width: `${percent}%` }}
-              transition={{ duration: 0.8, ease: 'easeOut' }}
-            />
-          </div>
-        </div>
-      </TaskCard>
-
-      <div className="bg-blue-50/80 rounded-2xl border-2 border-blue-200/50 px-4 py-3 flex items-center gap-3">
-        <img src={UI.wateringCan} alt="" className="w-10 h-10 object-contain" />
-        <p className="text-xs text-blue-700 font-bold">{t('popup.your_water', { amount: Math.round(waterInCan) })}</p>
-      </div>
-
-      <button
-        className={`w-full font-extrabold py-3.5 rounded-2xl text-sm transition-all ${
-          canWater
-            ? 'text-white bg-gradient-to-b from-sky-400 via-blue-500 to-blue-600 shadow-[0_3px_0_0_#1E40AF,0_4px_8px_rgba(0,0,0,0.15)] active:shadow-[0_1px_0_0_#1E40AF] active:translate-y-[2px]'
-            : 'bg-gradient-to-b from-stone-300 to-stone-400 text-white/60 shadow-[0_2px_0_0_#78716C] cursor-not-allowed'
-        }`}
-        onClick={onWater}
-        disabled={waterPending || !canWater}
-      >
-        {t('popup.water_btn')} (+{WATER_FRIEND_FERT_REWARD} fertilizer)
-      </button>
-
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white text-sm font-bold text-center py-2.5 px-4 rounded-xl shadow-md"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            {toast}
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
