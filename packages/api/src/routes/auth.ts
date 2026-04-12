@@ -274,7 +274,13 @@ authRouter.post('/telegram', async (req: Request, res: Response) => {
 });
 
 authRouter.post('/refresh', async (req: Request, res: Response) => {
-  const { refreshToken } = z.object({ refreshToken: z.string() }).parse(req.body);
+  let refreshToken: string;
+  try {
+    ({ refreshToken } = z.object({ refreshToken: z.string() }).parse(req.body));
+  } catch {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Missing refresh token' } });
+    return;
+  }
 
   try {
     const payload = verifyToken(refreshToken);

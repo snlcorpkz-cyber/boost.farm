@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api } from '../lib/api';
 import { PET_IMAGES } from '../lib/assets';
+import { useRewardToast } from './RewardToast';
 import type { PetId } from '@eco-farm/game-engine';
 
 interface PetDto {
@@ -62,6 +63,8 @@ export interface PetsPanelProps {
 export default function PetsPanel({ open, onClose }: PetsPanelProps) {
   const { t } = useTranslation();
   const qc = useQueryClient();
+  const { showReward } = useRewardToast();
+  const [giftError, setGiftError] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['pets'],
@@ -76,16 +79,26 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
       qc.invalidateQueries({ queryKey: ['pets'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
     },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ['pets'] });
+    },
   });
 
   const gift = useMutation({
     mutationFn: () => api<GiftResponse>('/pets/hamster/gift', { method: 'POST' }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['pets'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
+      setGiftError(null);
+      showReward('water', data.waterEarned);
     },
-    onError: () => {
+    onError: (err: any) => {
       qc.invalidateQueries({ queryKey: ['pets'] });
+      const msg = err?.code === 'COOLDOWN'
+        ? t('pet.gift_cooldown', { hours: 24 })
+        : (err?.message || 'Gift failed');
+      setGiftError(msg);
+      setTimeout(() => setGiftError(null), 3000);
     },
   });
 
@@ -243,16 +256,21 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
                       )}
 
                       {id === 'hamster' && !isLocked && (
-                        <button
-                          type="button"
-                          className="mt-2 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
-                          disabled={giftDisabled}
-                          onClick={() => gift.mutate()}
-                        >
-                          {cooldownH !== null
-                            ? t('pet.gift_cooldown', { hours: cooldownH })
-                            : t('pet.claim_gift')}
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="mt-2 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
+                            disabled={giftDisabled}
+                            onClick={() => { setGiftError(null); gift.mutate(); }}
+                          >
+                            {cooldownH !== null
+                              ? t('pet.gift_cooldown', { hours: cooldownH })
+                              : gift.isPending ? '...' : t('pet.claim_gift')}
+                          </button>
+                          {giftError && (
+                            <p className="mt-1 text-xs text-red-500 text-center font-medium">{giftError}</p>
+                          )}
+                        </>
                       )}
                     </div>
                   );

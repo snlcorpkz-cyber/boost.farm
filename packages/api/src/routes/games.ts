@@ -38,7 +38,7 @@ gamesRouter.post('/:id/claim', async (req: Request, res: Response) => {
   const gameId = req.params.id;
   const today = todayStr();
 
-  const game = await queryOne(`SELECT * FROM games WHERE id = $1`, [gameId]);
+  const game = await queryOne(`SELECT * FROM games WHERE id = $1 AND active = true`, [gameId]);
 
   if (!game) {
     res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Game not found' } });

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -47,7 +47,6 @@ export default function FriendFarmPage() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isWatering, setIsWatering] = useState(false);
-  const [canShaking, setCanShaking] = useState(false);
 
   const { data: friendsData, isLoading } = useQuery({
     queryKey: ['friends'],
@@ -61,6 +60,14 @@ export default function FriendFarmPage() {
   const friend = useMemo(
     () => friendsData?.friends?.find((f) => f.id === friendId) ?? null,
     [friendsData?.friends, friendId]
+  );
+
+  const dropOffsets = useRef(
+    Array.from({ length: 12 }, () => ({
+      left: -20 + Math.random() * 40,
+      yEnd: 30 + Math.random() * 20,
+      duration: 0.5 + Math.random() * 0.3,
+    }))
   );
 
   const showToast = useCallback((message: string) => {
@@ -79,6 +86,9 @@ export default function FriendFarmPage() {
       showToast(t('friendFarm.toast_greet', { amount: res.waterEarned }));
       showReward('water', res.waterEarned);
     },
+    onError: (err: any) => {
+      showToast(err?.error?.message || err?.message || 'Greet failed');
+    },
   });
 
   const waterMutation = useMutation({
@@ -91,6 +101,9 @@ export default function FriendFarmPage() {
       qc.invalidateQueries({ queryKey: ['farm'] });
       showToast(t('friendFarm.toast_water', { spent: res.waterSpent, nutrition: res.nutritionEarned }));
       showReward('fertilizer', res.nutritionEarned);
+    },
+    onError: (err: any) => {
+      showToast(err?.error?.message || err?.message || 'Water failed');
     },
   });
 
@@ -188,20 +201,20 @@ export default function FriendFarmPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
               >
-                {[...Array(12)].map((_, i) => (
+                {dropOffsets.current.map((d, i) => (
                   <motion.img
                     key={i}
                     src={UI.waterDrop}
                     alt=""
                     className="absolute w-3 h-3"
-                    style={{ left: `${-20 + Math.random() * 40}px` }}
+                    style={{ left: `${d.left}px` }}
                     animate={{
-                      y: [-40, 30 + Math.random() * 20],
+                      y: [-40, d.yEnd],
                       opacity: [0.9, 0],
                       scale: [1, 0.3],
                     }}
                     transition={{
-                      duration: 0.5 + Math.random() * 0.3,
+                      duration: d.duration,
                       delay: i * 0.07,
                       repeat: Infinity,
                       repeatDelay: 0.1,
@@ -356,7 +369,7 @@ export default function FriendFarmPage() {
               onWater={handleWater}
               isWatering={isWatering}
               canWater={!!farm}
-              shaking={canShaking}
+              shaking={false}
             />
           </div>
         </div>

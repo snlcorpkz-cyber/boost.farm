@@ -19,4 +19,4 @@ insert into public.quests (quest_key, reward_type, reward_amount, limit_per_phas
 insert into public.pets (name_key, ability_type, ability_description_key) values
   ('pet.hamster', 'gift_water', 'pet.hamster.desc'),
   ('pet.rabbit', 'bucket_upgrade', 'pet.rabbit.desc'),
-  ('pet.shiba', 'bonus_growth', 'pet.shiba.desc');
+  ('pet.monkey', 'bonus_growth', 'pet.monkey.desc');

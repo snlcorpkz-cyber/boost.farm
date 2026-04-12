@@ -101,15 +101,26 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
   const [selectedFriend, setSelectedFriend] = useState<any>(null);
-  const [checkinClaimed, setCheckinClaimed] = useState(false);
   const [showAd, setShowAd] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: friendsData } = useQuery({
     queryKey: ['friends'],
     queryFn: () => api('/friends'),
     enabled: open,
   });
+
+  const { data: questsData } = useQuery({
+    queryKey: ['quests'],
+    queryFn: () => api<{ quests: any[] }>('/quests'),
+    enabled: open,
+  });
+
+  const checkinClaimed = (() => {
+    const fertQuest = questsData?.quests?.find((q: any) => q.quest_key === 'checkin_fert');
+    return fertQuest ? fertQuest.isCompleted : false;
+  })();
 
   const claimCheckin = useMutation({
     mutationFn: () => api('/quests/checkin', {
@@ -118,9 +129,15 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
     }),
     onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ['farm'] });
-      setCheckinClaimed(true);
-      sounds.rewardChime();
+      qc.invalidateQueries({ queryKey: ['quests'] });
       showReward('fertilizer', data?.rewardAmount ?? CHECKIN_FERT_REWARD);
+      try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
+    },
+    onError: (err: any) => {
+      qc.invalidateQueries({ queryKey: ['quests'] });
+      const msg = err?.error?.message || err?.message || 'Check-in failed';
+      setMutationError(msg);
+      setTimeout(() => setMutationError(null), 3000);
     },
   });
 
@@ -130,8 +147,13 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
       qc.invalidateQueries({ queryKey: ['farm'] });
       setToast(t('friendFarm.toast_water', { spent: data.waterSpent, nutrition: data.nutritionEarned }));
       setTimeout(() => setToast(null), 2000);
-      sounds.rewardChime();
       showReward('fertilizer', data.nutritionEarned);
+      try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
+    },
+    onError: (err: any) => {
+      const msg = err?.error?.message || err?.message || 'Water failed';
+      setMutationError(msg);
+      setTimeout(() => setMutationError(null), 3000);
     },
   });
 
@@ -140,11 +162,20 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
     setTimeout(() => { setPage('main'); setSelectedFriend(null); }, 300);
   };
 
-  const handleAdComplete = (r: { amount: number }) => {
+  const handleAdComplete = async (r: { amount: number }) => {
     if (r.amount) {
-      qc.invalidateQueries({ queryKey: ['farm'] });
-      sounds.rewardChime();
-      showReward('fertilizer', r.amount);
+      try {
+        await api('/farm/ad-reward', {
+          method: 'POST',
+          body: JSON.stringify({ type: 'nutrition', amount: r.amount }),
+        });
+        qc.invalidateQueries({ queryKey: ['farm'] });
+        showReward('fertilizer', r.amount);
+        try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
+      } catch (err: any) {
+        setMutationError(err?.message || 'Failed to credit ad reward');
+        setTimeout(() => setMutationError(null), 3000);
+      }
     }
   };
 
@@ -205,6 +236,11 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
 
               {/* Content */}
               <div className="flex-1 overflow-y-auto px-3 pb-6 pt-1">
+                {mutationError && (
+                  <div className="mb-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600 font-medium text-center">
+                    {mutationError}
+                  </div>
+                )}
                 {page === 'main' && (
                   <div className="space-y-2.5">
                     {/* 1. Check-in */}
@@ -220,8 +256,8 @@ export default function FertilizerPopup({ open, onClose, waterInCan = 0 }: Ferti
                       {checkinClaimed ? (
                         <FarmBtn variant="disabled" disabled>Done</FarmBtn>
                       ) : (
-                        <FarmBtn variant="green" onClick={() => claimCheckin.mutate()} disabled={claimCheckin.isPending}>
-                          Claim
+                        <FarmBtn variant="green" onClick={() => { setMutationError(null); claimCheckin.mutate(); }} disabled={claimCheckin.isPending}>
+                          {claimCheckin.isPending ? '...' : 'Claim'}
                         </FarmBtn>
                       )}
                     </TaskCard>

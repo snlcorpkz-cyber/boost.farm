@@ -127,37 +127,48 @@ petsRouter.post('/:id/gift', async (req: Request, res: Response) => {
     return;
   }
 
-  const userPet = await queryOne(
-    `SELECT id, last_gift_at FROM user_pets WHERE user_id = $1 AND pet_id = 'hamster'`,
+  const giftAmount = PET_BONUSES.hamster.giftAmount!;
+
+  const farm = await queryOne(
+    `SELECT id FROM farms WHERE user_id = $1 AND harvested = false`,
     [userId]
   );
 
-  const cooldownMs = PET_BONUSES.hamster.giftCooldownMs!;
-  const giftAmount = PET_BONUSES.hamster.giftAmount!;
+  if (!farm) {
+    res.status(400).json({ success: false, error: { code: 'NO_FARM', message: 'Start a farm first to claim gifts' } });
+    return;
+  }
 
-  if (userPet?.last_gift_at) {
-    const lastGift = new Date(userPet.last_gift_at).getTime();
-    if (Date.now() - lastGift < cooldownMs) {
+  const cooldownInterval = `${Math.floor(PET_BONUSES.hamster.giftCooldownMs! / 1000)} seconds`;
+
+  const updated = await execute(
+    `UPDATE user_pets SET last_gift_at = NOW()
+     WHERE user_id = $1 AND pet_id = 'hamster'
+     AND (last_gift_at IS NULL OR last_gift_at < NOW() - $2::interval)`,
+    [userId, cooldownInterval]
+  );
+
+  if (updated === 0) {
+    const userPet = await queryOne(
+      `SELECT id FROM user_pets WHERE user_id = $1 AND pet_id = 'hamster'`,
+      [userId]
+    );
+
+    if (!userPet) {
+      await execute(
+        `INSERT INTO user_pets (user_id, pet_id, is_active, last_gift_at) VALUES ($1, 'hamster', true, NOW())
+         ON CONFLICT DO NOTHING`,
+        [userId]
+      );
+    } else {
       res.status(400).json({ success: false, error: { code: 'COOLDOWN', message: 'Gift on cooldown' } });
       return;
     }
   }
 
-  if (userPet) {
-    await execute(
-      `UPDATE user_pets SET last_gift_at = NOW() WHERE id = $1`,
-      [userPet.id]
-    );
-  } else {
-    await execute(
-      `INSERT INTO user_pets (user_id, pet_id, is_active, last_gift_at) VALUES ($1, 'hamster', true, NOW())`,
-      [userId]
-    );
-  }
-
   await execute(
-    `UPDATE farms SET water_in_can = water_in_can + $1 WHERE user_id = $2 AND harvested = false`,
-    [giftAmount, userId]
+    `UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`,
+    [giftAmount, farm.id]
   );
 
   res.json({ success: true, data: { waterEarned: giftAmount } });

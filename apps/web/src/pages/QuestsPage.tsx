@@ -32,11 +32,19 @@ export default function QuestsPage() {
     queryFn: () => api('/quests/daily-challenge'),
   });
 
+  const [questError, setQuestError] = useState<string | null>(null);
+
   const completeQuest = useMutation({
     mutationFn: (questId: string) => api(`/quests/${questId}/complete`, { method: 'POST' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['quests'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
+      setQuestError(null);
+    },
+    onError: (err: any) => {
+      const msg = err?.error?.message || err?.message || 'Quest failed';
+      setQuestError(msg);
+      setTimeout(() => setQuestError(null), 3000);
     },
   });
 
@@ -83,6 +91,11 @@ export default function QuestsPage() {
       </div>
 
       <div className="px-4 mt-4 space-y-4">
+        {questError && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600 font-medium text-center">
+            {questError}
+          </div>
+        )}
         {/* Daily Challenge */}
         {dailyChallenge && (
           <motion.div
@@ -109,7 +122,7 @@ export default function QuestsPage() {
             </div>
             <p className="text-xs text-gray-500 mt-1">
               {t('quests.waterings_today', {
-                current: dailyChallenge.currentWaterings,
+                current: Math.round(dailyChallenge.waterGiven ?? 0),
                 required: dailyChallenge.required,
               })}
             </p>

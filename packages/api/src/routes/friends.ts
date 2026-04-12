@@ -67,7 +67,14 @@ friendsRouter.get('/', async (req: Request, res: Response) => {
 
 friendsRouter.post('/add', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { code } = z.object({ code: z.string() }).parse(req.body);
+
+  let code: string;
+  try {
+    ({ code } = z.object({ code: z.string().min(1) }).parse(req.body));
+  } catch {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Invalid code' } });
+    return;
+  }
 
   const referral = await queryOne(
     `SELECT inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
@@ -266,11 +273,19 @@ friendsRouter.get('/invite-code', async (req: Request, res: Response) => {
   );
 
   if (!referral) {
-    const code = Math.random().toString(36).slice(2, 8).toUpperCase();
-    referral = await queryOne(
-      `INSERT INTO referrals (inviter_id, invite_code) VALUES ($1, $2) RETURNING invite_code`,
-      [userId, code]
-    );
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+      try {
+        referral = await queryOne(
+          `INSERT INTO referrals (inviter_id, invite_code) VALUES ($1, $2) RETURNING invite_code`,
+          [userId, code]
+        );
+        break;
+      } catch (err: any) {
+        if (err.code === '23505' && attempt < 4) continue;
+        throw err;
+      }
+    }
   }
 
   const link = `${process.env.PUBLIC_URL || 'https://boostfarm.io'}/?ref=${referral!.invite_code}`;

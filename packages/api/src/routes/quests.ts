@@ -55,7 +55,14 @@ questsRouter.get('/', async (req: Request, res: Response) => {
 
 questsRouter.post('/checkin', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { type } = z.object({ type: z.enum(['water', 'nutrition']) }).parse(req.body);
+
+  let type: 'water' | 'nutrition';
+  try {
+    ({ type } = z.object({ type: z.enum(['water', 'nutrition']) }).parse(req.body));
+  } catch {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Invalid type' } });
+    return;
+  }
   const questKey = type === 'nutrition' ? 'checkin_fert' : 'checkin';
   const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
   const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;

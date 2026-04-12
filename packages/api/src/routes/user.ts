@@ -28,7 +28,13 @@ userRouter.get('/profile', async (req: Request, res: Response) => {
 userRouter.patch('/profile', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
-  const updates = updateProfileSchema.parse(req.body);
+  let updates;
+  try {
+    updates = updateProfileSchema.parse(req.body);
+  } catch {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Invalid profile data' } });
+    return;
+  }
   const sets: string[] = [];
   const vals: any[] = [];
   let idx = 1;
@@ -66,7 +72,12 @@ userRouter.get('/notifications', async (req: Request, res: Response) => {
   const page = rows.slice(0, limit);
 
   const notifications = page.map((n: any) => {
-    const payload = typeof n.payload === 'string' ? JSON.parse(n.payload) : (n.payload || {});
+    let payload: Record<string, any> = {};
+    try {
+      payload = typeof n.payload === 'string' ? JSON.parse(n.payload) : (n.payload || {});
+    } catch {
+      payload = {};
+    }
     const { message_key, ...params } = payload;
     return {
       id: n.id,
@@ -91,7 +102,14 @@ userRouter.get('/notifications', async (req: Request, res: Response) => {
 
 userRouter.post('/notifications/mark-read', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { ids } = z.object({ ids: z.array(z.string()) }).parse(req.body);
+
+  let ids: string[];
+  try {
+    ({ ids } = z.object({ ids: z.array(z.string()) }).parse(req.body));
+  } catch {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Invalid request' } });
+    return;
+  }
 
   await execute(
     `UPDATE notifications SET read = true WHERE user_id = $1 AND id = ANY($2)`,

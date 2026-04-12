@@ -97,6 +97,9 @@ export default function FarmPage() {
       sounds.rewardChime();
       showReward('water', res.rewardAmount);
     },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ['daily-challenge'] });
+    },
   });
 
   const claimGift = useMutation({
@@ -130,6 +133,14 @@ export default function FarmPage() {
     }
     lastNotifCount.current = current;
   }, [notifData?.unreadCount]);
+
+  const dropOffsets = useRef(
+    Array.from({ length: 12 }, () => ({
+      left: -20 + Math.random() * 40,
+      yEnd: 30 + Math.random() * 20,
+      duration: 0.5 + Math.random() * 0.3,
+    }))
+  );
 
   const prevChallengeCompleted = useRef(false);
   useEffect(() => {
@@ -232,11 +243,7 @@ export default function FarmPage() {
   })();
 
   const handlePetClick = () => {
-    if (showGiftOnPet && !claimGift.isPending) {
-      claimGift.mutate();
-    } else {
-      setShowPets(true);
-    }
+    setShowPets(true);
   };
 
   const shouldSelectCrop = !isLoading && !farmError && (!farm || data?.needsCropSelection);
@@ -366,20 +373,20 @@ export default function FarmPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
               >
-                {[...Array(12)].map((_, i) => (
+                {dropOffsets.current.map((d, i) => (
                   <motion.img
                     key={i}
                     src={UI.waterDrop}
                     alt=""
                     className="absolute w-3 h-3"
-                    style={{ left: `${-20 + Math.random() * 40}px` }}
+                    style={{ left: `${d.left}px` }}
                     animate={{
-                      y: [-40, 30 + Math.random() * 20],
+                      y: [-40, d.yEnd],
                       opacity: [0.9, 0],
                       scale: [1, 0.3],
                     }}
                     transition={{
-                      duration: 0.5 + Math.random() * 0.3,
+                      duration: d.duration,
                       delay: i * 0.07,
                       repeat: Infinity,
                       repeatDelay: 0.1,

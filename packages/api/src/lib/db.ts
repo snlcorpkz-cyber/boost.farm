@@ -31,4 +31,37 @@ export async function execute(sql: string, params?: any[]): Promise<number> {
   return rowCount ?? 0;
 }
 
+export async function withTransaction<T>(
+  fn: (
+    txQuery: typeof query,
+    txQueryOne: typeof queryOne,
+    txExecute: typeof execute,
+  ) => Promise<T>,
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const txQuery = async <R = any>(sql: string, params?: any[]): Promise<R[]> => {
+      const { rows } = await client.query(sql, params);
+      return rows as R[];
+    };
+    const txQueryOne = async <R = any>(sql: string, params?: any[]): Promise<R | null> => {
+      const rows = await txQuery<R>(sql, params);
+      return rows[0] ?? null;
+    };
+    const txExecute = async (sql: string, params?: any[]): Promise<number> => {
+      const { rowCount } = await client.query(sql, params);
+      return rowCount ?? 0;
+    };
+    const result = await fn(txQuery, txQueryOne, txExecute);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export { pool };
