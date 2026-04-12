@@ -28,8 +28,9 @@ app.use(express.json({ limit: '100kb' }));
 
 /** Load / stress tests from one IP: set LOAD_TEST_SECRET and send X-Load-Test-Secret header */
 app.use((req, _res, next) => {
-  const secret = process.env.LOAD_TEST_SECRET;
-  if (secret && req.get('x-load-test-secret') === secret) {
+  const secret = (process.env.LOAD_TEST_SECRET || '').trim();
+  const header = (req.get('x-load-test-secret') || '').trim();
+  if (secret && header && header === secret) {
     (req as Request & { skipGlobalRateLimit?: boolean }).skipGlobalRateLimit = true;
   }
   next();

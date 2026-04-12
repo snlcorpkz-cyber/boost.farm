@@ -11,6 +11,11 @@ setInterval(() => {
 
 export function rateLimit(maxRequests: number, windowMs: number) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    if ((req as Request & { skipGlobalRateLimit?: boolean }).skipGlobalRateLimit) {
+      next();
+      return;
+    }
+
     const userId = req.user?.userId || req.ip || 'anonymous';
     const key = `${req.path}:${userId}`;
     const now = Date.now();

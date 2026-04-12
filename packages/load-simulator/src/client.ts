@@ -3,23 +3,40 @@ import { randomUUID } from 'node:crypto';
 export interface ApiClientOptions {
   baseUrl: string;
   loadTestSecret?: string;
+  maxRps?: number;
 }
 
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly extraHeaders: Record<string, string>;
+  private readonly minInterval: number;
+  private lastRequest = 0;
+  private queue = Promise.resolve();
 
   constructor(opts: ApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.extraHeaders = {};
+    this.minInterval = opts.maxRps ? Math.ceil(1000 / opts.maxRps) : 0;
     if (opts.loadTestSecret) {
       this.extraHeaders['X-Load-Test-Secret'] = opts.loadTestSecret;
     }
   }
 
+  private throttle(): Promise<void> {
+    if (!this.minInterval) return Promise.resolve();
+    this.queue = this.queue.then(async () => {
+      const now = Date.now();
+      const wait = this.minInterval - (now - this.lastRequest);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this.lastRequest = Date.now();
+    });
+    return this.queue;
+  }
+
   private async request<T>(
     path: string,
     options: { method?: string; body?: unknown; token?: string } = {},
+    retries = 6,
   ): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -28,28 +45,38 @@ export class ApiClient {
     };
     if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: options.method || 'GET',
-      headers,
-      body:
-        options.body === undefined
-          ? undefined
-          : typeof options.body === 'string'
-            ? options.body
-            : JSON.stringify(options.body),
-    });
-    const text = await res.text();
-    let parsed: { success?: boolean; data?: T; error?: { code?: string; message?: string } };
-    try {
-      parsed = JSON.parse(text) as typeof parsed;
-    } catch {
-      throw new Error(`Non-JSON ${res.status}: ${text.slice(0, 200)}`);
+    for (let attempt = 0; ; attempt++) {
+      await this.throttle();
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        method: options.method || 'GET',
+        headers,
+        body:
+          options.body === undefined
+            ? undefined
+            : typeof options.body === 'string'
+              ? options.body
+              : JSON.stringify(options.body),
+      });
+
+      if (res.status === 429 && attempt < retries) {
+        const wait = Math.min(1000 * 2 ** attempt + Math.random() * 500, 15000);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+
+      const text = await res.text();
+      let parsed: { success?: boolean; data?: T; error?: { code?: string; message?: string } };
+      try {
+        parsed = JSON.parse(text) as typeof parsed;
+      } catch {
+        throw new Error(`Non-JSON ${res.status}: ${text.slice(0, 200)}`);
+      }
+      if (!res.ok || parsed.success === false) {
+        const msg = parsed.error?.message || parsed.error?.code || res.statusText;
+        throw new Error(`${path} → ${res.status} ${msg}`);
+      }
+      return parsed.data as T;
     }
-    if (!res.ok || parsed.success === false) {
-      const msg = parsed.error?.message || parsed.error?.code || res.statusText;
-      throw new Error(`${path} → ${res.status} ${msg}`);
-    }
-    return parsed.data as T;
   }
 
   verifyCode(email: string, refCode?: string) {

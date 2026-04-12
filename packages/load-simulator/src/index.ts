@@ -95,8 +95,9 @@ async function main() {
   const chaosWorkers = envInt('SIM_CHAOS_CONCURRENCY', 40);
   const durationMs = envInt('SIM_DURATION_SEC', 120) * 1000;
 
+  const maxRps = envInt('SIM_MAX_RPS', 100);
   const runId = `${Date.now()}`;
-  const api = new ApiClient({ baseUrl, loadTestSecret });
+  const api = new ApiClient({ baseUrl, loadTestSecret, maxRps });
 
   const { products } = await api.products();
   const productIds = products.map((p) => p.id);
@@ -111,24 +112,46 @@ async function main() {
 
   const bots: Bot[] = new Array(totalUsers);
 
+  let bootFail = 0;
   await runPool(emails.slice(0, seedUsers), concurrency, async (email, idx) => {
-    bots[idx] = await bootstrapOne(api, email, productIds);
-    if ((idx + 1) % 10 === 0) console.log(`[load-sim] bootstrapped seed ${idx + 1}/${seedUsers}`);
+    try {
+      bots[idx] = await bootstrapOne(api, email, productIds);
+    } catch (e) {
+      bootFail++;
+      console.warn(`[load-sim] seed ${idx} failed: ${(e as Error).message}`);
+    }
+    if ((idx + 1) % 10 === 0) console.log(`[load-sim] bootstrapped seed ${idx + 1}/${seedUsers} (fail=${bootFail})`);
   });
 
   const seedCodes: string[] = [];
   for (let i = 0; i < seedUsers; i++) {
-    const { code } = await api.inviteCode(bots[i]!.token);
-    seedCodes.push(code);
+    if (!bots[i]) continue;
+    try {
+      const { code } = await api.inviteCode(bots[i]!.token);
+      seedCodes.push(code);
+    } catch { /* skip */ }
   }
   console.log(`[load-sim] collected ${seedCodes.length} invite codes`);
+
+  if (seedCodes.length === 0) {
+    console.error('[load-sim] No seed codes — cannot continue. Check API connectivity and LOAD_TEST_SECRET.');
+    process.exit(1);
+  }
 
   await runPool(emails.slice(seedUsers), concurrency, async (email, relIdx) => {
     const idx = seedUsers + relIdx;
     const ref = pick(seedCodes) ?? seedCodes[0]!;
-    bots[idx] = await bootstrapOne(api, email, productIds, ref);
-    if ((relIdx + 1) % 50 === 0) console.log(`[load-sim] bootstrapped follower ${relIdx + 1}/${totalUsers - seedUsers}`);
+    try {
+      bots[idx] = await bootstrapOne(api, email, productIds, ref);
+    } catch (e) {
+      bootFail++;
+      if (bootFail % 100 === 0) console.warn(`[load-sim] boot failures so far: ${bootFail}`);
+    }
+    if ((relIdx + 1) % 200 === 0) console.log(`[load-sim] bootstrapped follower ${relIdx + 1}/${totalUsers - seedUsers} (fail=${bootFail})`);
   });
+
+  const activeBots = bots.filter(Boolean).length;
+  console.log(`[load-sim] bootstrap done: ${activeBots} active bots, ${bootFail} failures`);
 
   const stats = { ok: 0, fail: 0 };
   const until = Date.now() + durationMs;
