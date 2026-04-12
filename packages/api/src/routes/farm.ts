@@ -113,7 +113,7 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
     `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
      total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
      water_month = $5
-     WHERE id = $3 AND bucket_last_collected_at = $4`,
+     WHERE id = $3 AND date_trunc('milliseconds', bucket_last_collected_at) = date_trunc('milliseconds', $4::timestamptz)`,
     [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected]
   );
 

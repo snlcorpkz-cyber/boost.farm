@@ -19,6 +19,9 @@ export function useCollectBucket() {
       qc.invalidateQueries({ queryKey: ['farm'] });
       if (data.collected > 0) showReward('water', data.collected);
     },
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ['farm'] });
+    },
   });
 }
 
