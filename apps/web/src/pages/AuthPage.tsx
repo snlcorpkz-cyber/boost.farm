@@ -32,18 +32,6 @@ export default function AuthPage() {
     setRefCode(captureRefCode());
   }, []);
 
-  const handleDemoLogin = async () => {
-    setLoading(true);
-    try {
-      await login('demo@eco-farm.app', '000000', refCode ?? undefined);
-      localStorage.removeItem(REF_KEY);
-    } catch (err: any) {
-      setError(err.message || 'Demo login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSendCode = async () => {
     if (!email) return;
     setLoading(true);
@@ -173,13 +161,6 @@ export default function AuthPage() {
             {t('auth.google')} ({t('auth.coming_soon') || 'Coming soon'})
           </button>
 
-          <button
-            onClick={handleDemoLogin}
-            disabled={loading}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2"
-          >
-            🎮 Demo Mode
-          </button>
         </div>
       </motion.div>
     </div>

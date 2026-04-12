@@ -1,15 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './hooks/useAuth';
 import { api } from './lib/api';
 import FarmPage from './pages/FarmPage';
 import AuthPage from './pages/AuthPage';
+import OnboardingPage from './pages/OnboardingPage';
 import CropSelectPage from './pages/CropSelectPage';
 import QuestsPage from './pages/QuestsPage';
 import FriendsPage from './pages/FriendsPage';
 import FriendFarmPage from './pages/FriendFarmPage';
 import ProfilePage from './pages/ProfilePage';
+
+const ONBOARDING_KEY = 'eco_onboarding_done';
 
 const REF_KEY = 'eco_ref_code';
 
@@ -26,6 +29,14 @@ export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
   const qc = useQueryClient();
   const refProcessed = useRef(false);
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => !localStorage.getItem(ONBOARDING_KEY),
+  );
+
+  const finishOnboarding = () => {
+    localStorage.setItem(ONBOARDING_KEY, '1');
+    setShowOnboarding(false);
+  };
 
   captureRefFromUrl();
 
@@ -65,6 +76,9 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
+    if (showOnboarding) {
+      return <OnboardingPage onFinish={finishOnboarding} />;
+    }
     return <AuthPage />;
   }
 
