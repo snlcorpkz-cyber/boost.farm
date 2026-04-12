@@ -11,7 +11,8 @@
     "dev:api": "npm run dev -w packages/api",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "build:web": "npm run build -w apps/web",
-    "build:api": "npm run build -w packages/api"
+    "build:api": "npm run build -w packages/api",
+    "simulate:load": "npm run simulate -w @eco-farm/load-simulator"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

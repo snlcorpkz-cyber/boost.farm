@@ -37,6 +37,10 @@ export function rateLimit(maxRequests: number, windowMs: number) {
 
 export function globalRateLimit(maxPerMinute: number) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    if ((req as Request & { skipGlobalRateLimit?: boolean }).skipGlobalRateLimit) {
+      next();
+      return;
+    }
     const ip = req.ip || 'unknown';
     const key = `global:${ip}`;
     const now = Date.now();

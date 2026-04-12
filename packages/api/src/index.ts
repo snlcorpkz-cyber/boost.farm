@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import { resolve } from 'path';
 dotenv.config({ path: resolve(process.cwd(), '.env') });
 dotenv.config({ path: resolve(process.cwd(), '../../.env') });
-import express from 'express';
+import express, { type Request } from 'express';
 import cors from 'cors';
 import { authRouter } from './routes/auth.js';
 import { farmRouter } from './routes/farm.js';
@@ -25,6 +25,16 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '100kb' }));
+
+/** Load / stress tests from one IP: set LOAD_TEST_SECRET and send X-Load-Test-Secret header */
+app.use((req, _res, next) => {
+  const secret = process.env.LOAD_TEST_SECRET;
+  if (secret && req.get('x-load-test-secret') === secret) {
+    (req as Request & { skipGlobalRateLimit?: boolean }).skipGlobalRateLimit = true;
+  }
+  next();
+});
+
 app.use(globalRateLimit(120));
 
 app.get('/health', (_req, res) => {
