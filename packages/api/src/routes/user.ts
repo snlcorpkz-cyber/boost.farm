@@ -124,6 +124,22 @@ userRouter.post('/notifications/mark-read', async (req: Request, res: Response) 
   res.json({ success: true, data: { unreadCount: remaining.length } });
 });
 
+userRouter.post('/push-token', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const { token, platform } = req.body || {};
+  if (!token || typeof token !== 'string') {
+    res.status(400).json({ success: false, error: { code: 'INVALID', message: 'token is required' } });
+    return;
+  }
+  await execute(
+    `INSERT INTO push_tokens (user_id, token, platform)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, token) DO NOTHING`,
+    [userId, token, platform || 'android']
+  );
+  res.json({ success: true, data: { saved: true } });
+});
+
 userRouter.delete('/account', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 

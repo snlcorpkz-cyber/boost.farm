@@ -53,8 +53,16 @@ app.use('/admin/products', productsRouter);
 
 app.use(errorHandler);
 
+import { runPushCron } from './cron/push-cron.js';
+
 app.listen(PORT, () => {
   console.log(`[API] Running on http://localhost:${PORT}`);
+
+  const PUSH_CRON_INTERVAL = 15 * 60 * 1000;
+  setInterval(() => {
+    runPushCron().catch((err) => console.error('[push-cron]', err));
+  }, PUSH_CRON_INTERVAL);
+  console.log('[push-cron] Scheduled every 15 min');
 });
 
 export default app;

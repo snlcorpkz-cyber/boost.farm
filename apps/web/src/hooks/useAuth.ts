@@ -1,6 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, setToken, setRefreshToken, getToken } from '../lib/api';
 
+function registerPushToken() {
+  try {
+    const bridge = (window as any).EcoFarmAndroid;
+    if (!bridge?.getFcmToken) return;
+    const token = bridge.getFcmToken();
+    if (!token) {
+      window.addEventListener('fcm-token', ((e: CustomEvent) => {
+        if (e.detail) {
+          api('/user/push-token', {
+            method: 'POST',
+            body: JSON.stringify({ token: e.detail, platform: 'android' }),
+          }).catch(() => {});
+        }
+      }) as EventListener, { once: true });
+      return;
+    }
+    api('/user/push-token', {
+      method: 'POST',
+      body: JSON.stringify({ token, platform: 'android' }),
+    }).catch(() => {});
+  } catch { /* not in Android WebView */ }
+}
+
 interface User {
   id: string;
   email: string;
@@ -49,6 +72,7 @@ export function useAuth() {
           if (cancelled) return;
           globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
+          registerPushToken();
           return;
         } catch {
           setToken(null);
@@ -71,6 +95,7 @@ export function useAuth() {
           setRefreshToken(data.refreshToken);
           globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
+          registerPushToken();
           return;
         } catch (e) {
           console.warn('[auth] Telegram Mini App login failed', e);
@@ -97,6 +122,7 @@ export function useAuth() {
     setRefreshToken(data.refreshToken);
     globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
     notify();
+    registerPushToken();
     return data;
   }, []);
 

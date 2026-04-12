@@ -16,6 +16,13 @@ class FarmJsBridge(
     private val offerwall: OfferwallPort,
 ) {
     @JavascriptInterface
+    fun getFcmToken(): String {
+        return webView.context
+            .getSharedPreferences("fcm", android.content.Context.MODE_PRIVATE)
+            .getString("token", "") ?: ""
+    }
+
+    @JavascriptInterface
     fun requestRewardedAd(json: String) {
         val placement = parsePlacement(json)
         webView.post {
