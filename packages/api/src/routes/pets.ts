@@ -166,9 +166,13 @@ petsRouter.post('/:id/gift', async (req: Request, res: Response) => {
     }
   }
 
+  const mo = new Date().toISOString().slice(0, 7);
   await execute(
-    `UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`,
-    [giftAmount, farm.id]
+    `UPDATE farms SET water_in_can = water_in_can + $1,
+     total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+     water_month = $3
+     WHERE id = $2`,
+    [giftAmount, farm.id, mo]
   );
 
   res.json({ success: true, data: { waterEarned: giftAmount } });

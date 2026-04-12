@@ -105,7 +105,14 @@ questsRouter.post('/checkin', async (req: Request, res: Response) => {
 
   if (farm) {
     if (quest.reward_type === 'water') {
-      await execute(`UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`, [quest.reward_amount, farm.id]);
+      const mo = new Date().toISOString().slice(0, 7);
+      await execute(
+        `UPDATE farms SET water_in_can = water_in_can + $1,
+         total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+         water_month = $3
+         WHERE id = $2`,
+        [quest.reward_amount, farm.id, mo]
+      );
     } else if (quest.reward_type === 'nutrition') {
       await execute(`UPDATE farms SET nutrition = nutrition + $1 WHERE id = $2`, [quest.reward_amount, farm.id]);
     }
@@ -160,9 +167,13 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
 
   if (farm) {
     if (quest.reward_type === 'water') {
+      const mo = new Date().toISOString().slice(0, 7);
       await execute(
-        `UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`,
-        [quest.reward_amount, farm.id]
+        `UPDATE farms SET water_in_can = water_in_can + $1,
+         total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+         water_month = $3
+         WHERE id = $2`,
+        [quest.reward_amount, farm.id, mo]
       );
     } else if (quest.reward_type === 'nutrition') {
       await execute(
@@ -234,9 +245,13 @@ questsRouter.post('/daily-challenge/claim', async (req: Request, res: Response) 
     [challenge.id]
   );
 
+  const mo = new Date().toISOString().slice(0, 7);
   await execute(
-    `UPDATE farms SET water_in_can = water_in_can + $1 WHERE user_id = $2 AND harvested = false`,
-    [rank.dailyChallengeReward, userId]
+    `UPDATE farms SET water_in_can = water_in_can + $1,
+     total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+     water_month = $3
+     WHERE user_id = $2 AND harvested = false`,
+    [rank.dailyChallengeReward, userId, mo]
   );
 
   await notify(userId, 'gift', 'notif.daily_challenge_done', { reward: rank.dailyChallengeReward });

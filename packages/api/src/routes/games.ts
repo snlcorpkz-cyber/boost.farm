@@ -61,9 +61,13 @@ gamesRouter.post('/:id/claim', async (req: Request, res: Response) => {
   );
 
   if (game.reward_type === 'water') {
+    const mo = new Date().toISOString().slice(0, 7);
     await execute(
-      `UPDATE farms SET water_in_can = water_in_can + $1 WHERE user_id = $2 AND harvested = false`,
-      [game.reward_amount, userId]
+      `UPDATE farms SET water_in_can = water_in_can + $1,
+       total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+       water_month = $3
+       WHERE user_id = $2 AND harvested = false`,
+      [game.reward_amount, userId, mo]
     );
   } else if (game.reward_type === 'nutrition') {
     await execute(

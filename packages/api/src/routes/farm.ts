@@ -108,10 +108,13 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
     activePet
   );
 
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const updated = await execute(
-    `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2
+    `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
+     total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
+     water_month = $5
      WHERE id = $3 AND bucket_last_collected_at = $4`,
-    [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at]
+    [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected]
   );
 
   if (updated === 0) {
@@ -196,19 +199,16 @@ farmRouter.post(
           [body.idempotencyKey, userId]
         );
 
-        const currentMonth = new Date().toISOString().slice(0, 7);
         const newWateringCount = waterings + body.times;
 
         await txExecute(
           `UPDATE farms SET growth_percent = $1, current_stage = $2, water_in_can = $3,
            nutrition = $4, total_waterings_today = $5, harvested = $6,
-           total_water_this_month = CASE WHEN water_month = $7 THEN total_water_this_month + $8 ELSE $8 END,
-           water_month = $7,
            day_reset_at = CASE WHEN day_reset_at::date < CURRENT_DATE THEN CURRENT_DATE ELSE day_reset_at END
-           WHERE id = $9`,
+           WHERE id = $7`,
           [waterResult.newGrowthPercent, waterResult.newStage, waterResult.newWaterInCan,
            waterResult.newNutrition, newWateringCount, waterResult.harvested,
-           currentMonth, waterResult.waterConsumed, farm.id]
+           farm.id]
         );
 
         return { waterResult, farm } as const;
@@ -406,9 +406,13 @@ farmRouter.post(
     }
 
     if (body.type === 'water') {
+      const mo = new Date().toISOString().slice(0, 7);
       await execute(
-        `UPDATE farms SET water_in_can = water_in_can + $1 WHERE id = $2`,
-        [body.amount, farm.id]
+        `UPDATE farms SET water_in_can = water_in_can + $1,
+         total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+         water_month = $3
+         WHERE id = $2`,
+        [body.amount, farm.id, mo]
       );
     } else {
       await execute(

@@ -27,7 +27,7 @@ import { useEventToast } from '../components/EventToast';
 
 
 export default function FarmPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { data, isLoading, error: farmError } = useFarm();
   const { phase } = usePhase();
@@ -310,7 +310,7 @@ export default function FarmPage() {
               {(farm.total_water_this_month ?? 0).toFixed(0)}g
             </span>
             <span className="text-[8px] text-gray-500 ml-0.5">
-              in {new Date().toLocaleString(undefined, { month: 'long' })}
+              in {new Date().toLocaleString(i18n.language, { month: 'long' })}
             </span>
           </div>
 

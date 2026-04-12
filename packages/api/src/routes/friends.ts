@@ -183,9 +183,13 @@ friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
   const rank = await getUserRank(userId);
   const waterReward = rank.greetWater;
 
+  const mo = new Date().toISOString().slice(0, 7);
   await execute(
-    `UPDATE farms SET water_in_can = water_in_can + $1 WHERE user_id = $2 AND harvested = false`,
-    [waterReward, userId]
+    `UPDATE farms SET water_in_can = water_in_can + $1,
+     total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+     water_month = $3
+     WHERE user_id = $2 AND harvested = false`,
+    [waterReward, userId, mo]
   );
 
   const actorName = await getUserNickname(userId);
