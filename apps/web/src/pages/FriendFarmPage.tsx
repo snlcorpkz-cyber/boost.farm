@@ -49,6 +49,8 @@ export default function FriendFarmPage() {
   const [isWatering, setIsWatering] = useState(false);
   const [greetDone, setGreetDone] = useState(false);
   const [waterLimitHit, setWaterLimitHit] = useState(false);
+  const greetBusy = useRef(false);
+  const waterBusy = useRef(false);
 
   const { data: friendsData, isLoading } = useQuery({
     queryKey: ['friends'],
@@ -116,9 +118,12 @@ export default function FriendFarmPage() {
 
   const handleWater = useCallback(
     (_times: 1 | 5 | 20) => {
+      if (waterBusy.current) return;
+      waterBusy.current = true;
       setIsWatering(true);
       waterMutation.mutate(undefined, {
         onSettled: () => {
+          waterBusy.current = false;
           setTimeout(() => setIsWatering(false), 1200);
         },
       });
@@ -360,7 +365,11 @@ export default function FriendFarmPage() {
                     : 'bg-amber-100/80'
                 }`}
                 whileTap={greetDone ? {} : { scale: 0.92 }}
-                onClick={() => !greetDone && greetMutation.mutate()}
+                onClick={() => {
+                  if (greetDone || greetBusy.current) return;
+                  greetBusy.current = true;
+                  greetMutation.mutate(undefined, { onSettled: () => { greetBusy.current = false; } });
+                }}
                 disabled={greetDone || greetMutation.isPending || waterMutation.isPending}
               >
                 <img src={UI.greetHand} alt="greet" className="w-16 h-16 object-contain" />

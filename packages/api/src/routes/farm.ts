@@ -9,6 +9,8 @@ import {
   performWatering,
   getMultiplier,
   getRankForWater,
+  getCurrentPhase,
+  QUEST_LIMITS,
 } from '@eco-farm/game-engine';
 import { notify } from '../lib/notify.js';
 
@@ -392,6 +394,26 @@ farmRouter.post(
       }).parse(req.body);
     } catch {
       res.status(400).json({ success: false, error: { code: 'VALIDATION', message: 'Invalid request' } });
+      return;
+    }
+
+    const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+    const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+    const phase = getCurrentPhase(localHour);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const adView = await queryOne(
+      `INSERT INTO ad_views (user_id, ad_type, phase, view_date, count)
+       VALUES ($1, 'rewarded', $2, $3, 1)
+       ON CONFLICT (user_id, ad_type, phase, view_date)
+       DO UPDATE SET count = ad_views.count + 1
+       WHERE ad_views.count < $4
+       RETURNING count`,
+      [userId, phase, today, QUEST_LIMITS.ADS_PER_PHASE]
+    );
+
+    if (!adView) {
+      res.status(400).json({ success: false, error: { code: 'AD_LIMIT', message: 'Ad limit reached for this phase' } });
       return;
     }
 

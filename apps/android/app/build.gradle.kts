@@ -17,9 +17,11 @@ android {
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
 
-        // AdMob: use test IDs for debug; replace with real ones for production
-        buildConfigField("String", "ADMOB_REWARDED_WATER", "\"ca-app-pub-3079122554551679/6905057993\"")
-        buildConfigField("String", "ADMOB_REWARDED_FERT", "\"ca-app-pub-3079122554551679/2742451701\"")
+        // AdMob: test IDs until account is approved; then switch to production IDs
+        // Production Water: ca-app-pub-3079122554551679/6905057993
+        // Production Fert:  ca-app-pub-3079122554551679/2742451701
+        buildConfigField("String", "ADMOB_REWARDED_WATER", "\"ca-app-pub-3940256099942544/5224354917\"")
+        buildConfigField("String", "ADMOB_REWARDED_FERT", "\"ca-app-pub-3940256099942544/5224354917\"")
     }
 
     buildTypes {

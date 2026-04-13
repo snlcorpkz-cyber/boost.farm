@@ -78,24 +78,19 @@ questsRouter.post('/checkin', async (req: Request, res: Response) => {
     return;
   }
 
-  const existing = await queryOne(
-    `SELECT * FROM quest_completions
-     WHERE user_id = $1 AND quest_id = $2 AND phase = $3 AND completion_date = $4`,
-    [userId, quest.id, phase, today]
+  const upserted = await queryOne(
+    `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count)
+     VALUES ($1, $2, $3, $4, 1)
+     ON CONFLICT (user_id, quest_id, phase, completion_date)
+     DO UPDATE SET count = quest_completions.count + 1
+     WHERE quest_completions.count < $5
+     RETURNING count`,
+    [userId, quest.id, phase, today, quest.limit_per_phase]
   );
 
-  if (existing && existing.count >= quest.limit_per_phase) {
+  if (!upserted) {
     res.status(400).json({ success: false, error: { code: 'ALREADY_CLAIMED', message: 'Already claimed today' } });
     return;
-  }
-
-  if (existing) {
-    await execute(`UPDATE quest_completions SET count = count + 1 WHERE id = $1`, [existing.id]);
-  } else {
-    await execute(
-      `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count) VALUES ($1, $2, $3, $4, 1)`,
-      [userId, quest.id, phase, today]
-    );
   }
 
   const farm = await queryOne(
@@ -136,28 +131,19 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
     return;
   }
 
-  const existing = await queryOne(
-    `SELECT * FROM quest_completions
-     WHERE user_id = $1 AND quest_id = $2 AND phase = $3 AND completion_date = $4`,
-    [userId, questId, phase, today]
+  const upserted = await queryOne(
+    `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count)
+     VALUES ($1, $2, $3, $4, 1)
+     ON CONFLICT (user_id, quest_id, phase, completion_date)
+     DO UPDATE SET count = quest_completions.count + 1
+     WHERE quest_completions.count < $5
+     RETURNING count`,
+    [userId, questId, phase, today, quest.limit_per_phase]
   );
 
-  if (existing && existing.count >= quest.limit_per_phase) {
+  if (!upserted) {
     res.status(400).json({ success: false, error: { code: 'LIMIT_REACHED', message: 'Quest limit reached' } });
     return;
-  }
-
-  if (existing) {
-    await execute(
-      `UPDATE quest_completions SET count = count + 1 WHERE id = $1`,
-      [existing.id]
-    );
-  } else {
-    await execute(
-      `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count)
-       VALUES ($1, $2, $3, $4, 1)`,
-      [userId, questId, phase, today]
-    );
   }
 
   const farm = await queryOne(
@@ -231,19 +217,16 @@ questsRouter.post('/daily-challenge/claim', async (req: Request, res: Response) 
   const rank = await getUserRank(userId);
 
   const challenge = await queryOne(
-    `SELECT * FROM daily_challenges WHERE user_id = $1 AND challenge_date = $2`,
+    `UPDATE daily_challenges SET reward_claimed = true
+     WHERE user_id = $1 AND challenge_date = $2 AND completed = true AND reward_claimed = false
+     RETURNING *`,
     [userId, today]
   );
 
-  if (!challenge || !challenge.completed || challenge.reward_claimed) {
+  if (!challenge) {
     res.status(400).json({ success: false, error: { code: 'CANNOT_CLAIM', message: 'Cannot claim reward' } });
     return;
   }
-
-  await execute(
-    `UPDATE daily_challenges SET reward_claimed = true WHERE id = $1`,
-    [challenge.id]
-  );
 
   const mo = new Date().toISOString().slice(0, 7);
   await execute(

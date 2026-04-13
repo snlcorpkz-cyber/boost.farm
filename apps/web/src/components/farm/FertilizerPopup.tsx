@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
@@ -103,6 +103,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const busyRef = useRef(false);
 
   const ad = useRewardedAd({
     placement: 'fert_popup',
@@ -230,7 +231,12 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                       {checkinClaimed ? (
                         <FarmBtn variant="disabled" disabled>Done</FarmBtn>
                       ) : (
-                        <FarmBtn variant="green" onClick={() => { setMutationError(null); claimCheckin.mutate(); }} disabled={claimCheckin.isPending}>
+                        <FarmBtn variant="green" onClick={() => {
+                          if (busyRef.current) return;
+                          busyRef.current = true;
+                          setMutationError(null);
+                          claimCheckin.mutate(undefined, { onSettled: () => { busyRef.current = false; } });
+                        }} disabled={claimCheckin.isPending}>
                           {claimCheckin.isPending ? '...' : 'Claim'}
                         </FarmBtn>
                       )}

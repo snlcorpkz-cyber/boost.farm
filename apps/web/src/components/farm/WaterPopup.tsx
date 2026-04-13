@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -102,6 +102,7 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
   const [selectedFriend, setSelectedFriend] = useState<any>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const busyRef = useRef(false);
 
   const ad = useRewardedAd({
     placement: 'water_popup',
@@ -269,7 +270,12 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                       {checkinClaimed ? (
                         <FarmBtn variant="disabled" disabled>Done</FarmBtn>
                       ) : (
-                        <FarmBtn variant="green" onClick={() => { setMutationError(null); claimCheckin.mutate(); }} disabled={claimCheckin.isPending}>
+                        <FarmBtn variant="green" onClick={() => {
+                          if (busyRef.current) return;
+                          busyRef.current = true;
+                          setMutationError(null);
+                          claimCheckin.mutate(undefined, { onSettled: () => { busyRef.current = false; } });
+                        }} disabled={claimCheckin.isPending}>
                           {claimCheckin.isPending ? '...' : 'Claim'}
                         </FarmBtn>
                       )}
@@ -348,8 +354,16 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                     friend={selectedFriend}
                     waterInCan={waterInCan}
                     toast={toast}
-                    onGreet={() => greetFriend.mutate(selectedFriend.id)}
-                    onWater={() => waterFriend.mutate(selectedFriend.id)}
+                    onGreet={() => {
+                      if (busyRef.current) return;
+                      busyRef.current = true;
+                      greetFriend.mutate(selectedFriend.id, { onSettled: () => { busyRef.current = false; } });
+                    }}
+                    onWater={() => {
+                      if (busyRef.current) return;
+                      busyRef.current = true;
+                      waterFriend.mutate(selectedFriend.id, { onSettled: () => { busyRef.current = false; } });
+                    }}
                     greetPending={greetFriend.isPending}
                     waterPending={waterFriend.isPending}
                     greetDone={greetDoneIds.has(selectedFriend.id)}
