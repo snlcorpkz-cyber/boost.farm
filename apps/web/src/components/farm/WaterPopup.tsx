@@ -111,6 +111,14 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
     onError: (msg) => { setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
   });
 
+  const { data: adLimits } = useQuery({
+    queryKey: ['ad-limits'],
+    queryFn: () => api<{ phase: string; limit: number; water: { used: number; remaining: number }; nutrition: { used: number; remaining: number } }>('/farm/ad-limits'),
+    enabled: open,
+  });
+  const waterAdsLeft = adLimits?.water?.remaining ?? Infinity;
+  const waterAdLimitReached = waterAdsLeft <= 0;
+
   const { data: friendsData } = useQuery({
     queryKey: ['friends'],
     queryFn: () => api('/friends'),
@@ -307,12 +315,20 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                       </TaskIcon>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-bold text-amber-900">Watch Ad</p>
-                        <p className="text-[10px] text-amber-700/60 font-medium">Watch a short video</p>
+                        <p className="text-[10px] text-amber-700/60 font-medium">
+                          {waterAdLimitReached
+                            ? t('popup.ad_limit_reached', { defaultValue: 'Limit reached this phase' })
+                            : `${waterAdsLeft === Infinity ? '' : `${waterAdsLeft}/${adLimits?.limit ?? 3} `}Watch a short video`}
+                        </p>
                       </div>
                       <RewardBadge amount={AD_WATER_REWARD} unit="g" color="text-blue-600" />
-                      <FarmBtn variant="green" onClick={ad.requestAd} disabled={ad.pending}>
-                        {ad.pending ? '...' : 'Watch'}
-                      </FarmBtn>
+                      {waterAdLimitReached ? (
+                        <FarmBtn variant="disabled" disabled>Done</FarmBtn>
+                      ) : (
+                        <FarmBtn variant="green" onClick={ad.requestAd} disabled={ad.pending}>
+                          {ad.pending ? '...' : 'Watch'}
+                        </FarmBtn>
+                      )}
                     </TaskCard>
 
                     {/* 4. Quests — disabled */}

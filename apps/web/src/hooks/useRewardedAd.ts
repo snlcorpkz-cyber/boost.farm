@@ -39,6 +39,7 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
         body: JSON.stringify({ type: rewardType, amount: rewardAmount }),
       });
       qc.invalidateQueries({ queryKey: ['farm'] });
+      qc.invalidateQueries({ queryKey: ['ad-limits'] });
       sounds.rewardChime();
       showReward(rewardType === 'water' ? 'water' : 'fertilizer', rewardAmount);
     } catch (err: any) {

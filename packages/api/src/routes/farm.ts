@@ -380,6 +380,35 @@ farmRouter.post('/harvest', async (req: Request, res: Response) => {
   res.json({ success: true, data: { coupon, product: farm.products } });
 });
 
+farmRouter.get('/ad-limits', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+  const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+  const phase = getCurrentPhase(localHour);
+  const today = new Date().toISOString().slice(0, 10);
+  const limit = QUEST_LIMITS.ADS_PER_PHASE;
+
+  const rows = await query(
+    `SELECT ad_type, count FROM ad_views
+     WHERE user_id = $1 AND phase = $2 AND view_date = $3
+       AND ad_type IN ('water', 'nutrition')`,
+    [userId, phase, today]
+  );
+
+  const used: Record<string, number> = { water: 0, nutrition: 0 };
+  for (const r of rows) used[r.ad_type] = r.count;
+
+  res.json({
+    success: true,
+    data: {
+      phase,
+      limit,
+      water: { used: used.water, remaining: Math.max(0, limit - used.water) },
+      nutrition: { used: used.nutrition, remaining: Math.max(0, limit - used.nutrition) },
+    },
+  });
+});
+
 farmRouter.post(
   '/ad-reward',
   rateLimit(3, 10000),
@@ -404,12 +433,12 @@ farmRouter.post(
 
     const adView = await queryOne(
       `INSERT INTO ad_views (user_id, ad_type, phase, view_date, count)
-       VALUES ($1, 'rewarded', $2, $3, 1)
+       VALUES ($1, $2, $3, $4, 1)
        ON CONFLICT (user_id, ad_type, phase, view_date)
        DO UPDATE SET count = ad_views.count + 1
-       WHERE ad_views.count < $4
+       WHERE ad_views.count < $5
        RETURNING count`,
-      [userId, phase, today, QUEST_LIMITS.ADS_PER_PHASE]
+      [userId, body.type, phase, today, QUEST_LIMITS.ADS_PER_PHASE]
     );
 
     if (!adView) {
