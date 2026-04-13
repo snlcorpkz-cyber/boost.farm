@@ -16,7 +16,8 @@ interface UseRewardedAdOptions {
 function getBridge() {
   try {
     const b = (window as any).EcoFarmAndroid;
-    return b && typeof b.requestRewardedAd === 'function' ? b : null;
+    if (!b || !b.requestRewardedAd) return null;
+    return b;
   } catch {
     return null;
   }
