@@ -28,7 +28,7 @@ export default function CropSelectPage() {
   if (isLoading) {
     return (
       <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white flex items-center justify-center">
-        <div className="animate-bounce text-5xl">🌱</div>
+        <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
       </div>
     );
   }

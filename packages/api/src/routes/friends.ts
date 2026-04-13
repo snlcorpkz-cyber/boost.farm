@@ -303,6 +303,5 @@ friendsRouter.get('/invite-code', async (req: Request, res: Response) => {
     }
   }
 
-  const link = `${process.env.PUBLIC_URL || 'https://boostfarm.io'}/?ref=${referral!.invite_code}`;
-  res.json({ success: true, data: { code: referral!.invite_code, link } });
+  res.json({ success: true, data: { code: referral!.invite_code } });
 });

@@ -61,16 +61,22 @@ class SoundManager {
   // ── Background music: seamless loop with crossfade ──
 
   initBackground() {
-    if (this.bgStarted || !this._enabled) return;
-    this.bgStarted = true;
+    if (!this._enabled) return;
 
-    this.bgAudioA = this.createBgAudio();
-    this.bgAudioB = this.createBgAudio();
+    if (!this.bgAudioA) {
+      this.bgAudioA = this.createBgAudio();
+      this.bgAudioB = this.createBgAudio();
+    }
+
+    if (this.bgStarted) return;
 
     this.bgAudioA.volume = BG_VOLUME;
-    this.bgAudioA.play().catch(() => {});
-
-    this.scheduleCrossfade(this.bgAudioA, this.bgAudioB);
+    this.bgAudioA.play()
+      .then(() => {
+        this.bgStarted = true;
+        this.scheduleCrossfade(this.bgAudioA!, this.bgAudioB!);
+      })
+      .catch(() => {});
   }
 
   private createBgAudio(): HTMLAudioElement {

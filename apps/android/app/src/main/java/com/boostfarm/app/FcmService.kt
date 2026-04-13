@@ -41,8 +41,11 @@ class FcmService : FirebaseMessagingService() {
             val channel = NotificationChannel(
                 channelId,
                 "BoostFarm",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Boost Farm notifications"
+                enableVibration(true)
+            }
             manager.createNotificationChannel(channel)
         }
 
@@ -55,9 +58,10 @@ class FcmService : FirebaseMessagingService() {
         )
 
         val notification = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_launcher_simple)
             .setContentTitle(title)
             .setContentText(body)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()

@@ -12,19 +12,20 @@ interface InvitePopupProps {
 
 export default function InvitePopup({ open, onClose }: InvitePopupProps) {
   const { t } = useTranslation();
-  const [copiedField, setCopiedField] = useState<'link' | 'code' | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const { data: inviteData } = useQuery({
     queryKey: ['invite-code'],
-    queryFn: () => api<{ code: string; link: string }>('/friends/invite-code'),
+    queryFn: () => api<{ code: string }>('/friends/invite-code'),
     enabled: open,
   });
 
-  const copyToClipboard = async (text: string, field: 'link' | 'code') => {
+  const copyCode = async () => {
+    if (!inviteData?.code) return;
     try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
+      await navigator.clipboard.writeText(inviteData.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch { /* fallback: ignore */ }
   };
 
@@ -70,38 +71,20 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
                   <span className="text-xs text-amber-700 font-medium">{t('ref.reward_hint')}</span>
                 </div>
 
-                {/* Referral link */}
+                {/* Invite code */}
                 {inviteData && (
-                  <>
-                    <div>
-                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{t('ref.your_link')}</p>
-                      <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
-                        <span className="flex-1 text-xs text-gray-600 truncate font-mono">{inviteData.link}</span>
-                        <button
-                          className="shrink-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                          onClick={() => copyToClipboard(inviteData.link, 'link')}
-                        >
-                          {copiedField === 'link' ? t('ref.copied') : t('ref.copy_link')}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-px bg-gray-200" />
-                      <span className="text-[10px] text-gray-400">{t('ref.or_share_code')}</span>
-                      <div className="flex-1 h-px bg-gray-200" />
-                    </div>
-
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{t('friends.invite_code')}</p>
                     <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
-                      <span className="flex-1 text-center text-base font-mono font-extrabold text-green-600 tracking-widest">{inviteData.code}</span>
+                      <span className="flex-1 text-center text-lg font-mono font-extrabold text-green-600 tracking-widest">{inviteData.code}</span>
                       <button
                         className="shrink-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                        onClick={() => copyToClipboard(inviteData.code, 'code')}
+                        onClick={copyCode}
                       >
-                        {copiedField === 'code' ? t('ref.copied') : t('ref.copy_code')}
+                        {copied ? t('ref.copied') : t('ref.copy_code')}
                       </button>
                     </div>
-                  </>
+                  </div>
                 )}
 
               </div>

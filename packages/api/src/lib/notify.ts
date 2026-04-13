@@ -10,6 +10,30 @@ const PUSH_MESSAGES: Record<string, (p: Record<string, string | number>) => { ti
     title: 'Garden Watered!',
     body: `${p.name || 'A friend'} watered your garden!`,
   }),
+  invite: (p) => ({
+    title: 'New Friend!',
+    body: `${p.name || 'Someone'} joined via your link! +${p.fert || 0} fertilizer`,
+  }),
+  quest: (p) => ({
+    title: 'Quest Complete!',
+    body: `You earned +${p.reward || 0}${p.unit === 'water' ? 'g water' : ' fertilizer'}`,
+  }),
+  gift: (p) => ({
+    title: 'Daily Challenge Done!',
+    body: `You earned +${p.reward || 0}g water for completing today's challenge!`,
+  }),
+  stage: (p) => ({
+    title: 'New Growth Stage!',
+    body: `Your plant reached stage ${p.stage || '?'}! Keep going!`,
+  }),
+  harvest: (p) => ({
+    title: 'Harvest Ready!',
+    body: `Your crop is fully grown! Collect your reward!`,
+  }),
+  offer: (p) => ({
+    title: `${p.game || 'Game'} Reward!`,
+    body: `You earned +${p.reward || 0}${p.unit === 'water' ? 'g water' : ' fertilizer'} for "${p.milestone || 'milestone'}"`,
+  }),
 };
 
 export async function notify(

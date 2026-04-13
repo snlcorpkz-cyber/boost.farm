@@ -13,7 +13,7 @@ export default function FriendsPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
-  const [copiedField, setCopiedField] = useState<'link' | 'code' | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const { data } = useQuery({
     queryKey: ['friends'],
@@ -22,7 +22,7 @@ export default function FriendsPage() {
 
   const { data: inviteData } = useQuery({
     queryKey: ['invite-code'],
-    queryFn: () => api<{ code: string; link: string }>('/friends/invite-code'),
+    queryFn: () => api<{ code: string }>('/friends/invite-code'),
   });
 
   const greetFriend = useMutation({
@@ -45,11 +45,12 @@ export default function FriendsPage() {
     },
   });
 
-  const copyToClipboard = async (text: string, field: 'link' | 'code') => {
+  const copyCode = async () => {
+    if (!inviteData?.code) return;
     try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
+      await navigator.clipboard.writeText(inviteData.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch { /* ignore */ }
   };
 
@@ -71,32 +72,18 @@ export default function FriendsPage() {
           </div>
 
           {inviteData && (
-            <>
-              {/* Link */}
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{t('ref.your_link')}</p>
-                <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
-                  <span className="flex-1 text-xs text-gray-600 truncate font-mono">{inviteData.link}</span>
-                  <button
-                    className="shrink-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                    onClick={() => copyToClipboard(inviteData.link, 'link')}
-                  >
-                    {copiedField === 'link' ? t('ref.copied') : t('ref.copy_link')}
-                  </button>
-                </div>
-              </div>
-
-              {/* Code */}
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{t('friends.invite_code')}</p>
               <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
-                <span className="flex-1 text-center text-base font-mono font-extrabold text-green-600 tracking-widest">{inviteData.code}</span>
+                <span className="flex-1 text-center text-lg font-mono font-extrabold text-green-600 tracking-widest">{inviteData.code}</span>
                 <button
                   className="shrink-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                  onClick={() => copyToClipboard(inviteData.code, 'code')}
+                  onClick={copyCode}
                 >
-                  {copiedField === 'code' ? t('ref.copied') : t('ref.copy_code')}
+                  {copied ? t('ref.copied') : t('ref.copy_code')}
                 </button>
               </div>
-            </>
+            </div>
           )}
 
         </div>

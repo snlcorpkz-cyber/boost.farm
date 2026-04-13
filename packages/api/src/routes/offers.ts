@@ -38,25 +38,27 @@ offersRouter.get('/postback', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!offer_id || !event_id || !userId) {
+  if (!offer_id || !userId) {
     console.warn('[offers/postback] missing params', { offer_id, event_id, userId });
     await logPostbackStatus(transaction_id, 'rejected', 'Missing required params');
     res.status(200).send('ok');
     return;
   }
 
+  const effectiveEventId = event_id || 'conversion';
+
   try {
-    const milestone = await queryOne(
+    const milestones = await query(
       `SELECT om.id AS milestone_id, om.reward_amount, om.event_name,
               o.id AS offer_id, o.name AS offer_name, o.reward_type
        FROM offer_milestones om
        JOIN offers o ON o.id = om.offer_id
        WHERE o.everflow_offer_id = $1 AND om.everflow_event_id = $2`,
-      [offer_id, event_id]
+      [offer_id, effectiveEventId]
     );
 
-    if (!milestone) {
-      console.warn('[offers/postback] unknown offer/event', { offer_id, event_id });
+    if (!milestones.length) {
+      console.warn('[offers/postback] unknown offer/event', { offer_id, event_id: effectiveEventId });
       await logPostbackStatus(transaction_id, 'ignored', 'Unknown offer_id or event_id');
       res.status(200).send('ok');
       return;
@@ -70,59 +72,70 @@ offersRouter.get('/postback', async (req: Request, res: Response) => {
       return;
     }
 
-    const completion = await queryOne(
-      `INSERT INTO offer_completions (user_id, offer_id, milestone_id, everflow_transaction_id)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id, milestone_id) DO NOTHING
-       RETURNING id`,
-      [userId, milestone.offer_id, milestone.milestone_id, transaction_id || null]
-    );
+    let credited = 0;
+    const pushParts: string[] = [];
 
-    if (!completion) {
-      console.log('[offers/postback] already credited', { userId, milestone_id: milestone.milestone_id });
+    for (const milestone of milestones) {
+      const completion = await queryOne(
+        `INSERT INTO offer_completions (user_id, offer_id, milestone_id, everflow_transaction_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, milestone_id) DO NOTHING
+         RETURNING id`,
+        [userId, milestone.offer_id, milestone.milestone_id, transaction_id || null]
+      );
+
+      if (!completion) continue;
+      credited++;
+
+      if (milestone.reward_type === 'water') {
+        const mo = new Date().toISOString().slice(0, 7);
+        await execute(
+          `UPDATE farms SET water_in_can = water_in_can + $1,
+           total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+           water_month = $3
+           WHERE user_id = $2 AND harvested = false`,
+          [milestone.reward_amount, userId, mo]
+        );
+        pushParts.push(`+${milestone.reward_amount}g water`);
+      } else {
+        await execute(
+          `UPDATE farms SET nutrition = LEAST(10000, nutrition + $1)
+           WHERE user_id = $2 AND harvested = false`,
+          [milestone.reward_amount, userId]
+        );
+        pushParts.push(`+${milestone.reward_amount} fertilizer`);
+      }
+
+      await notify(userId, 'offer', 'notif.offer_reward', {
+        reward: milestone.reward_amount,
+        unit: milestone.reward_type,
+        game: milestone.offer_name,
+        milestone: milestone.event_name,
+      });
+
+      console.log('[offers/postback] credited', {
+        userId,
+        offer: milestone.offer_name,
+        event: milestone.event_name,
+        type: milestone.reward_type,
+        amount: milestone.reward_amount,
+      });
+    }
+
+    if (credited === 0) {
       await logPostbackStatus(transaction_id, 'duplicate', 'Already credited');
       res.status(200).send('ok');
       return;
     }
 
-    if (milestone.reward_type === 'water') {
-      const mo = new Date().toISOString().slice(0, 7);
-      await execute(
-        `UPDATE farms SET water_in_can = water_in_can + $1,
-         total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
-         water_month = $3
-         WHERE user_id = $2 AND harvested = false`,
-        [milestone.reward_amount, userId, mo]
-      );
-    } else {
-      await execute(
-        `UPDATE farms SET nutrition = LEAST(10000, nutrition + $1)
-         WHERE user_id = $2 AND harvested = false`,
-        [milestone.reward_amount, userId]
-      );
-    }
-
-    const unit = milestone.reward_type === 'water' ? 'g water' : ' fertilizer';
+    const firstName = milestones[0];
     await sendPush(
       userId,
-      `${milestone.offer_name} reward!`,
-      `You earned +${milestone.reward_amount}${unit} for "${milestone.event_name}"`,
-      { type: 'offer_reward', offer_id: milestone.offer_id }
+      `${firstName.offer_name} reward!`,
+      `You earned ${pushParts.join(' & ')} for "${firstName.event_name}"`,
+      { type: 'offer_reward', offer_id: firstName.offer_id }
     );
 
-    await notify(userId, 'offer', 'notif.offer_reward', {
-      reward: milestone.reward_amount,
-      unit: milestone.reward_type,
-      game: milestone.offer_name,
-      milestone: milestone.event_name,
-    });
-
-    console.log('[offers/postback] credited', {
-      userId,
-      offer: milestone.offer_name,
-      event: milestone.event_name,
-      amount: milestone.reward_amount,
-    });
     await logPostbackStatus(transaction_id, 'credited', null);
 
     res.status(200).send('ok');

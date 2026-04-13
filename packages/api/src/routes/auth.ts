@@ -5,6 +5,11 @@ import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
+
+const AVATARS = ['bear', 'penguin', 'ram', 'dog'] as const;
+function randomAvatar(): string {
+  return AVATARS[Math.floor(Math.random() * AVATARS.length)];
+}
 import {
   verifyTelegramInitData,
   parseTelegramUser,
@@ -36,7 +41,7 @@ function makeDemoUser(email: string) {
     id: randomUUID(),
     email,
     nickname: email.split('@')[0],
-    avatar_id: 'cat',
+    avatar_id: randomAvatar(),
     locale: 'en',
     created_at: new Date().toISOString(),
   };
@@ -125,8 +130,8 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       if (!user) {
         user = await queryOne(
           `INSERT INTO users (email, nickname, avatar_id, locale)
-           VALUES ($1, $2, 'cat', 'en') RETURNING *`,
-          [email, email.split('@')[0]]
+           VALUES ($1, $2, $3, 'en') RETURNING *`,
+          [email, email.split('@')[0], randomAvatar()]
         );
       } else {
         await execute(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
@@ -179,8 +184,8 @@ authRouter.post('/google', async (req: Request, res: Response) => {
       if (!user) {
         user = await queryOne(
           `INSERT INTO users (email, nickname, avatar_id, locale)
-           VALUES ($1, $2, 'cat', 'en') RETURNING *`,
-          [email, payload.name || email.split('@')[0]]
+           VALUES ($1, $2, $3, 'en') RETURNING *`,
+          [email, payload.name || email.split('@')[0], randomAvatar()]
         );
       }
     } catch (dbErr) {
@@ -244,8 +249,8 @@ authRouter.post('/telegram', async (req: Request, res: Response) => {
       try {
         user = await queryOne(
           `INSERT INTO users (email, nickname, avatar_id, locale, telegram_id)
-           VALUES ($1, $2, 'bear', $3, $4) RETURNING *`,
-          [email, nickname, locale, tgUser.id]
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [email, nickname, randomAvatar(), locale, tgUser.id]
         );
         isNewUser = true;
       } catch (e: any) {

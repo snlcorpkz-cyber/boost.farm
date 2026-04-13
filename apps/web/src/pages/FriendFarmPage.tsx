@@ -135,7 +135,7 @@ export default function FriendFarmPage() {
     return (
       <Background>
         <div className="h-full flex items-center justify-center">
-          <div className="animate-bounce text-6xl">🌱</div>
+          <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
         </div>
       </Background>
     );

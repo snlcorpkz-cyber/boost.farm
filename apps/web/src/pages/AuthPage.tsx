@@ -75,14 +75,13 @@ export default function AuthPage() {
       >
         {/* Logo */}
         <div className="text-center mb-8">
-          <motion.div
-            className="text-7xl mb-4"
-            animate={{ rotate: [0, -5, 5, -3, 0] }}
-            transition={{ repeat: Infinity, duration: 4 }}
-          >
-            🌱
-          </motion.div>
-          <h1 className="text-2xl font-extrabold text-gray-800">{t('auth.title')}</h1>
+          <motion.img
+            src="/assets/logo.png"
+            alt="Boost Farm"
+            className="w-48 h-auto mx-auto mb-2"
+            animate={{ scale: [1, 1.03, 1] }}
+            transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
+          />
           <p className="text-sm text-gray-500 mt-1">{t('auth.subtitle')}</p>
         </div>
 
@@ -164,6 +163,28 @@ export default function AuthPage() {
             <p className="text-xs text-red-500 text-center">{error}</p>
           )}
         </div>
+
+        {/* Legal links */}
+        <p className="text-center text-[10px] text-gray-400 mt-4 leading-relaxed">
+          By continuing you agree to our{' '}
+          <a
+            href="https://docs.google.com/document/d/11Soa_th7D89Tt0VOeOyxd7fcZjoIQqXfMDupPbF1aBo/edit?usp=sharing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-gray-500"
+          >
+            Terms & Conditions
+          </a>{' '}
+          and{' '}
+          <a
+            href="https://docs.google.com/document/d/1J2wCPxFmO2KlucbIsHF58uFmIlOJGau96UpA-Yl-5Mw/edit?usp=sharing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-gray-500"
+          >
+            Privacy Policy
+          </a>
+        </p>
       </motion.div>
     </div>
   );

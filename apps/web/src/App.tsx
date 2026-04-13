@@ -70,7 +70,7 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-farm-green/10">
-        <div className="animate-bounce-slow text-6xl">🌱</div>
+        <img src="/assets/logo.png" alt="Boost Farm" className="w-40 h-auto animate-pulse" />
       </div>
     );
   }

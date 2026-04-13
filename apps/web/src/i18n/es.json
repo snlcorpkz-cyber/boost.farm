@@ -1,5 +1,5 @@
 {
-  "app.name": "Eco-Farm",
+  "app.name": "Boost Farm",
   "farm.water": "Agua",
   "farm.fertilizer": "Fertilizante",
   "farm.characters": "Mascotas",
@@ -22,7 +22,7 @@
   "farm.water_in_can": "{{amount}}g",
   "farm.harvested": "¡Cosecha lista!",
   "farm.select_crop": "Elige tu cultivo",
-  "auth.title": "Bienvenido a Eco-Farm",
+  "auth.title": "Bienvenido a Boost Farm",
   "auth.subtitle": "¡Cultiva productos reales!",
   "auth.email": "Correo electrónico",
   "auth.send_code": "Enviar código",

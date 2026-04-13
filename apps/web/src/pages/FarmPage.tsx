@@ -56,9 +56,20 @@ export default function FarmPage() {
   );
 
   useEffect(() => {
-    const startBg = () => { sounds.initBackground(); document.removeEventListener('pointerdown', startBg); };
-    document.addEventListener('pointerdown', startBg);
-    return () => document.removeEventListener('pointerdown', startBg);
+    sounds.initBackground();
+
+    if (!sounds.enabled) return;
+    const kick = () => {
+      sounds.initBackground();
+      document.removeEventListener('pointerdown', kick);
+      document.removeEventListener('touchstart', kick);
+    };
+    document.addEventListener('pointerdown', kick, { once: true });
+    document.addEventListener('touchstart', kick, { once: true });
+    return () => {
+      document.removeEventListener('pointerdown', kick);
+      document.removeEventListener('touchstart', kick);
+    };
   }, []);
 
   const qc = useQueryClient();
@@ -258,7 +269,7 @@ export default function FarmPage() {
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-green-50">
-        <div className="animate-bounce text-5xl">🌱</div>
+        <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
       </div>
     );
   }
