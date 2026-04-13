@@ -13,8 +13,14 @@ interface UseRewardedAdOptions {
   onError?: (msg: string) => void;
 }
 
-const bridge = () => (window as any).EcoFarmAndroid;
-const isNative = () => !!bridge()?.requestRewardedAd;
+function getBridge() {
+  try {
+    const b = (window as any).EcoFarmAndroid;
+    return b && typeof b.requestRewardedAd === 'function' ? b : null;
+  } catch {
+    return null;
+  }
+}
 
 export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: UseRewardedAdOptions) {
   const qc = useQueryClient();
@@ -22,12 +28,14 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
   const [showFallbackAd, setShowFallbackAd] = useState(false);
   const [pending, setPending] = useState(false);
   const callbackRef = useRef<((e: any) => void) | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (callbackRef.current) {
         delete (window as any).__ecoFarmNative?.onRewardedFinished;
       }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
 
@@ -48,7 +56,8 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
   const requestAd = useCallback(() => {
     if (pending) return;
 
-    if (!isNative()) {
+    const nativeBridge = getBridge();
+    if (!nativeBridge) {
       setShowFallbackAd(true);
       return;
     }
@@ -57,17 +66,27 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
 
     const native = (window as any).__ecoFarmNative ??= {};
     native.onRewardedFinished = (payload: any) => {
+      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
       if (p.placement === placement && p.success) {
         creditReward();
+        setPending(false);
+      } else {
+        setPending(false);
+        setShowFallbackAd(true);
       }
-      setPending(false);
     };
     callbackRef.current = native.onRewardedFinished;
 
+    timeoutRef.current = setTimeout(() => {
+      setPending(false);
+      setShowFallbackAd(true);
+    }, 8000);
+
     try {
-      bridge().requestRewardedAd(JSON.stringify({ placement }));
+      nativeBridge.requestRewardedAd(JSON.stringify({ placement }));
     } catch {
+      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       setPending(false);
       setShowFallbackAd(true);
     }
