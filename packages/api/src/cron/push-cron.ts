@@ -104,7 +104,7 @@ async function checkCheckin(): Promise<void> {
        JOIN quests q ON q.id = qc.quest_id
        WHERE qc.user_id = pt.user_id
          AND q.quest_key = 'checkin'
-         AND qc.completed_at::date = $1
+         AND qc.completion_date = $1
      )`,
     [today]
   );
