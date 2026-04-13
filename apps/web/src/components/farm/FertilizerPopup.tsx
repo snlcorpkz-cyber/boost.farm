@@ -179,6 +179,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
               onClick={handleClose}
             />
             <motion.div
@@ -186,11 +187,12 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
               style={{
                 background: 'linear-gradient(180deg, #FFF5DC 0%, #FAECC8 30%, #F5E1B0 100%)',
                 boxShadow: '0 -4px 30px rgba(120,80,20,0.25), inset 0 1px 0 rgba(255,255,255,0.6)',
+                willChange: 'transform',
               }}
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              transition={{ type: 'tween', duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
             >
               {/* Wooden grab handle */}
               <div className="mx-auto mt-2.5 h-1.5 w-12 rounded-full bg-amber-400/50 shrink-0" />

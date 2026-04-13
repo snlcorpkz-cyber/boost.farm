@@ -115,7 +115,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
           <motion.button
             type="button"
             aria-label="Close"
-            className="fixed inset-0 z-[90] bg-black/45 backdrop-blur-[1px]"
+            className="fixed inset-0 z-[90] bg-black/45"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -128,10 +128,11 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
             aria-modal
             aria-labelledby="pets-panel-title"
             className="fixed bottom-0 inset-x-0 mx-auto w-full max-w-[390px] z-[95] max-h-[85vh] flex flex-col rounded-t-3xl bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.12)] overflow-hidden"
+            style={{ willChange: 'transform' }}
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+            transition={{ type: 'tween', duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
           >
             <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-gray-200 shrink-0" />
 
