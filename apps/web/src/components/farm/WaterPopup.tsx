@@ -8,6 +8,7 @@ import { sounds } from '../../lib/sounds';
 import MockAdModal from '../MockAdModal';
 import { useRewardToast } from '../RewardToast';
 import { useRewardedAd } from '../../hooks/useRewardedAd';
+import OffersList from './OffersList';
 
 interface WaterPopupProps {
   open: boolean;
@@ -331,31 +332,8 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                       )}
                     </TaskCard>
 
-                    {/* 4. Quests — disabled */}
-                    <TaskCard disabled>
-                      <TaskIcon gradient="bg-gradient-to-br from-sky-400 to-cyan-600">
-                        <span className="text-xl">📋</span>
-                      </TaskIcon>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-bold text-amber-900">Quests</p>
-                        <p className="text-[10px] text-amber-700/60 font-medium">Complete tasks for water</p>
-                        <p className="text-[9px] text-blue-500 font-semibold">up to 50,000g</p>
-                      </div>
-                      <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
-                    </TaskCard>
-
-                    {/* 5. Games — disabled */}
-                    <TaskCard disabled>
-                      <TaskIcon gradient="bg-gradient-to-br from-pink-400 to-rose-600">
-                        <span className="text-xl">🎮</span>
-                      </TaskIcon>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-bold text-amber-900">Games</p>
-                        <p className="text-[10px] text-amber-700/60 font-medium">Play games for water</p>
-                        <p className="text-[9px] text-blue-500 font-semibold">up to 50,000g</p>
-                      </div>
-                      <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
-                    </TaskCard>
+                    {/* 4. Game Offers */}
+                    <OffersList rewardType="water" open={open} />
                   </div>
                 )}
 

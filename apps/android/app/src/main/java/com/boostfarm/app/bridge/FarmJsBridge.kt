@@ -1,5 +1,7 @@
 package com.boostfarm.app.bridge
 
+import android.content.Intent
+import android.net.Uri
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.boostfarm.app.ads.OfferwallPort
@@ -29,6 +31,17 @@ class FarmJsBridge(
             rewardedAds.showRewarded(placement) { ok ->
                 emit("onRewardedFinished", placement, ok)
             }
+        }
+    }
+
+    @JavascriptInterface
+    fun openExternalUrl(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            webView.context.startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("FarmJsBridge", "Failed to open URL: $url", e)
         }
     }
 

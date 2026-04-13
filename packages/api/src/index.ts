@@ -12,6 +12,7 @@ import { questsRouter } from './routes/quests.js';
 import { gamesRouter } from './routes/games.js';
 import { petsRouter } from './routes/pets.js';
 import { productsRouter } from './routes/products.js';
+import { offersRouter } from './routes/offers.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { globalRateLimit } from './middleware/rate-limit.js';
 
@@ -50,6 +51,7 @@ app.use('/quests', questsRouter);
 app.use('/games', gamesRouter);
 app.use('/pets', petsRouter);
 app.use('/admin/products', productsRouter);
+app.use('/offers', offersRouter);
 
 app.use(errorHandler);
 

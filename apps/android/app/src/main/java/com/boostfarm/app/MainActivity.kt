@@ -2,9 +2,12 @@ package com.boostfarm.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -42,10 +45,30 @@ class MainActivity : AppCompatActivity() {
             "EcoFarmAndroid",
         )
 
+        val appHost = Uri.parse(BuildConfig.WEB_APP_URL).host ?: ""
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 injectFcmToken()
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url ?: return false
+                val host = url.host ?: ""
+                val scheme = url.scheme ?: ""
+
+                if (scheme == "market" || scheme == "intent" ||
+                    host.contains("play.google.com") ||
+                    host.contains("apps.apple.com") ||
+                    (!host.contains(appHost) && scheme.startsWith("http"))
+                ) {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, url))
+                    } catch (_: Exception) { }
+                    return true
+                }
+                return false
             }
         }
 

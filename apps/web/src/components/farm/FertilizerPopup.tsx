@@ -9,6 +9,7 @@ import { sounds } from '../../lib/sounds';
 import MockAdModal from '../MockAdModal';
 import { useRewardToast } from '../RewardToast';
 import { useRewardedAd } from '../../hooks/useRewardedAd';
+import OffersList from './OffersList';
 
 interface FertilizerPopupProps {
   open: boolean;
@@ -311,31 +312,8 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                       )}
                     </TaskCard>
 
-                    {/* 5. Quests — disabled */}
-                    <TaskCard disabled>
-                      <TaskIcon gradient="bg-gradient-to-br from-amber-400 to-orange-600">
-                        <span className="text-xl">📋</span>
-                      </TaskIcon>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-bold text-amber-900">Quests</p>
-                        <p className="text-[10px] text-amber-700/60 font-medium">Complete tasks for fertilizer</p>
-                        <p className="text-[9px] text-amber-500 font-semibold">up to 2,000</p>
-                      </div>
-                      <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
-                    </TaskCard>
-
-                    {/* 6. Games — disabled */}
-                    <TaskCard disabled>
-                      <TaskIcon gradient="bg-gradient-to-br from-indigo-400 to-violet-600">
-                        <span className="text-xl">🎮</span>
-                      </TaskIcon>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-bold text-amber-900">Games</p>
-                        <p className="text-[10px] text-amber-700/60 font-medium">Play games for fertilizer</p>
-                        <p className="text-[9px] text-amber-500 font-semibold">up to 2,000</p>
-                      </div>
-                      <FarmBtn variant="disabled" disabled>Soon</FarmBtn>
-                    </TaskCard>
+                    {/* 5. Game Offers */}
+                    <OffersList rewardType="nutrition" open={open} />
                   </div>
                 )}
 
