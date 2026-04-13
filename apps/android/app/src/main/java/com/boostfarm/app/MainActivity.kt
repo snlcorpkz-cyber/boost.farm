@@ -11,9 +11,10 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.boostfarm.app.ads.AdMobRewardedAds
 import com.boostfarm.app.ads.StubOfferwall
-import com.boostfarm.app.ads.StubRewardedAds
 import com.boostfarm.app.bridge.FarmJsBridge
+import com.google.android.gms.ads.MobileAds
 import com.google.firebase.messaging.FirebaseMessaging
 
 class MainActivity : AppCompatActivity() {
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         requestNotificationPermission()
+        MobileAds.initialize(this) {}
 
         webView = WebView(this)
         webView.settings.apply {
@@ -33,7 +35,7 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
 
-        val rewarded = StubRewardedAds()
+        val rewarded = AdMobRewardedAds(this)
         val offerwall = StubOfferwall()
         webView.addJavascriptInterface(
             FarmJsBridge(webView, rewarded, offerwall),

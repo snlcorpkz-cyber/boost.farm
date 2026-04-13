@@ -7,6 +7,7 @@ import { AVATAR_IMAGES, UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
 import MockAdModal from '../MockAdModal';
 import { useRewardToast } from '../RewardToast';
+import { useRewardedAd } from '../../hooks/useRewardedAd';
 
 interface WaterPopupProps {
   open: boolean;
@@ -99,9 +100,15 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
   const [selectedFriend, setSelectedFriend] = useState<any>(null);
-  const [showAd, setShowAd] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const ad = useRewardedAd({
+    placement: 'water_popup',
+    rewardType: 'water',
+    rewardAmount: AD_WATER_REWARD,
+    onError: (msg) => { setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
+  });
 
   const { data: friendsData } = useQuery({
     queryKey: ['friends'],
@@ -184,23 +191,6 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
   const handleClose = () => {
     onClose();
     setTimeout(() => { setPage('main'); setSelectedFriend(null); }, 300);
-  };
-
-  const handleAdComplete = async (r: { amount: number }) => {
-    if (r.amount) {
-      try {
-        await api('/farm/ad-reward', {
-          method: 'POST',
-          body: JSON.stringify({ type: 'water', amount: r.amount }),
-        });
-        qc.invalidateQueries({ queryKey: ['farm'] });
-        sounds.rewardChime();
-        showReward('water', r.amount);
-      } catch (err: any) {
-        setMutationError(err?.message || 'Failed to credit ad reward');
-        setTimeout(() => setMutationError(null), 3000);
-      }
-    }
   };
 
   const goBack = () => {
@@ -312,7 +302,9 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                         <p className="text-[10px] text-amber-700/60 font-medium">Watch a short video</p>
                       </div>
                       <RewardBadge amount={AD_WATER_REWARD} unit="g" color="text-blue-600" />
-                      <FarmBtn variant="green" onClick={() => setShowAd(true)}>Watch</FarmBtn>
+                      <FarmBtn variant="green" onClick={ad.requestAd} disabled={ad.pending}>
+                        {ad.pending ? '...' : 'Watch'}
+                      </FarmBtn>
                     </TaskCard>
 
                     {/* 4. Quests — disabled */}
@@ -372,10 +364,10 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
       </AnimatePresence>
 
       <MockAdModal
-        open={showAd}
-        onClose={() => setShowAd(false)}
+        open={ad.showFallbackAd}
+        onClose={ad.closeFallback}
         rewardAmount={AD_WATER_REWARD}
-        onComplete={handleAdComplete}
+        onComplete={ad.handleFallbackComplete}
       />
     </>
   );

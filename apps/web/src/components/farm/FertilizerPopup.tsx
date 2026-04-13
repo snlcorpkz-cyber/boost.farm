@@ -8,6 +8,7 @@ import { AVATAR_IMAGES, UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
 import MockAdModal from '../MockAdModal';
 import { useRewardToast } from '../RewardToast';
+import { useRewardedAd } from '../../hooks/useRewardedAd';
 
 interface FertilizerPopupProps {
   open: boolean;
@@ -101,8 +102,14 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
-  const [showAd, setShowAd] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const ad = useRewardedAd({
+    placement: 'fert_popup',
+    rewardType: 'nutrition',
+    rewardAmount: AD_FERT_REWARD,
+    onError: (msg) => { setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
+  });
 
   const { data: friendsData } = useQuery({
     queryKey: ['friends'],
@@ -148,23 +155,6 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
   const handleSelectFriend = (f: any) => {
     handleClose();
     navigate(`/friends/${f.id}`);
-  };
-
-  const handleAdComplete = async (r: { amount: number }) => {
-    if (r.amount) {
-      try {
-        await api('/farm/ad-reward', {
-          method: 'POST',
-          body: JSON.stringify({ type: 'nutrition', amount: r.amount }),
-        });
-        qc.invalidateQueries({ queryKey: ['farm'] });
-        showReward('fertilizer', r.amount);
-        try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
-      } catch (err: any) {
-        setMutationError(err?.message || 'Failed to credit ad reward');
-        setTimeout(() => setMutationError(null), 3000);
-      }
-    }
   };
 
   const goBack = () => setPage('main');
@@ -292,7 +282,9 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                         <p className="text-[10px] text-amber-700/60 font-medium">Watch a short video</p>
                       </div>
                       <RewardBadge amount={AD_FERT_REWARD} color="text-amber-700" />
-                      <FarmBtn variant="green" onClick={() => setShowAd(true)}>Watch</FarmBtn>
+                      <FarmBtn variant="green" onClick={ad.requestAd} disabled={ad.pending}>
+                        {ad.pending ? '...' : 'Watch'}
+                      </FarmBtn>
                     </TaskCard>
 
                     {/* 5. Quests — disabled */}
@@ -339,10 +331,10 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
       </AnimatePresence>
 
       <MockAdModal
-        open={showAd}
-        onClose={() => setShowAd(false)}
+        open={ad.showFallbackAd}
+        onClose={ad.closeFallback}
         rewardAmount={AD_FERT_REWARD}
-        onComplete={handleAdComplete}
+        onComplete={ad.handleFallbackComplete}
       />
     </>
   );

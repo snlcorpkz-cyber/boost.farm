@@ -12,6 +12,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BoostFarm"
         android:usesCleartextTraffic="false">
+
+        <!-- AdMob App ID (test ID — replace with real one for production) -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3079122554551679~5565499122"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

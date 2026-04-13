@@ -16,6 +16,10 @@ android {
         versionName = "0.1.0"
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
+
+        // AdMob: use test IDs for debug; replace with real ones for production
+        buildConfigField("String", "ADMOB_REWARDED_WATER", "\"ca-app-pub-3079122554551679/6905057993\"")
+        buildConfigField("String", "ADMOB_REWARDED_FERT", "\"ca-app-pub-3079122554551679/2742451701\"")
     }
 
     buildTypes {
@@ -49,4 +53,6 @@ dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+
+    implementation("com.google.android.gms:play-services-ads:24.1.0")
 }
