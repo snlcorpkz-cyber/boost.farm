@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "374546250043",
+    "project_id": "boostfarm-aa658",
+    "storage_bucket": "boostfarm-aa658.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:374546250043:android:9eae5d1217bfdd4c78df1e",
+        "android_client_info": {
+          "package_name": "com.boostfarm.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCkAsZCUcqiQUQ8f89cm3x6EvFgmNEOGXs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
