@@ -27,15 +27,22 @@ export async function sendPush(
   title: string,
   body: string,
   data?: Record<string, string>
-): Promise<void> {
-  if (!initialized) return;
+): Promise<boolean> {
+  if (!initialized) {
+    console.warn('[push] skipped — Firebase not initialized');
+    return false;
+  }
 
   const tokens = await query(
     `SELECT token FROM push_tokens WHERE user_id = $1`,
     [userId]
   );
-  if (!tokens.length) return;
+  if (!tokens.length) {
+    console.warn(`[push] no tokens for user ${userId}`);
+    return false;
+  }
 
+  let sent = false;
   for (const row of tokens) {
     try {
       await admin.messaging().send({
@@ -47,6 +54,7 @@ export async function sendPush(
           notification: { sound: 'default', channelId: 'boostfarm_default' },
         },
       });
+      sent = true;
     } catch (err: any) {
       const code = err?.code || '';
       if (
@@ -54,11 +62,13 @@ export async function sendPush(
         code === 'messaging/registration-token-not-registered'
       ) {
         await execute(`DELETE FROM push_tokens WHERE token = $1`, [row.token]);
+        console.warn(`[push] removed stale token for user ${userId}`);
       } else {
         console.error('[push] send error:', (err as Error).message);
       }
     }
   }
+  return sent;
 }
 
 export async function sendPushBatch(

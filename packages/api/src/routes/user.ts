@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { sendPush } from '../lib/push.js';
 
 export const userRouter = Router();
 userRouter.use(requireAuth);
@@ -138,6 +139,17 @@ userRouter.post('/push-token', async (req: Request, res: Response) => {
     [userId, token, platform || 'android']
   );
   res.json({ success: true, data: { saved: true } });
+});
+
+userRouter.post('/test-push', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const tokens = await query(`SELECT token FROM push_tokens WHERE user_id = $1`, [userId]);
+  if (!tokens.length) {
+    res.json({ success: false, error: { code: 'NO_TOKEN', message: `No push tokens found for user ${userId}` } });
+    return;
+  }
+  const ok = await sendPush(userId, 'Test Push', 'If you see this, push notifications work!', { type: 'test' });
+  res.json({ success: true, data: { sent: ok, tokenCount: tokens.length } });
 });
 
 userRouter.delete('/account', async (req: Request, res: Response) => {

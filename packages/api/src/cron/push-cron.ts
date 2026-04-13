@@ -30,16 +30,18 @@ async function checkBucketFull(): Promise<void> {
        AND f.bucket_last_collected_at + interval '${BUCKET_FILL_MINUTES} minutes' <= NOW()`,
     []
   );
+  console.log(`[push-cron] bucket_full: ${farms.length} users with full bucket`);
 
   for (const farm of farms) {
     if (await alreadySent(farm.user_id, 'bucket_full')) continue;
-    await sendPush(
+    console.log(`[push-cron] sending bucket_full to ${farm.user_id}`);
+    const ok = await sendPush(
       farm.user_id,
       'Bucket is full!',
       'Your bucket is full! Collect water before it overflows.',
       { type: 'bucket_full' }
     );
-    await markSent(farm.user_id, 'bucket_full');
+    if (ok) await markSent(farm.user_id, 'bucket_full');
   }
 }
 
@@ -56,13 +58,13 @@ async function checkPetGift(): Promise<void> {
 
   for (const pet of pets) {
     if (await alreadySent(pet.user_id, 'pet_gift')) continue;
-    await sendPush(
+    const ok = await sendPush(
       pet.user_id,
       'Hamster has a gift!',
       'Your hamster has a gift for you! Tap to collect.',
       { type: 'pet_gift' }
     );
-    await markSent(pet.user_id, 'pet_gift');
+    if (ok) await markSent(pet.user_id, 'pet_gift');
   }
 }
 
@@ -81,13 +83,13 @@ async function checkDailyChallenge(): Promise<void> {
     if (await alreadySent(u.user_id, 'daily_challenge')) continue;
     const remaining = Math.max(0, Math.ceil(u.required - u.water_given));
     if (remaining <= 0) continue;
-    await sendPush(
+    const ok = await sendPush(
       u.user_id,
       'Daily Challenge',
       `You still need ${remaining}g to complete today's challenge!`,
       { type: 'daily_challenge' }
     );
-    await markSent(u.user_id, 'daily_challenge');
+    if (ok) await markSent(u.user_id, 'daily_challenge');
   }
 }
 
@@ -109,24 +111,32 @@ async function checkCheckin(): Promise<void> {
 
   for (const u of users) {
     if (await alreadySent(u.user_id, 'checkin')) continue;
-    await sendPush(
+    const ok = await sendPush(
       u.user_id,
       'Daily reward!',
       "Don't forget to collect your daily check-in reward!",
       { type: 'checkin' }
     );
-    await markSent(u.user_id, 'checkin');
+    if (ok) await markSent(u.user_id, 'checkin');
   }
 }
 
 export async function runPushCron(): Promise<void> {
+  console.log('[push-cron] running checks...');
   try {
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       checkBucketFull(),
       checkPetGift(),
       checkDailyChallenge(),
       checkCheckin(),
     ]);
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        const names = ['bucket', 'pet', 'challenge', 'checkin'];
+        console.error(`[push-cron] ${names[i]} failed:`, r.reason);
+      }
+    });
+    console.log('[push-cron] done');
   } catch (err) {
     console.error('[push-cron] error:', (err as Error).message);
   }
