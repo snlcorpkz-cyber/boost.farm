@@ -16,7 +16,7 @@ interface FertilizerPopupProps {
   onClose: () => void;
 }
 
-type Page = 'main' | 'invite' | 'friends';
+type Page = 'main' | 'invite' | 'friends' | 'games';
 
 const AD_FERT_REWARD = 8;
 const CHECKIN_FERT_REWARD = 5;
@@ -174,6 +174,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
       case 'main': return t('farm.get_fertilizer');
       case 'invite': return 'Invite Friends';
       case 'friends': return t('popup.friends');
+      case 'games': return 'Games';
     }
   })();
 
@@ -313,11 +314,29 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                     </TaskCard>
 
                     {/* 5. Game Offers */}
-                    <OffersList rewardType="nutrition" open={open} />
+                    <button
+                      className="w-full active:scale-[0.98] transition-transform text-left"
+                      onClick={() => setPage('games')}
+                    >
+                      <TaskCard>
+                        <TaskIcon gradient="bg-gradient-to-br from-indigo-400 to-purple-600">
+                          <span className="text-xl">🎮</span>
+                        </TaskIcon>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-bold text-amber-900">Games</p>
+                          <p className="text-[10px] text-amber-700/60 font-medium">Play games for fertilizer</p>
+                        </div>
+                        <ChevronRight />
+                      </TaskCard>
+                    </button>
                   </div>
                 )}
 
                 {page === 'invite' && <InviteSection t={t} />}
+
+                {page === 'games' && (
+                  <OffersList rewardType="nutrition" open={open} />
+                )}
 
                 {page === 'friends' && (
                   <FriendWaterList

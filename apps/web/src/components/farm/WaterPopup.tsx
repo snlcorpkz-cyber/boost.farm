@@ -16,7 +16,7 @@ interface WaterPopupProps {
   waterInCan?: number;
 }
 
-type Page = 'main' | 'friends' | 'friend-farm';
+type Page = 'main' | 'friends' | 'friend-farm' | 'games';
 
 const AD_WATER_REWARD = 35;
 const CHECKIN_WATER_REWARD = 40;
@@ -213,6 +213,7 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
       case 'main': return t('farm.get_water');
       case 'friends': return t('popup.friends');
       case 'friend-farm': return selectedFriend ? selectedFriend.nickname : '';
+      case 'games': return 'Games';
     }
   })();
 
@@ -333,7 +334,21 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                     </TaskCard>
 
                     {/* 4. Game Offers */}
-                    <OffersList rewardType="water" open={open} />
+                    <button
+                      className="w-full active:scale-[0.98] transition-transform text-left"
+                      onClick={() => setPage('games')}
+                    >
+                      <TaskCard>
+                        <TaskIcon gradient="bg-gradient-to-br from-indigo-400 to-purple-600">
+                          <span className="text-xl">🎮</span>
+                        </TaskIcon>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-bold text-amber-900">Games</p>
+                          <p className="text-[10px] text-amber-700/60 font-medium">Play games for water</p>
+                        </div>
+                        <ChevronRight />
+                      </TaskCard>
+                    </button>
                   </div>
                 )}
 
@@ -343,6 +358,10 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                     onSelectFriend={(f: any) => { setSelectedFriend(f); setPage('friend-farm'); }}
                     t={t}
                   />
+                )}
+
+                {page === 'games' && (
+                  <OffersList rewardType="water" open={open} />
                 )}
 
                 {page === 'friend-farm' && selectedFriend && (
