@@ -28,19 +28,11 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
   const { showReward } = useRewardToast();
   const [showFallbackAd, setShowFallbackAd] = useState(false);
   const [pending, setPending] = useState(false);
-  const callbackRef = useRef<((e: any) => void) | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (callbackRef.current) {
-        delete (window as any).__ecoFarmNative?.onRewardedFinished;
-      }
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+  const creditedRef = useRef(false);
 
   const creditReward = useCallback(async () => {
+    if (creditedRef.current) return;
+    creditedRef.current = true;
     try {
       await api('/farm/ad-reward', {
         method: 'POST',
@@ -56,6 +48,7 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
 
   const requestAd = useCallback(() => {
     if (pending) return;
+    creditedRef.current = false;
 
     const nativeBridge = getBridge();
     if (!nativeBridge) {
@@ -67,27 +60,18 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
 
     const native = (window as any).__ecoFarmNative ??= {};
     native.onRewardedFinished = (payload: any) => {
-      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      setPending(false);
       if (p.placement === placement && p.success) {
         creditReward();
-        setPending(false);
       } else {
-        setPending(false);
         setShowFallbackAd(true);
       }
     };
-    callbackRef.current = native.onRewardedFinished;
-
-    timeoutRef.current = setTimeout(() => {
-      setPending(false);
-      setShowFallbackAd(true);
-    }, 8000);
 
     try {
       nativeBridge.requestRewardedAd(JSON.stringify({ placement }));
     } catch {
-      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
       setPending(false);
       setShowFallbackAd(true);
     }
