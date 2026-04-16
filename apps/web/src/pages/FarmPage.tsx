@@ -187,16 +187,24 @@ export default function FarmPage() {
   );
 
   const [showBucketAd, setShowBucketAd] = useState(false);
+  const bucketAdPendingRef = useRef(false);
+  const [bucketAdPending, setBucketAdPending] = useState(false);
 
   const handleCollect = useCallback((adWatched?: boolean) => {
     collectBucket.mutate(adWatched ? { adWatched: true } : undefined);
   }, [collectBucket]);
 
   const handleBucketAdRequest = useCallback(() => {
+    if (bucketAdPendingRef.current) return;
+    bucketAdPendingRef.current = true;
+    setBucketAdPending(true);
+
     const bridge = (window as any).EcoFarmAndroid;
     if (bridge?.requestRewardedAd) {
       const native = (window as any).__ecoFarmNative ??= {};
       native.onRewardedFinished = (payload: any) => {
+        bucketAdPendingRef.current = false;
+        setBucketAdPending(false);
         const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
         if (p.success) {
           sounds.bucketCollectToCan();
@@ -211,6 +219,8 @@ export default function FarmPage() {
 
   const handleBucketAdComplete = useCallback((r: { amount: number }) => {
     setShowBucketAd(false);
+    bucketAdPendingRef.current = false;
+    setBucketAdPending(false);
     if (r.amount) {
       sounds.bucketCollectToCan();
       handleCollect(true);
@@ -574,7 +584,7 @@ export default function FarmPage() {
               bucketLevel={bucketLevel}
               capacity={bucketCapacity}
               onCollect={handleCollect}
-              isCollecting={collectBucket.isPending}
+              isCollecting={collectBucket.isPending || bucketAdPending}
               onShakeCan={triggerCanShake}
               isDark={isDark}
               adRequired={data?.bucketAdRequired ?? false}

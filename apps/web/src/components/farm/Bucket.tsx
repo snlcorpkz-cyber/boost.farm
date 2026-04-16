@@ -34,6 +34,8 @@ export default function Bucket({
     if (isCollecting || bucketLevel < 0.01 || shaking) return;
 
     if (adRequired && onAdRequest) {
+      setShaking(true);
+      setTimeout(() => setShaking(false), 400);
       onAdRequest();
       return;
     }
