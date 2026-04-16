@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
+COPY apps/admin/package.json apps/admin/
 COPY packages/game-engine/package.json packages/game-engine/
 COPY packages/shared/package.json packages/shared/
 COPY packages/api/package.json packages/api/
@@ -13,16 +14,19 @@ RUN npm ci --ignore-scripts
 COPY tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/web/ apps/web/
+COPY apps/admin/ apps/admin/
 
 RUN npm run build -w packages/game-engine && \
     npm run build -w packages/api && \
-    npm run build -w apps/web
+    npm run build -w apps/web && \
+    npm run build -w apps/admin
 
 # Stage 2: Frontend — nginx
 FROM nginx:alpine AS frontend
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
+COPY --from=builder /app/apps/admin/dist /usr/share/nginx/html/admin
 
 EXPOSE 80
 

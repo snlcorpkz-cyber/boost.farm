@@ -152,6 +152,27 @@ userRouter.post('/test-push', async (req: Request, res: Response) => {
   res.json({ success: true, data: { sent: ok, tokenCount: tokens.length } });
 });
 
+userRouter.post('/push-opened', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const { campaignId } = req.body || {};
+  if (!campaignId) {
+    res.status(400).json({ success: false, error: { code: 'INVALID', message: 'campaignId is required' } });
+    return;
+  }
+  try {
+    await execute(
+      `UPDATE push_campaign_recipients SET status = 'opened', opened_at = now()
+       WHERE campaign_id = $1 AND user_id = $2 AND status != 'opened'`,
+      [campaignId, userId]
+    );
+    await execute(
+      `UPDATE push_campaigns SET opened = opened + 1 WHERE id = $1`,
+      [campaignId]
+    );
+  } catch { /* non-critical */ }
+  res.json({ success: true });
+});
+
 userRouter.delete('/account', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 

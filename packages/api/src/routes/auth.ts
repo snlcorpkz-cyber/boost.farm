@@ -5,6 +5,7 @@ import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
+import { trackEvent } from '../lib/analytics.js';
 import { Resend } from 'resend';
 
 const AVATARS = ['bear', 'penguin', 'ram', 'dog'] as const;
@@ -227,6 +228,7 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
 
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, email, sessionId);
+    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'email' }, req).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {

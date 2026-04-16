@@ -58,6 +58,11 @@ export async function api<T = any>(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Timezone-Offset': String(new Date().getTimezoneOffset()),
+    'X-Device-Info': JSON.stringify({
+      platform: (window as any).FarmBridge ? 'android' : 'web',
+      screen: `${screen.width}x${screen.height}`,
+      language: navigator.language,
+    }),
     ...(options.headers as Record<string, string>),
   };
 
