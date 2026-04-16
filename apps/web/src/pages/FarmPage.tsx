@@ -458,11 +458,11 @@ export default function FarmPage() {
                   </motion.div>
                   {showGiftOnPet && (
                     <motion.div
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center shadow"
-                      animate={{ scale: [1, 1.3, 1] }}
-                      transition={{ repeat: Infinity, duration: 0.8 }}
+                      className="absolute -top-4 -right-2 bg-gradient-to-b from-yellow-400 to-orange-500 rounded-full px-2 py-0.5 shadow-lg border border-white/60"
+                      animate={{ scale: [1, 1.15, 1], y: [0, -3, 0] }}
+                      transition={{ repeat: Infinity, duration: 1, ease: 'easeInOut' }}
                     >
-                      <span className="text-white text-[7px] font-bold">!</span>
+                      <span className="text-white text-[9px] font-extrabold drop-shadow">TAP!</span>
                     </motion.div>
                   )}
                 </button>

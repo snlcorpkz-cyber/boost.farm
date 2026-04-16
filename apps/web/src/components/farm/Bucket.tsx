@@ -98,11 +98,11 @@ export default function Bucket({
         />
         {isFull && (
           <motion.div
-            className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center shadow"
-            animate={{ scale: [1, 1.3, 1] }}
-            transition={{ repeat: Infinity, duration: 0.8 }}
+            className="absolute -top-5 -right-3 bg-gradient-to-b from-yellow-400 to-orange-500 rounded-full px-2 py-0.5 shadow-lg border border-white/60"
+            animate={{ scale: [1, 1.15, 1], y: [0, -3, 0] }}
+            transition={{ repeat: Infinity, duration: 1, ease: 'easeInOut' }}
           >
-            <span className="text-white text-[6px] font-bold">!</span>
+            <span className="text-white text-[9px] font-extrabold drop-shadow">TAP!</span>
           </motion.div>
         )}
       </motion.button>
