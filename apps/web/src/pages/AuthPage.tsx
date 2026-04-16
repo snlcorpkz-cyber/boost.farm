@@ -44,7 +44,7 @@ export default function AuthPage() {
     setError('');
     try {
       await sendCode(email);
-      setCode('000000');
+      setCode('');
       setStep('code');
     } catch (err: any) {
       setError(err.message || 'Failed to send code');
@@ -54,10 +54,11 @@ export default function AuthPage() {
   };
 
   const handleVerify = async () => {
+    if (code.length !== 6) return;
     setLoading(true);
     setError('');
     try {
-      await login(email, code || '000000', effectiveRef);
+      await login(email, code, effectiveRef);
       localStorage.removeItem(REF_KEY);
     } catch (err: any) {
       setError(err.message || 'Invalid code');
@@ -132,11 +133,15 @@ export default function AuthPage() {
                 <label className="text-xs font-semibold text-gray-500 mb-1 block">
                   {t('auth.enter_code')}
                 </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  Code sent to <span className="font-medium text-gray-600">{email}</span>
+                </p>
                 <input
                   type="text"
+                  inputMode="numeric"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="000000"
+                  placeholder="— — — — — —"
                   maxLength={6}
                   className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:border-farm-green focus:ring-2 focus:ring-farm-green/20 outline-none transition-all text-sm text-center tracking-[0.5em] font-mono text-lg"
                   autoFocus
@@ -145,17 +150,26 @@ export default function AuthPage() {
               </div>
               <button
                 onClick={handleVerify}
-                disabled={loading}
+                disabled={loading || code.length !== 6}
                 className="w-full py-3 rounded-xl bg-farm-green text-white font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-50"
               >
                 {loading ? '...' : t('auth.verify')}
               </button>
-              <button
-                onClick={() => { setStep('email'); setCode(''); }}
-                className="w-full text-xs text-gray-400 hover:text-gray-600"
-              >
-                ← {t('auth.email')}
-              </button>
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => { setStep('email'); setCode(''); setError(''); }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  ← {t('auth.email')}
+                </button>
+                <button
+                  onClick={handleSendCode}
+                  disabled={loading}
+                  className="text-xs text-farm-green hover:text-green-700 font-medium disabled:opacity-50"
+                >
+                  Resend code
+                </button>
+              </div>
             </>
           )}
 

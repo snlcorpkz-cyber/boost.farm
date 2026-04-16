@@ -66,7 +66,7 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
       if (p.placement === placement && p.success) {
         creditReward();
       } else {
-        setShowFallbackAd(true);
+        onError?.('Ad not available, please try again');
       }
     };
 

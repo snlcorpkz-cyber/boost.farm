@@ -2,9 +2,10 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { queryOne, execute } from '../lib/db.js';
 import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
+import { Resend } from 'resend';
 
 const AVATARS = ['bear', 'penguin', 'ram', 'dog'] as const;
 function randomAvatar(): string {
@@ -16,6 +17,14 @@ import {
   syntheticTelegramEmail,
 } from '../lib/telegram-auth.js';
 
+const resend = new Resend(process.env.RESEND_API_KEY || '');
+const CODE_TTL_MIN = 10;
+const MAX_ATTEMPTS = 5;
+
+function generateCode(): string {
+  return String(randomInt(100000, 999999));
+}
+
 export const authRouter = Router();
 
 const sendCodeSchema = z.object({
@@ -24,7 +33,7 @@ const sendCodeSchema = z.object({
 
 const verifyCodeSchema = z.object({
   email: z.string().email(),
-  code: z.string().optional(),
+  code: z.string().min(6).max(6),
   refCode: z.string().optional(),
 });
 
@@ -105,20 +114,80 @@ async function processReferral(newUserId: string, refCode: string) {
 
 authRouter.post('/send-code', async (req: Request, res: Response) => {
   try {
-    sendCodeSchema.parse(req.body);
+    const { email } = sendCodeSchema.parse(req.body);
+    const code = generateCode();
+
+    await execute(
+      `UPDATE verification_codes SET used = true WHERE email = $1 AND used = false`,
+      [email],
+    );
+
+    await execute(
+      `INSERT INTO verification_codes (email, code) VALUES ($1, $2)`,
+      [email, code],
+    );
+
+    const fromAddr = process.env.RESEND_FROM || 'Boost Farm <noreply@boostfarm.io>';
+
+    await resend.emails.send({
+      from: fromAddr,
+      to: email,
+      subject: 'Your Boost Farm verification code',
+      html: `
+        <div style="font-family:sans-serif;max-width:400px;margin:0 auto;text-align:center;padding:40px 20px">
+          <h2 style="color:#2E7D32;margin-bottom:8px">Boost Farm</h2>
+          <p style="color:#555;margin-bottom:24px">Your verification code:</p>
+          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#333;background:#f5f5f5;border-radius:12px;padding:16px;margin-bottom:24px">${code}</div>
+          <p style="color:#999;font-size:12px">This code expires in ${CODE_TTL_MIN} minutes. If you didn't request this, please ignore.</p>
+        </div>
+      `,
+    });
+
+    console.log(`[auth] Code sent to ${email}`);
     res.json({ success: true, data: { message: 'Code sent' } });
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400).json({ success: false, error: { code: 'VALIDATION', message: err.message } });
       return;
     }
-    throw err;
+    console.error('[auth/send-code]', err);
+    res.status(500).json({ success: false, error: { code: 'SEND_ERROR', message: 'Failed to send code' } });
   }
 });
 
 authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
-    const { email, refCode } = verifyCodeSchema.parse(req.body);
+    const { email, code, refCode } = verifyCodeSchema.parse(req.body);
+
+    const row = await queryOne(
+      `SELECT id, code, attempts FROM verification_codes
+       WHERE email = $1 AND used = false
+         AND created_at > NOW() - INTERVAL '${CODE_TTL_MIN} minutes'
+       ORDER BY created_at DESC LIMIT 1`,
+      [email],
+    );
+
+    if (!row) {
+      res.status(400).json({ success: false, error: { code: 'CODE_EXPIRED', message: 'Code expired or not found. Please request a new one.' } });
+      return;
+    }
+
+    if (row.attempts >= MAX_ATTEMPTS) {
+      await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
+      res.status(400).json({ success: false, error: { code: 'TOO_MANY_ATTEMPTS', message: 'Too many attempts. Please request a new code.' } });
+      return;
+    }
+
+    if (row.code !== code) {
+      await execute(
+        `UPDATE verification_codes SET attempts = attempts + 1 WHERE id = $1`,
+        [row.id],
+      );
+      res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
+      return;
+    }
+
+    await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
 
     let user: any = null;
     let isNewUser = false;

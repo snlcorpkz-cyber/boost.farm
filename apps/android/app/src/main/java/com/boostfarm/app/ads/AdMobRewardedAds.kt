@@ -49,13 +49,27 @@ class AdMobRewardedAds(private val activity: Activity) : RewardedAdsPort {
 
     override fun showRewarded(placement: String, onFinished: (Boolean) -> Unit) {
         val ad = loadedAds[placement]
-        if (ad == null) {
-            Log.w(TAG, "No ad ready for $placement, reloading…")
-            preload(placement)
-            onFinished(false)
+        if (ad != null) {
+            showAd(ad, placement, onFinished)
             return
         }
 
+        Log.d(TAG, "No preloaded ad for $placement, loading on-demand…")
+        val request = AdRequest.Builder().build()
+        RewardedAd.load(activity, adUnitId(placement), request, object : RewardedAdLoadCallback() {
+            override fun onAdLoaded(freshAd: RewardedAd) {
+                Log.d(TAG, "On-demand ad loaded for $placement")
+                showAd(freshAd, placement, onFinished)
+            }
+
+            override fun onAdFailedToLoad(err: LoadAdError) {
+                Log.w(TAG, "On-demand ad failed for $placement: ${err.message}")
+                onFinished(false)
+            }
+        })
+    }
+
+    private fun showAd(ad: RewardedAd, placement: String, onFinished: (Boolean) -> Unit) {
         loadedAds[placement] = null
         var rewarded = false
 

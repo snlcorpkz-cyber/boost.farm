@@ -22,7 +22,7 @@
         <!-- FCM: default icon & channel for notifications when app is killed -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_launcher_simple" />
+            android:resource="@drawable/ic_launcher_logo" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="boostfarm_default" />
