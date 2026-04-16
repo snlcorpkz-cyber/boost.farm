@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { AVATAR_IMAGES, UI } from '../../lib/assets';
@@ -13,10 +14,9 @@ import OffersList from './OffersList';
 interface WaterPopupProps {
   open: boolean;
   onClose: () => void;
-  waterInCan?: number;
 }
 
-type Page = 'main' | 'friends' | 'friend-farm' | 'games';
+type Page = 'main' | 'friends' | 'games';
 
 const AD_WATER_REWARD = 35;
 const CHECKIN_WATER_REWARD = 40;
@@ -95,13 +95,12 @@ function TaskIcon({ children, gradient }: { children: React.ReactNode; gradient:
   );
 }
 
-export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopupProps) {
+export default function WaterPopup({ open, onClose }: WaterPopupProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
   const [page, setPage] = useState<Page>('main');
-  const [selectedFriend, setSelectedFriend] = useState<any>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const busyRef = useRef(false);
 
@@ -156,63 +155,24 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
     },
   });
 
-  const [greetDoneIds, setGreetDoneIds] = useState<Set<string>>(new Set());
-  const [waterLimitHit, setWaterLimitHit] = useState(false);
-
-  const greetFriend = useMutation({
-    mutationFn: (friendId: string) => api(`/friends/${friendId}/greet`, { method: 'POST' }),
-    onSuccess: (data: any, friendId: string) => {
-      setGreetDoneIds((s) => new Set(s).add(friendId));
-      qc.invalidateQueries({ queryKey: ['farm'] });
-      setToast(t('friendFarm.toast_greet', { amount: data.waterEarned }));
-      setTimeout(() => setToast(null), 2000);
-      showReward('water', data.waterEarned);
-      try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
-    },
-    onError: (err: any, friendId: string) => {
-      const code = err?.code || err?.error?.code || '';
-      if (code === 'ALREADY_GREETED' || code === 'LIMIT_REACHED') {
-        setGreetDoneIds((s) => new Set(s).add(friendId));
-      }
-      const msg = err?.message || 'Greet failed';
-      setMutationError(msg);
-      setTimeout(() => setMutationError(null), 3000);
-    },
-  });
-
-  const waterFriend = useMutation({
-    mutationFn: (friendId: string) => api(`/friends/${friendId}/water`, { method: 'POST' }),
-    onSuccess: (data: any) => {
-      qc.invalidateQueries({ queryKey: ['farm'] });
-      setToast(t('friendFarm.toast_water', { spent: data.waterSpent, nutrition: data.nutritionEarned }));
-      setTimeout(() => setToast(null), 2000);
-      showReward('fertilizer', data.nutritionEarned);
-      try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
-    },
-    onError: (err: any) => {
-      const code = err?.code || err?.error?.code || '';
-      if (code === 'LIMIT_REACHED' || code === 'ALREADY_WATERED') setWaterLimitHit(true);
-      const msg = err?.message || 'Water failed';
-      setMutationError(msg);
-      setTimeout(() => setMutationError(null), 3000);
-    },
-  });
-
   const handleClose = () => {
     onClose();
-    setTimeout(() => { setPage('main'); setSelectedFriend(null); }, 300);
+    setTimeout(() => { setPage('main'); }, 300);
   };
 
   const goBack = () => {
-    if (page === 'friend-farm') { setPage('friends'); setSelectedFriend(null); }
-    else setPage('main');
+    setPage('main');
+  };
+
+  const handleFriendClick = (friend: any) => {
+    handleClose();
+    setTimeout(() => navigate(`/friends/${friend.id}`), 300);
   };
 
   const pageTitle = (() => {
     switch (page) {
       case 'main': return t('farm.get_water');
       case 'friends': return t('popup.friends');
-      case 'friend-farm': return selectedFriend ? selectedFriend.nickname : '';
       case 'games': return 'Games';
     }
   })();
@@ -355,36 +315,13 @@ export default function WaterPopup({ open, onClose, waterInCan = 0 }: WaterPopup
                 {page === 'friends' && (
                   <FriendsList
                     friends={friendsData?.friends || []}
-                    onSelectFriend={(f: any) => { setSelectedFriend(f); setPage('friend-farm'); }}
+                    onSelectFriend={handleFriendClick}
                     t={t}
                   />
                 )}
 
                 {page === 'games' && (
                   <OffersList rewardType="water" open={open} />
-                )}
-
-                {page === 'friend-farm' && selectedFriend && (
-                  <FriendFarmView
-                    friend={selectedFriend}
-                    waterInCan={waterInCan}
-                    toast={toast}
-                    onGreet={() => {
-                      if (busyRef.current) return;
-                      busyRef.current = true;
-                      greetFriend.mutate(selectedFriend.id, { onSettled: () => { busyRef.current = false; } });
-                    }}
-                    onWater={() => {
-                      if (busyRef.current) return;
-                      busyRef.current = true;
-                      waterFriend.mutate(selectedFriend.id, { onSettled: () => { busyRef.current = false; } });
-                    }}
-                    greetPending={greetFriend.isPending}
-                    waterPending={waterFriend.isPending}
-                    greetDone={greetDoneIds.has(selectedFriend.id)}
-                    waterLimitHit={waterLimitHit}
-                    t={t}
-                  />
                 )}
               </div>
             </motion.div>
@@ -444,93 +381,3 @@ function FriendsList({ friends, onSelectFriend, t }: { friends: any[]; onSelectF
   );
 }
 
-/* ─── Friend Farm View ─── */
-function FriendFarmView({ friend, waterInCan, toast, onGreet, onWater, greetPending, waterPending, greetDone, waterLimitHit, t }: any) {
-  const avatarKey = friend.avatar_id || friend.avatarId || 'bear';
-  const avatarSrc = AVATAR_IMAGES[avatarKey];
-  const crop = friend.farm?.products?.name_key ? t(friend.farm.products.name_key) : '—';
-  const stage = friend.farm?.current_stage || 1;
-  const percent = friend.farm?.growth_percent ? Math.round(friend.farm.growth_percent) : 0;
-
-  const notEnoughWater = waterInCan < 10;
-  const waterOff = waterLimitHit || notEnoughWater;
-
-  return (
-    <div className="space-y-3">
-      <TaskCard>
-        <div className="w-full">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center overflow-hidden border-2 border-amber-300/50 shadow-sm">
-              <img src={avatarSrc || AVATAR_IMAGES.bear} alt="" className="w-10 h-10 object-contain" />
-            </div>
-            <div>
-              <p className="text-base font-bold text-amber-900">{friend.nickname}</p>
-              <p className="text-xs text-amber-700/60">{crop}</p>
-            </div>
-          </div>
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-amber-800">
-              {t('friendFarm.stage_progress', { stage, percent })}
-            </span>
-          </div>
-          <div className="w-full h-3 rounded-full bg-amber-200/50 overflow-hidden">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-green-400 to-emerald-500"
-              initial={{ width: 0 }}
-              animate={{ width: `${percent}%` }}
-              transition={{ duration: 0.8, ease: 'easeOut' }}
-            />
-          </div>
-        </div>
-      </TaskCard>
-
-      <div className="bg-blue-50/80 rounded-2xl border-2 border-blue-200/50 px-4 py-3 flex items-center gap-3">
-        <img src={UI.wateringCan} alt="" className="w-10 h-10 object-contain" />
-        <p className="text-xs text-blue-700 font-bold">{t('popup.your_water', { amount: Math.round(waterInCan) })}</p>
-      </div>
-
-      <div className="flex gap-3">
-        <div className="flex-1 flex flex-col items-center gap-0.5">
-          <FarmBtn
-            variant={greetDone ? 'disabled' : 'orange'}
-            onClick={greetDone ? undefined : onGreet}
-            disabled={greetDone || greetPending}
-          >
-            <span className="text-sm px-3">{greetDone ? '✓' : ''} {t('popup.greet_btn')}</span>
-          </FarmBtn>
-          {greetDone && (
-            <span className="text-[9px] text-gray-400 font-medium">{t('popup.limit_done', { defaultValue: 'Done' })}</span>
-          )}
-        </div>
-        <div className="flex-1 flex flex-col items-center gap-0.5">
-          <FarmBtn
-            variant={waterOff ? 'disabled' : 'blue'}
-            onClick={waterOff ? undefined : onWater}
-            disabled={waterOff || waterPending}
-          >
-            <span className="text-sm px-3">{t('popup.water_btn')}</span>
-          </FarmBtn>
-          {waterLimitHit && (
-            <span className="text-[9px] text-gray-400 font-medium">{t('popup.limit_done', { defaultValue: 'Limit reached' })}</span>
-          )}
-          {!waterLimitHit && notEnoughWater && (
-            <span className="text-[9px] text-red-400 font-medium">{t('popup.not_enough_water', { defaultValue: 'Not enough water' })}</span>
-          )}
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white text-sm font-bold text-center py-2.5 px-4 rounded-xl shadow-md"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            {toast}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
