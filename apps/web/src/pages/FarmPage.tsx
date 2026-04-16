@@ -404,14 +404,12 @@ export default function FarmPage() {
                 </p>
               </div>
             ) : dailyChallengeData.tomorrowReward ? (
-              <div className="bg-green-50/80 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-green-200/50 flex items-center justify-center gap-2">
-                <img src={UI.gift} alt="" className="w-6 h-6 object-contain" />
-                <div className="text-center">
-                  <p className="text-[10px] font-bold text-green-700">Challenge complete!</p>
-                  <p className="text-[8px] text-green-600">Your reward will be ready tomorrow morning</p>
-                </div>
+              <div className="flex items-center justify-center gap-1.5">
+                <img src={UI.gift} alt="" className="w-5 h-5 object-contain" />
+                <span className="text-xs font-bold text-green-700">Challenge done!</span>
+                <span className="text-[11px] text-green-600">Reward tomorrow morning</span>
                 {dailyChallengeData.streakDays > 0 && (
-                  <span className="text-[9px] text-orange-500 font-bold">
+                  <span className="text-[11px] text-orange-500 font-bold ml-0.5">
                     {dailyChallengeData.streakDays}d
                   </span>
                 )}
