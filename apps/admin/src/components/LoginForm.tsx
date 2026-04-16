@@ -35,13 +35,14 @@ export default function LoginForm({ onLogin }: { onLogin: () => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.accessToken) throw new Error(data.error?.message || 'Invalid code');
+      const json = await res.json();
+      const token = json.data?.accessToken || json.accessToken;
+      if (!res.ok || !token) throw new Error(json.error?.message || json.data?.error?.message || 'Invalid code');
 
-      setToken(data.accessToken);
+      setToken(token);
 
       const check = await fetch('/api/admin/dashboard/stats', {
-        headers: { Authorization: `Bearer ${data.accessToken}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (check.status === 403) {
         throw new Error('This account does not have admin access');
