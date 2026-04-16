@@ -384,7 +384,9 @@ export default function FarmPage() {
             {!dailyChallengeData.completed ? (
               <div className="bg-white/60 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-white/50">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-bold text-gray-700">Daily Challenge</span>
+                  <span className="text-[10px] font-bold text-gray-700">
+                    Water {dailyChallengeData.required}g today
+                  </span>
                   {dailyChallengeData.streakDays > 0 && (
                     <span className="text-[9px] font-bold text-orange-500">
                       {dailyChallengeData.streakDays} day streak
@@ -398,17 +400,19 @@ export default function FarmPage() {
                   />
                 </div>
                 <p className="text-[8px] text-gray-500 mt-0.5">
-                  {Math.round(dailyChallengeData.waterGiven)}g / {dailyChallengeData.required}g — reward tomorrow +{dailyChallengeData.reward}g
+                  {Math.max(0, Math.ceil(dailyChallengeData.required - dailyChallengeData.waterGiven))}g remaining
                 </p>
               </div>
             ) : dailyChallengeData.tomorrowReward ? (
-              <div className="bg-green-50/80 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-green-200/50 text-center">
-                <span className="text-[10px] font-bold text-green-700">
-                  Challenge done! Tomorrow morning +{dailyChallengeData.tomorrowReward}g water
-                </span>
+              <div className="bg-green-50/80 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-green-200/50 flex items-center justify-center gap-2">
+                <img src={UI.gift} alt="" className="w-6 h-6 object-contain" />
+                <div className="text-center">
+                  <p className="text-[10px] font-bold text-green-700">Challenge complete!</p>
+                  <p className="text-[8px] text-green-600">Your reward will be ready tomorrow morning</p>
+                </div>
                 {dailyChallengeData.streakDays > 0 && (
-                  <span className="text-[9px] text-orange-500 font-bold ml-1">
-                    {dailyChallengeData.streakDays} days
+                  <span className="text-[9px] text-orange-500 font-bold">
+                    {dailyChallengeData.streakDays}d
                   </span>
                 )}
               </div>
@@ -567,7 +571,6 @@ export default function FarmPage() {
               onShakeCan={triggerCanShake}
               isDark={isDark}
               adRequired={data?.bucketAdRequired ?? false}
-              freeCollectsRemaining={data?.freeCollectsRemaining}
               onAdRequest={handleBucketAdRequest}
             />
           </div>
@@ -709,7 +712,7 @@ export default function FarmPage() {
                 exit={{ scale: 0.7, y: 30 }}
                 transition={{ type: 'tween', duration: 0.25 }}
               >
-                <div className="text-5xl mb-3">🎁</div>
+                <img src={UI.gift} alt="" className="w-16 h-16 mx-auto mb-2 object-contain" />
                 <h3 className="text-lg font-extrabold text-gray-900 mb-1">Yesterday's Reward!</h3>
                 <p className="text-sm text-gray-500 mb-2">
                   You completed yesterday's challenge.

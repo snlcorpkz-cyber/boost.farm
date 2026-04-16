@@ -83,6 +83,15 @@ export async function api<T = any>(
   }
 
   if (!res.ok) {
+    const errorCode = json?.error?.code || 'UNKNOWN';
+
+    if (errorCode === 'SESSION_EXPIRED') {
+      setToken(null);
+      setRefreshToken(null);
+      window.location.reload();
+      throw new ApiError('SESSION_EXPIRED', 'Logged in on another device', 401);
+    }
+
     if (res.status === 401 && refreshToken && !path.startsWith('/auth/')) {
       if (!isRefreshing) {
         isRefreshing = tryRefresh().finally(() => { isRefreshing = null; });
@@ -96,7 +105,7 @@ export async function api<T = any>(
     }
 
     throw new ApiError(
-      json?.error?.code || 'UNKNOWN',
+      errorCode,
       json?.error?.message || 'Request failed',
       res.status
     );

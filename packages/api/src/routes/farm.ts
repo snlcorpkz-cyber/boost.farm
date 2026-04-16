@@ -60,7 +60,10 @@ farmRouter.get('/', async (req: Request, res: Response) => {
   const rank = getRankForWater(farm.total_water_last_month ?? 0);
 
   const today = todayStr();
-  const freeUsed = farm.bucket_collects_reset_date === today ? farm.bucket_free_collects_today : 0;
+  const resetDate = farm.bucket_collects_reset_date
+    ? new Date(farm.bucket_collects_reset_date).toISOString().slice(0, 10)
+    : '';
+  const freeUsed = resetDate === today ? (farm.bucket_free_collects_today ?? 0) : 0;
   const bucketAdFree = rank.id === 'master' || freeUsed < FREE_BUCKET_COLLECTS_PER_DAY;
 
   res.json({
@@ -98,7 +101,10 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
   }
 
   const rank = getRankForWater(farm.total_water_last_month ?? 0);
-  const freeUsed = farm.bucket_collects_reset_date === today ? farm.bucket_free_collects_today : 0;
+  const resetDate = farm.bucket_collects_reset_date
+    ? new Date(farm.bucket_collects_reset_date).toISOString().slice(0, 10)
+    : '';
+  const freeUsed = resetDate === today ? (farm.bucket_free_collects_today ?? 0) : 0;
   const isFreeCollect = rank.id === 'master' || freeUsed < FREE_BUCKET_COLLECTS_PER_DAY;
 
   if (!isFreeCollect && !adWatched) {
@@ -130,21 +136,36 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
   );
 
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const newFreeUsed = freeUsed + (isFreeCollect ? 1 : 0);
+  const newFreeUsed = isFreeCollect ? freeUsed + 1 : freeUsed;
 
-  const updated = await execute(
-    `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
-     total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
-     water_month = $5,
-     bucket_free_collects_today = CASE WHEN bucket_collects_reset_date < $7::date THEN $8 ELSE $8 END,
-     bucket_collects_reset_date = $7
-     WHERE id = $3 AND date_trunc('milliseconds', bucket_last_collected_at) = date_trunc('milliseconds', $4::timestamptz)`,
-    [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected, today, newFreeUsed]
-  );
+  try {
+    const updated = await execute(
+      `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
+       total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
+       water_month = $5,
+       bucket_free_collects_today = $8,
+       bucket_collects_reset_date = $7::date
+       WHERE id = $3 AND date_trunc('milliseconds', bucket_last_collected_at) = date_trunc('milliseconds', $4::timestamptz)`,
+      [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected, today, newFreeUsed]
+    );
 
-  if (updated === 0) {
-    res.status(409).json({ success: false, error: { code: 'CONFLICT', message: 'Bucket already collected' } });
-    return;
+    if (updated === 0) {
+      res.status(409).json({ success: false, error: { code: 'CONFLICT', message: 'Bucket already collected' } });
+      return;
+    }
+  } catch (err) {
+    console.error('[collect-bucket] SQL error, falling back:', err);
+    const updated = await execute(
+      `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
+       total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
+       water_month = $5
+       WHERE id = $3 AND date_trunc('milliseconds', bucket_last_collected_at) = date_trunc('milliseconds', $4::timestamptz)`,
+      [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected]
+    );
+    if (updated === 0) {
+      res.status(409).json({ success: false, error: { code: 'CONFLICT', message: 'Bucket already collected' } });
+      return;
+    }
   }
 
   if (result.collected > 0) {

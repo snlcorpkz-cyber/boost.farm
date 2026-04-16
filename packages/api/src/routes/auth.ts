@@ -56,11 +56,17 @@ function makeDemoUser(email: string) {
   };
 }
 
-function makeTokens(userId: string, email: string) {
+function makeTokens(userId: string, email: string, sessionId: string) {
   return {
-    accessToken: signAccessToken({ userId, email }),
-    refreshToken: signRefreshToken({ userId, email }),
+    accessToken: signAccessToken({ userId, email, sessionId }),
+    refreshToken: signRefreshToken({ userId, email, sessionId }),
   };
+}
+
+async function createSession(userId: string): Promise<string> {
+  const sessionId = randomUUID();
+  await execute(`UPDATE users SET session_id = $1 WHERE id = $2`, [sessionId, userId]);
+  return sessionId;
 }
 
 function localeFromTelegram(code: string | undefined): string {
@@ -219,7 +225,8 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       }
     }
 
-    const tokens = makeTokens(user.id, email);
+    const sessionId = await createSession(user.id);
+    const tokens = makeTokens(user.id, email, sessionId);
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -263,7 +270,8 @@ authRouter.post('/google', async (req: Request, res: Response) => {
       isNewUser = true;
     }
 
-    const tokens = makeTokens(user.id, email);
+    const sessionId = await createSession(user.id);
+    const tokens = makeTokens(user.id, email, sessionId);
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -335,7 +343,8 @@ authRouter.post('/telegram', async (req: Request, res: Response) => {
       await execute(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
     }
 
-    const tokens = makeTokens(user.id, user.email);
+    const sessionId = await createSession(user.id);
+    const tokens = makeTokens(user.id, user.email, sessionId);
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -358,8 +367,18 @@ authRouter.post('/refresh', async (req: Request, res: Response) => {
 
   try {
     const payload = verifyToken(refreshToken);
-    const newAccess = signAccessToken({ userId: payload.userId, email: payload.email });
-    const newRefresh = signRefreshToken({ userId: payload.userId, email: payload.email });
+
+    if (payload.sessionId) {
+      const user = await queryOne(`SELECT session_id FROM users WHERE id = $1`, [payload.userId]);
+      if (user && user.session_id && user.session_id !== payload.sessionId) {
+        res.status(401).json({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Logged in on another device' } });
+        return;
+      }
+    }
+
+    const sid = payload.sessionId || '';
+    const newAccess = signAccessToken({ userId: payload.userId, email: payload.email, sessionId: sid });
+    const newRefresh = signRefreshToken({ userId: payload.userId, email: payload.email, sessionId: sid });
     res.json({ success: true, data: { accessToken: newAccess, refreshToken: newRefresh } });
   } catch {
     res.status(401).json({ success: false, error: { code: 'REFRESH_EXPIRED', message: 'Refresh token expired' } });

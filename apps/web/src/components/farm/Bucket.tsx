@@ -13,7 +13,6 @@ interface BucketProps {
   onShakeCan: () => void;
   isDark?: boolean;
   adRequired?: boolean;
-  freeCollectsRemaining?: number;
   onAdRequest?: () => void;
 }
 
@@ -27,7 +26,6 @@ export default function Bucket({
   onShakeCan,
   isDark = false,
   adRequired = false,
-  freeCollectsRemaining,
   onAdRequest,
 }: BucketProps) {
   const [shaking, setShaking] = useState(false);
@@ -44,14 +42,12 @@ export default function Bucket({
     setShaking(true);
     onShakeCan();
     setTimeout(() => {
-      onCollect(false);
+      onCollect();
       setShaking(false);
     }, 600);
   };
 
   const bucketSrc = fillPercent > 66 ? UI.bucketFull : UI.bucket;
-  const showAdBadge = bucketLevel >= 0.01 && adRequired;
-  const showFreeBadge = bucketLevel >= 0.01 && !adRequired && freeCollectsRemaining !== undefined && freeCollectsRemaining !== Infinity && freeCollectsRemaining > 0;
 
   return (
     <div className="relative" style={{ width: 110, height: 140 }}>
@@ -110,7 +106,7 @@ export default function Bucket({
           className="w-full h-full object-contain"
           draggable={false}
         />
-        {isFull && !showAdBadge && (
+        {isFull && (
           <motion.div
             className="absolute -top-5 -right-3 bg-gradient-to-b from-yellow-400 to-orange-500 rounded-full px-2 py-0.5 shadow-lg border border-white/60"
             animate={{ scale: [1, 1.15, 1], y: [0, -3, 0] }}
@@ -118,20 +114,6 @@ export default function Bucket({
           >
             <span className="text-white text-[9px] font-extrabold drop-shadow">TAP!</span>
           </motion.div>
-        )}
-        {showAdBadge && (
-          <motion.div
-            className="absolute -top-5 -right-3 bg-gradient-to-b from-purple-500 to-purple-700 rounded-full px-1.5 py-0.5 shadow-lg border border-white/60"
-            animate={{ scale: [1, 1.1, 1] }}
-            transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
-          >
-            <span className="text-white text-[8px] font-extrabold drop-shadow">AD</span>
-          </motion.div>
-        )}
-        {showFreeBadge && (
-          <div className="absolute -top-4 -right-4 bg-green-500 rounded-full px-1 py-0.5 shadow border border-white/60">
-            <span className="text-white text-[7px] font-bold">FREE</span>
-          </div>
         )}
       </motion.button>
 

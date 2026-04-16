@@ -15,6 +15,7 @@ const REFRESH_TOKEN_EXPIRY = '90d';
 export interface TokenPayload {
   userId: string;
   email: string;
+  sessionId?: string;
 }
 
 export function signAccessToken(payload: TokenPayload): string {
