@@ -11,6 +11,8 @@ import {
   getRankForWater,
   getCurrentPhase,
   QUEST_LIMITS,
+  FREE_BUCKET_COLLECTS_PER_DAY,
+  STAGE_UP_BONUS,
 } from '@eco-farm/game-engine';
 import { notify } from '../lib/notify.js';
 
@@ -57,6 +59,10 @@ farmRouter.get('/', async (req: Request, res: Response) => {
   const multiplier = getMultiplier(farm.nutrition);
   const rank = getRankForWater(farm.total_water_last_month ?? 0);
 
+  const today = todayStr();
+  const freeUsed = farm.bucket_collects_reset_date === today ? farm.bucket_free_collects_today : 0;
+  const bucketAdFree = rank.id === 'master' || freeUsed < FREE_BUCKET_COLLECTS_PER_DAY;
+
   res.json({
     success: true,
     data: {
@@ -68,6 +74,8 @@ farmRouter.get('/', async (req: Request, res: Response) => {
       },
       rank: rank.id,
       rankDef: rank,
+      bucketAdRequired: !bucketAdFree,
+      freeCollectsRemaining: rank.id === 'master' ? Infinity : Math.max(0, FREE_BUCKET_COLLECTS_PER_DAY - freeUsed),
       needsCropSelection: false,
     },
   });
@@ -76,6 +84,8 @@ farmRouter.get('/', async (req: Request, res: Response) => {
 farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const now = new Date();
+  const today = todayStr();
+  const adWatched = req.body?.adWatched === true;
 
   const farm = await queryOne(
     `SELECT * FROM farms WHERE user_id = $1 AND harvested = false`,
@@ -84,6 +94,15 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
 
   if (!farm) {
     res.status(404).json({ success: false, error: { code: 'NO_FARM', message: 'No active farm' } });
+    return;
+  }
+
+  const rank = getRankForWater(farm.total_water_last_month ?? 0);
+  const freeUsed = farm.bucket_collects_reset_date === today ? farm.bucket_free_collects_today : 0;
+  const isFreeCollect = rank.id === 'master' || freeUsed < FREE_BUCKET_COLLECTS_PER_DAY;
+
+  if (!isFreeCollect && !adWatched) {
+    res.status(402).json({ success: false, error: { code: 'AD_REQUIRED', message: 'Watch ad to collect bucket' } });
     return;
   }
 
@@ -111,12 +130,16 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
   );
 
   const currentMonth = new Date().toISOString().slice(0, 7);
+  const newFreeUsed = freeUsed + (isFreeCollect ? 1 : 0);
+
   const updated = await execute(
     `UPDATE farms SET water_in_can = $1, water_in_bucket = 0, bucket_last_collected_at = $2,
      total_water_this_month = CASE WHEN water_month = $5 THEN total_water_this_month + $6 ELSE $6 END,
-     water_month = $5
+     water_month = $5,
+     bucket_free_collects_today = CASE WHEN bucket_collects_reset_date < $7::date THEN $8 ELSE $8 END,
+     bucket_collects_reset_date = $7
      WHERE id = $3 AND date_trunc('milliseconds', bucket_last_collected_at) = date_trunc('milliseconds', $4::timestamptz)`,
-    [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected]
+    [result.newWaterInCan, now.toISOString(), farm.id, farm.bucket_last_collected_at, currentMonth, result.collected, today, newFreeUsed]
   );
 
   if (updated === 0) {
@@ -128,7 +151,16 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
     await notify(userId, 'bucket', 'notif.bucket_collected', { amount: Math.round(result.collected) });
   }
 
-  res.json({ success: true, data: { collected: result.collected, waterInCan: result.newWaterInCan } });
+  const nextFreeRemaining = rank.id === 'master' ? Infinity : Math.max(0, FREE_BUCKET_COLLECTS_PER_DAY - newFreeUsed);
+  res.json({
+    success: true,
+    data: {
+      collected: result.collected,
+      waterInCan: result.newWaterInCan,
+      bucketAdRequired: rank.id !== 'master' && nextFreeRemaining <= 0,
+      freeCollectsRemaining: nextFreeRemaining,
+    },
+  });
 });
 
 farmRouter.post(
@@ -228,8 +260,18 @@ farmRouter.post(
 
       const { waterResult, farm } = result;
 
+      let stageUpBonus = 0;
       if (waterResult.newStage > farm.current_stage) {
-        await notify(userId, 'stage', 'notif.stage_up', { stage: waterResult.newStage });
+        stageUpBonus = STAGE_UP_BONUS;
+        const mo = new Date().toISOString().slice(0, 7);
+        await execute(
+          `UPDATE farms SET water_in_can = water_in_can + $1,
+           total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
+           water_month = $3
+           WHERE user_id = $2 AND harvested = false`,
+          [STAGE_UP_BONUS, userId, mo]
+        );
+        await notify(userId, 'stage', 'notif.stage_up', { stage: waterResult.newStage, bonus: STAGE_UP_BONUS });
       }
 
       if (waterResult.harvested) {
@@ -268,7 +310,7 @@ farmRouter.post(
         [newWaterGiven, isCompleted, challenge!.id]
       );
 
-      res.json({ success: true, data: waterResult });
+      res.json({ success: true, data: { ...waterResult, stageUpBonus } });
     } catch (err: any) {
       if (err.message === 'NOT_ENOUGH_WATER') {
         res.status(400).json({ success: false, error: { code: 'NOT_ENOUGH_WATER', message: 'Not enough water in can' } });

@@ -14,7 +14,11 @@ export function useCollectBucket() {
   const qc = useQueryClient();
   const { showReward } = useRewardToast();
   return useMutation({
-    mutationFn: () => api<{ collected: number }>('/farm/collect-bucket', { method: 'POST' }),
+    mutationFn: (opts?: { adWatched?: boolean }) =>
+      api<{ collected: number; bucketAdRequired: boolean; freeCollectsRemaining: number }>(
+        '/farm/collect-bucket',
+        { method: 'POST', body: JSON.stringify(opts ?? {}) },
+      ),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['farm'] });
       if (data.collected > 0) showReward('water', data.collected);

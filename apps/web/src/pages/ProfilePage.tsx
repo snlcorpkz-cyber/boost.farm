@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 import { AVATAR_IMAGES } from '../lib/assets';
+import { RANKS, type RankId } from '@eco-farm/game-engine';
 import BottomNav from '../components/farm/BottomNav';
 
 const LANGUAGES = [
@@ -15,6 +17,11 @@ export default function ProfilePage() {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const [showDelete, setShowDelete] = useState(false);
+
+  const { data: farmData } = useQuery({
+    queryKey: ['farm'],
+    queryFn: () => api<{ rank: RankId; rankDef: any; farm: { total_water_this_month?: number } }>('/farm'),
+  });
 
   const handleLangChange = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -47,6 +54,58 @@ export default function ProfilePage() {
             <p className="text-xs text-gray-400">{user?.email}</p>
           </div>
         </div>
+
+        {/* Rank */}
+        {farmData && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <p className="text-sm font-bold text-gray-700 mb-2">Rank</p>
+            {(() => {
+              const currentRank = RANKS.find((r) => r.id === farmData.rank) || RANKS[0];
+              const currentIdx = RANKS.findIndex((r) => r.id === farmData.rank);
+              const nextRank = currentIdx < RANKS.length - 1 ? RANKS[currentIdx + 1] : null;
+              const totalWater = farmData.farm?.total_water_this_month ?? 0;
+              const progressPct = nextRank
+                ? Math.min(100, ((totalWater - currentRank.minWaterLastMonth) / (nextRank.minWaterLastMonth - currentRank.minWaterLastMonth)) * 100)
+                : 100;
+
+              const rankColors: Record<string, string> = {
+                novice: 'from-gray-300 to-gray-400',
+                amateur: 'from-green-400 to-green-600',
+                farmer: 'from-blue-400 to-blue-600',
+                master: 'from-yellow-400 to-amber-500',
+              };
+
+              return (
+                <div>
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`rounded-full px-3 py-1 bg-gradient-to-r ${rankColors[currentRank.id] || rankColors.novice} text-white text-xs font-extrabold shadow`}>
+                      {currentRank.id.charAt(0).toUpperCase() + currentRank.id.slice(1)}
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {Math.round(totalWater)}g this month
+                    </span>
+                  </div>
+                  {nextRank && (
+                    <div>
+                      <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full bg-gradient-to-r ${rankColors[currentRank.id] || rankColors.novice} rounded-full transition-all`}
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {Math.round(nextRank.minWaterLastMonth - totalWater)}g to {nextRank.id.charAt(0).toUpperCase() + nextRank.id.slice(1)}
+                      </p>
+                    </div>
+                  )}
+                  {!nextRank && (
+                    <p className="text-[10px] text-amber-600 font-bold mt-1">Max rank reached!</p>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Language */}
         <div className="bg-white rounded-2xl p-4 shadow-sm">

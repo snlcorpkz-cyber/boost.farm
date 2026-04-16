@@ -9,10 +9,11 @@ interface RewardEntry {
   id: number;
   type: RewardType;
   amount: number;
+  label?: string;
 }
 
 interface RewardToastCtx {
-  showReward: (type: RewardType, amount: number) => void;
+  showReward: (type: RewardType, amount: number, label?: string) => void;
 }
 
 const Ctx = createContext<RewardToastCtx>({ showReward: () => {} });
@@ -23,9 +24,9 @@ export function RewardToastProvider({ children }: { children: React.ReactNode })
   const [queue, setQueue] = useState<RewardEntry[]>([]);
   const idRef = useRef(0);
 
-  const showReward = useCallback((type: RewardType, amount: number) => {
+  const showReward = useCallback((type: RewardType, amount: number, label?: string) => {
     const id = ++idRef.current;
-    setQueue((prev) => [...prev, { id, type, amount }]);
+    setQueue((prev) => [...prev, { id, type, amount, label }]);
     setTimeout(() => {
       setQueue((prev) => prev.filter((r) => r.id !== id));
     }, 1600);
@@ -36,18 +37,18 @@ export function RewardToastProvider({ children }: { children: React.ReactNode })
       {children}
       <AnimatePresence>
         {queue.map((r) => (
-          <RewardModal key={r.id} type={r.type} amount={r.amount} />
+          <RewardModal key={r.id} type={r.type} amount={r.amount} label={r.label} />
         ))}
       </AnimatePresence>
     </Ctx.Provider>
   );
 }
 
-function RewardModal({ type, amount }: { type: RewardType; amount: number }) {
+function RewardModal({ type, amount, label }: { type: RewardType; amount: number; label?: string }) {
   const { t } = useTranslation();
 
   const isWater = type === 'water';
-  const headerText = isWater ? t('reward.water_received') : t('reward.fert_received');
+  const headerText = label || (isWater ? t('reward.water_received') : t('reward.fert_received'));
   const icon = isWater ? UI.waterDrop : UI.fertilizer;
   const amountText = isWater ? `+${amount}g` : `+${amount}`;
   const amountColor = isWater ? 'text-sky-600' : 'text-amber-700';

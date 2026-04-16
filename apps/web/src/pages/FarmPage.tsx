@@ -95,7 +95,12 @@ export default function FarmPage() {
 
   const { data: dailyChallengeData } = useQuery({
     queryKey: ['daily-challenge'],
-    queryFn: () => api<{ waterGiven: number; required: number; completed: boolean; rewardClaimed: boolean; reward: number; streakDays: number; progress: number }>('/quests/daily-challenge'),
+    queryFn: () => api<{
+      waterGiven: number; required: number; completed: boolean; rewardClaimed: boolean;
+      reward: number; streakDays: number; progress: number;
+      tomorrowReward: number | null;
+      pendingReward: { amount: number; date: string; streakDays: number } | null;
+    }>('/quests/daily-challenge'),
     refetchInterval: 30_000,
   });
 
@@ -154,17 +159,13 @@ export default function FarmPage() {
     }))
   );
 
-  const prevChallengeCompleted = useRef(false);
+  const pendingShown = useRef(false);
   useEffect(() => {
-    if (!dailyChallengeData) return;
-    if (dailyChallengeData.completed && !dailyChallengeData.rewardClaimed && !prevChallengeCompleted.current) {
-      prevChallengeCompleted.current = true;
-      claimChallenge.mutate();
-    }
-    if (!dailyChallengeData.completed) {
-      prevChallengeCompleted.current = false;
-    }
-  }, [dailyChallengeData?.completed, dailyChallengeData?.rewardClaimed]);
+    if (!dailyChallengeData?.pendingReward || pendingShown.current) return;
+    pendingShown.current = true;
+    setShowChallengeModal(true);
+    setChallengeRewardAmount(dailyChallengeData.pendingReward.amount);
+  }, [dailyChallengeData?.pendingReward]);
 
   useEffect(() => {
     if (!farm) return;
@@ -172,6 +173,7 @@ export default function FarmPage() {
     if (prevStageRef.current !== null && currentStage > prevStageRef.current) {
       setCelebrationStage(currentStage);
       setShowCelebration(true);
+      showReward('water', 100, 'Level-up bonus!');
     }
     prevStageRef.current = currentStage;
   }, [farm?.current_stage]);
@@ -183,9 +185,28 @@ export default function FarmPage() {
     activePet
   );
 
-  const handleCollect = useCallback(() => {
-    collectBucket.mutate();
+  const [bucketAdNeeded, setBucketAdNeeded] = useState(false);
+
+  const handleCollect = useCallback((adWatched?: boolean) => {
+    collectBucket.mutate(adWatched ? { adWatched: true } : undefined);
   }, [collectBucket]);
+
+  const handleBucketAdRequest = useCallback(() => {
+    const bridge = (window as any).EcoFarmAndroid;
+    if (bridge?.requestRewardedAd) {
+      const native = (window as any).__ecoFarmNative ??= {};
+      native.onRewardedFinished = (payload: any) => {
+        const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+        if (p.success) {
+          sounds.bucketCollectToCan();
+          handleCollect(true);
+        }
+      };
+      bridge.requestRewardedAd(JSON.stringify({ placement: 'bucket_collect' }));
+    } else {
+      handleCollect(true);
+    }
+  }, [handleCollect]);
 
   const triggerCanShake = useCallback(() => {
     setCanShaking(true);
@@ -316,14 +337,23 @@ export default function FarmPage() {
             )}
           </button>
 
-          <div className="flex items-center gap-1 bg-white/50 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
-            <img src={UI.waterDrop} alt="" className="w-3 h-3" />
-            <span className="text-[10px] font-bold text-blue-700 tabular-nums">
-              {(farm.total_water_this_month ?? 0).toFixed(0)}g
-            </span>
-            <span className="text-[8px] text-gray-500 ml-0.5">
-              in {new Date().toLocaleString(i18n.language, { month: 'long' })}
-            </span>
+          <div className="flex items-center gap-1.5">
+            {data?.rank && (
+              <div className={`rounded-full px-2 py-0.5 shadow-sm text-[9px] font-extrabold ${
+                data.rank === 'master' ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' :
+                data.rank === 'farmer' ? 'bg-gradient-to-r from-blue-400 to-blue-600 text-white' :
+                data.rank === 'amateur' ? 'bg-gradient-to-r from-green-400 to-green-600 text-white' :
+                'bg-white/60 text-gray-600'
+              }`}>
+                {data.rank === 'master' ? 'Master' : data.rank === 'farmer' ? 'Farmer' : data.rank === 'amateur' ? 'Amateur' : 'Novice'}
+              </div>
+            )}
+            <div className="flex items-center gap-1 bg-white/50 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
+              <img src={UI.waterDrop} alt="" className="w-3 h-3" />
+              <span className="text-[10px] font-bold text-blue-700 tabular-nums">
+                {(farm.total_water_this_month ?? 0).toFixed(0)}g
+              </span>
+            </div>
           </div>
 
           <button
@@ -349,20 +379,40 @@ export default function FarmPage() {
         </div>
 
         {/* ═══ DAILY CHALLENGE WIDGET ═══ */}
-        {dailyChallengeData && !dailyChallengeData.completed && (
-          <div className="flex justify-end px-3 -mt-0.5">
-            <div className="relative w-[56%]">
-              <img src={UI.challengeFrame} alt="" className="w-full h-auto" draggable={false} />
-              <span className="absolute left-[18%] top-1/2 -translate-x-1/2 -translate-y-1/2 text-[13px] font-extrabold text-white drop-shadow-md tabular-nums">
-                {`${Math.max(0, Math.ceil((dailyChallengeData.required ?? 0) - (dailyChallengeData.waterGiven ?? 0)))}g`}
-              </span>
-              <span className="absolute left-[35%] right-[6%] top-[8%] bottom-[52%] flex items-center justify-center text-[13px] font-bold text-white leading-none text-center overflow-hidden">
-                {t('challenge.title')}
-              </span>
-              <span className="absolute left-[32%] right-[4%] top-[50%] bottom-[7%] flex items-start justify-center pt-[2px] text-[8px] font-semibold text-white/90 leading-[1.15] text-center overflow-hidden">
-                You still need to water the vegetable to get an extra gift!
-              </span>
-            </div>
+        {dailyChallengeData && (
+          <div className="px-3 -mt-0.5">
+            {!dailyChallengeData.completed ? (
+              <div className="bg-white/60 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-white/50">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold text-gray-700">Daily Challenge</span>
+                  {dailyChallengeData.streakDays > 0 && (
+                    <span className="text-[9px] font-bold text-orange-500">
+                      {dailyChallengeData.streakDays} day streak
+                    </span>
+                  )}
+                </div>
+                <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-400 to-orange-400 rounded-full transition-all"
+                    style={{ width: `${dailyChallengeData.progress * 100}%` }}
+                  />
+                </div>
+                <p className="text-[8px] text-gray-500 mt-0.5">
+                  {Math.round(dailyChallengeData.waterGiven)}g / {dailyChallengeData.required}g — reward tomorrow +{dailyChallengeData.reward}g
+                </p>
+              </div>
+            ) : dailyChallengeData.tomorrowReward ? (
+              <div className="bg-green-50/80 backdrop-blur-sm rounded-2xl px-3 py-2 shadow-sm border border-green-200/50 text-center">
+                <span className="text-[10px] font-bold text-green-700">
+                  Challenge done! Tomorrow morning +{dailyChallengeData.tomorrowReward}g water
+                </span>
+                {dailyChallengeData.streakDays > 0 && (
+                  <span className="text-[9px] text-orange-500 font-bold ml-1">
+                    {dailyChallengeData.streakDays} days
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
 
@@ -516,6 +566,9 @@ export default function FarmPage() {
               isCollecting={collectBucket.isPending}
               onShakeCan={triggerCanShake}
               isDark={isDark}
+              adRequired={data?.bucketAdRequired ?? false}
+              freeCollectsRemaining={data?.freeCollectsRemaining}
+              onAdRequest={handleBucketAdRequest}
             />
           </div>
         </div>
@@ -633,16 +686,15 @@ export default function FarmPage() {
 
       <FarmTutorial />
 
-      {/* Daily challenge completed modal */}
+      {/* Yesterday's reward modal */}
       <AnimatePresence>
-        {showChallengeModal && (
+        {showChallengeModal && dailyChallengeData?.pendingReward && (
           <>
             <motion.div
               className="fixed inset-0 z-[100] bg-black/40"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowChallengeModal(false)}
             />
             <motion.div
               className="fixed inset-0 z-[101] flex items-center justify-center px-6 pointer-events-none"
@@ -655,18 +707,30 @@ export default function FarmPage() {
                 initial={{ scale: 0.7, y: 30 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.7, y: 30 }}
-                transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+                transition={{ type: 'tween', duration: 0.25 }}
               >
-                <div className="text-5xl mb-3">🎉</div>
-                <h3 className="text-lg font-extrabold text-gray-900 mb-1">Challenge Complete!</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  You earned <span className="font-bold text-blue-600">+{challengeRewardAmount}g water</span> as a bonus!
+                <div className="text-5xl mb-3">🎁</div>
+                <h3 className="text-lg font-extrabold text-gray-900 mb-1">Yesterday's Reward!</h3>
+                <p className="text-sm text-gray-500 mb-2">
+                  You completed yesterday's challenge.
+                </p>
+                {dailyChallengeData.pendingReward.streakDays > 0 && (
+                  <p className="text-xs text-orange-500 font-bold mb-2">
+                    Streak: {dailyChallengeData.pendingReward.streakDays} days
+                  </p>
+                )}
+                <p className="text-lg font-extrabold text-blue-600 mb-4">
+                  +{challengeRewardAmount}g water
                 </p>
                 <button
-                  className="w-full bg-gradient-to-b from-blue-400 to-blue-600 text-white font-bold py-3 rounded-2xl shadow-sm active:scale-[0.97] transition-transform text-sm"
-                  onClick={() => setShowChallengeModal(false)}
+                  className="w-full bg-gradient-to-b from-blue-400 to-blue-600 text-white font-bold py-3 rounded-2xl shadow-sm active:scale-[0.97] transition-transform text-sm disabled:opacity-50"
+                  disabled={claimChallenge.isPending}
+                  onClick={() => {
+                    claimChallenge.mutate();
+                    setShowChallengeModal(false);
+                  }}
                 >
-                  Awesome!
+                  {claimChallenge.isPending ? '...' : 'Claim Reward!'}
                 </button>
               </motion.div>
             </motion.div>

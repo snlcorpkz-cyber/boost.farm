@@ -35,6 +35,9 @@ export const REFERRAL_REWARDS = {
 export const FRIEND_WATERING_COST = 10;
 export const WATERING_BATCH_SIZES = [1, 5, 20] as const;
 
+export const FREE_BUCKET_COLLECTS_PER_DAY = 2;
+export const STAGE_UP_BONUS = 100;
+
 // ── Rank system ──
 export type RankId = 'novice' | 'amateur' | 'farmer' | 'master';
 

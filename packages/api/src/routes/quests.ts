@@ -180,9 +180,15 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
   });
 });
 
+function yesterdayStr(): string {
+  const d = new Date(Date.now() - 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 questsRouter.get('/daily-challenge', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const today = todayStr();
+  const yesterday = yesterdayStr();
   const rank = await getUserRank(userId);
 
   let challenge = await queryOne(
@@ -191,12 +197,35 @@ questsRouter.get('/daily-challenge', async (req: Request, res: Response) => {
   );
 
   if (!challenge) {
+    const yesterdayChallenge = await queryOne(
+      `SELECT streak_days, completed, reward_claimed FROM daily_challenges
+       WHERE user_id = $1 AND challenge_date = $2`,
+      [userId, yesterday]
+    );
+
+    let streakDays = 0;
+    if (yesterdayChallenge?.completed && yesterdayChallenge?.reward_claimed) {
+      streakDays = (yesterdayChallenge.streak_days || 0) + 1;
+    }
+
     challenge = await queryOne(
-      `INSERT INTO daily_challenges (user_id, challenge_date, water_given, required, completed, reward_claimed, reward_amount)
-       VALUES ($1, $2, 0, $3, false, false, $4) RETURNING *`,
-      [userId, today, rank.dailyChallengeWaterReq, rank.dailyChallengeReward]
+      `INSERT INTO daily_challenges (user_id, challenge_date, water_given, required, completed, reward_claimed, reward_amount, streak_days, reward_available_date)
+       VALUES ($1, $2, 0, $3, false, false, $4, $5, ($2::date + 1)) RETURNING *`,
+      [userId, today, rank.dailyChallengeWaterReq, rank.dailyChallengeReward, streakDays]
     );
   }
+
+  const pendingReward = await queryOne(
+    `SELECT reward_amount, challenge_date, streak_days FROM daily_challenges
+     WHERE user_id = $1 AND completed = true AND reward_claimed = false
+       AND reward_available_date <= $2
+       AND challenge_date < $2
+     ORDER BY challenge_date DESC LIMIT 1`,
+    [userId, today]
+  );
+
+  const tomorrowReward = challenge!.completed && !challenge!.reward_claimed
+    ? challenge!.reward_amount : null;
 
   res.json({
     success: true,
@@ -206,7 +235,14 @@ questsRouter.get('/daily-challenge', async (req: Request, res: Response) => {
       completed: challenge!.completed,
       rewardClaimed: challenge!.reward_claimed,
       reward: challenge!.reward_amount,
+      streakDays: challenge!.streak_days,
       progress: Math.min(1, challenge!.water_given / challenge!.required),
+      tomorrowReward,
+      pendingReward: pendingReward ? {
+        amount: pendingReward.reward_amount,
+        date: pendingReward.challenge_date,
+        streakDays: pendingReward.streak_days,
+      } : null,
     },
   });
 });
@@ -214,17 +250,18 @@ questsRouter.get('/daily-challenge', async (req: Request, res: Response) => {
 questsRouter.post('/daily-challenge/claim', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const today = todayStr();
-  const rank = await getUserRank(userId);
 
   const challenge = await queryOne(
     `UPDATE daily_challenges SET reward_claimed = true
-     WHERE user_id = $1 AND challenge_date = $2 AND completed = true AND reward_claimed = false
+     WHERE user_id = $1 AND completed = true AND reward_claimed = false
+       AND reward_available_date <= $2
+       AND challenge_date < $2
      RETURNING *`,
     [userId, today]
   );
 
   if (!challenge) {
-    res.status(400).json({ success: false, error: { code: 'CANNOT_CLAIM', message: 'Cannot claim reward' } });
+    res.status(400).json({ success: false, error: { code: 'CANNOT_CLAIM', message: 'No reward available yet. Complete the challenge and come back tomorrow!' } });
     return;
   }
 
@@ -234,13 +271,23 @@ questsRouter.post('/daily-challenge/claim', async (req: Request, res: Response) 
      total_water_this_month = CASE WHEN water_month = $3 THEN total_water_this_month + $1 ELSE $1 END,
      water_month = $3
      WHERE user_id = $2 AND harvested = false`,
-    [rank.dailyChallengeReward, userId, mo]
+    [challenge.reward_amount, userId, mo]
   );
 
-  await notify(userId, 'gift', 'notif.daily_challenge_done', { reward: rank.dailyChallengeReward });
+  const todayChallenge = await queryOne(
+    `UPDATE daily_challenges SET streak_days = $1
+     WHERE user_id = $2 AND challenge_date = $3
+     RETURNING streak_days`,
+    [(challenge.streak_days || 0) + 1, userId, today]
+  );
+
+  await notify(userId, 'gift', 'notif.daily_challenge_done', { reward: challenge.reward_amount });
 
   res.json({
     success: true,
-    data: { rewardAmount: rank.dailyChallengeReward },
+    data: {
+      rewardAmount: challenge.reward_amount,
+      streakDays: todayChallenge?.streak_days ?? (challenge.streak_days || 0) + 1,
+    },
   });
 });
