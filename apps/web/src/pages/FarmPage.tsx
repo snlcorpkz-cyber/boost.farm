@@ -25,6 +25,7 @@ import InvitePopup from '../components/InvitePopup';
 import { useRewardToast } from '../components/RewardToast';
 import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
+import MockAdModal from '../components/MockAdModal';
 
 
 export default function FarmPage() {
@@ -185,7 +186,7 @@ export default function FarmPage() {
     activePet
   );
 
-  const [bucketAdNeeded, setBucketAdNeeded] = useState(false);
+  const [showBucketAd, setShowBucketAd] = useState(false);
 
   const handleCollect = useCallback((adWatched?: boolean) => {
     collectBucket.mutate(adWatched ? { adWatched: true } : undefined);
@@ -204,6 +205,14 @@ export default function FarmPage() {
       };
       bridge.requestRewardedAd(JSON.stringify({ placement: 'bucket_collect' }));
     } else {
+      setShowBucketAd(true);
+    }
+  }, [handleCollect]);
+
+  const handleBucketAdComplete = useCallback((r: { amount: number }) => {
+    setShowBucketAd(false);
+    if (r.amount) {
+      sounds.bucketCollectToCan();
       handleCollect(true);
     }
   }, [handleCollect]);
@@ -738,6 +747,13 @@ export default function FarmPage() {
           </>
         )}
       </AnimatePresence>
+
+      <MockAdModal
+        open={showBucketAd}
+        onClose={() => setShowBucketAd(false)}
+        rewardAmount={1}
+        onComplete={handleBucketAdComplete}
+      />
     </Background>
   );
 }
