@@ -25,6 +25,13 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
   const canDoSelected = canWater && displayAmount >= requiredWater && !isWatering;
 
   useEffect(() => {
+    if (selectedBatch > 1 && displayAmount < selectedBatch * 10) {
+      const best = [...BATCH_OPTIONS].reverse().find(s => displayAmount >= s * 10);
+      setSelectedBatch(best ?? 1);
+    }
+  }, [displayAmount, selectedBatch]);
+
+  useEffect(() => {
     if (!menuOpen) return;
     const handler = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {

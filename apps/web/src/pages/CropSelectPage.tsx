@@ -28,7 +28,7 @@ export default function CropSelectPage() {
   if (isLoading) {
     return (
       <div className="min-h-[100dvh] bg-gradient-to-b from-green-100 to-white flex items-center justify-center">
-        <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
+        <img src="/assets/logo.webp" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
       </div>
     );
   }

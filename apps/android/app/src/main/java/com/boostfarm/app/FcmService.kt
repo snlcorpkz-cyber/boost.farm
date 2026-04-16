@@ -45,6 +45,8 @@ class FcmService : FirebaseMessagingService() {
             ).apply {
                 description = "Boost Farm notifications"
                 enableVibration(true)
+                enableLights(true)
+                setShowBadge(true)
             }
             manager.createNotificationChannel(channel)
         }
@@ -62,6 +64,7 @@ class FcmService : FirebaseMessagingService() {
             .setContentTitle(title)
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()

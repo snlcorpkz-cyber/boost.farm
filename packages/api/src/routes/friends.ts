@@ -53,6 +53,18 @@ friendsRouter.get('/', async (req: Request, res: Response) => {
     products: { name_key: f.name_key },
   }]));
 
+  const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+  const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+  const phase = getCurrentPhase(localHour);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const greetedRows = await query(
+    `SELECT target_id FROM friend_actions
+     WHERE actor_id = $1 AND action_type = 'greet' AND phase = $2 AND action_date = $3`,
+    [userId, phase, today]
+  );
+  const greetedSet = new Set(greetedRows.map((r: any) => r.target_id));
+
   const friends = friendLinks.map((f: any) => ({
     id: f.friend_id,
     nickname: f.nickname,
@@ -60,6 +72,7 @@ friendsRouter.get('/', async (req: Request, res: Response) => {
     avatar_id: f.avatar_id,
     farm: farmsByUser.get(f.friend_id) || null,
     addedAt: f.created_at,
+    greetedThisPhase: greetedSet.has(f.friend_id),
   }));
 
   res.json({ success: true, data: { friends } });

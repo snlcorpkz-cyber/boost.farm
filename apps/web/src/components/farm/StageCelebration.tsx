@@ -198,14 +198,15 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
               </div>
               <div className="px-6 py-5">
                 <p className="text-lg font-bold text-gray-800 mb-1">
-                  {t('farm.stage', { current: stage })}
+                  New growth stage!
                 </p>
-                <p className="text-sm text-gray-500 mb-3">
-                  {stage < 6
-                    ? t('farm.until_next_stage', { percent: '0' })
-                    : t('farm.harvested')}
+                <p className="text-sm text-gray-500 mb-1">
+                  Your plant has grown to a new stage. Keep watering!
                 </p>
-                <p className="text-xs text-gray-400">{t('common.tap_to_close', 'Tap to close')}</p>
+                <p className="text-xs text-blue-500 font-bold mb-2">
+                  +100g water bonus
+                </p>
+                <p className="text-xs text-gray-400">Tap to close</p>
               </div>
             </div>
           </motion.div>

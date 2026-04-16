@@ -77,7 +77,7 @@ export default function AuthPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <motion.img
-            src="/assets/logo.png"
+            src="/assets/logo.webp"
             alt="Boost Farm"
             className="w-48 h-auto mx-auto mb-2"
             animate={{ scale: [1, 1.03, 1] }}

@@ -7,118 +7,118 @@ export interface CropStageFrames {
 
 export const CROP_STAGES: Record<string, Record<number, CropStageFrames>> = {
   'product.potato': {
-    1: { open: `${A}/crops/potato-stage1-open.png`, closed: `${A}/crops/potato-stage1-closed.png` },
-    2: { open: `${A}/crops/potato-stage2-open.png`, closed: `${A}/crops/potato-stage2-closed.png` },
-    3: { open: `${A}/crops/potato-stage3-open.png`, closed: `${A}/crops/potato-stage3-closed.png` },
-    4: { open: `${A}/crops/potato-stage4-open.png`, closed: `${A}/crops/potato-stage4-closed.png` },
-    5: { open: `${A}/crops/potato-stage5-open.png`, closed: `${A}/crops/potato-stage5-closed.png` },
-    6: { open: `${A}/crops/potato-stage6-open.png`, closed: `${A}/crops/potato-stage6-closed.png` },
+    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
+    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
+    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
+    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
   },
   'product.tomato': {
-    1: { open: `${A}/crops/potato-stage1-open.png`, closed: `${A}/crops/potato-stage1-closed.png` },
-    2: { open: `${A}/crops/potato-stage2-open.png`, closed: `${A}/crops/potato-stage2-closed.png` },
-    3: { open: `${A}/crops/potato-stage3-open.png`, closed: `${A}/crops/potato-stage3-closed.png` },
-    4: { open: `${A}/crops/potato-stage4-open.png`, closed: `${A}/crops/potato-stage4-closed.png` },
-    5: { open: `${A}/crops/potato-stage5-open.png`, closed: `${A}/crops/potato-stage5-closed.png` },
-    6: { open: `${A}/crops/potato-stage6-open.png`, closed: `${A}/crops/potato-stage6-closed.png` },
+    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
+    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
+    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
+    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
   },
   'product.carrot': {
-    1: { open: `${A}/crops/potato-stage1-open.png`, closed: `${A}/crops/potato-stage1-closed.png` },
-    2: { open: `${A}/crops/potato-stage2-open.png`, closed: `${A}/crops/potato-stage2-closed.png` },
-    3: { open: `${A}/crops/potato-stage3-open.png`, closed: `${A}/crops/potato-stage3-closed.png` },
-    4: { open: `${A}/crops/potato-stage4-open.png`, closed: `${A}/crops/potato-stage4-closed.png` },
-    5: { open: `${A}/crops/potato-stage5-open.png`, closed: `${A}/crops/potato-stage5-closed.png` },
-    6: { open: `${A}/crops/potato-stage6-open.png`, closed: `${A}/crops/potato-stage6-closed.png` },
+    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
+    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
+    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
+    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
   },
   'product.cucumber': {
-    1: { open: `${A}/crops/potato-stage1-open.png`, closed: `${A}/crops/potato-stage1-closed.png` },
-    2: { open: `${A}/crops/potato-stage2-open.png`, closed: `${A}/crops/potato-stage2-closed.png` },
-    3: { open: `${A}/crops/potato-stage3-open.png`, closed: `${A}/crops/potato-stage3-closed.png` },
-    4: { open: `${A}/crops/potato-stage4-open.png`, closed: `${A}/crops/potato-stage4-closed.png` },
-    5: { open: `${A}/crops/potato-stage5-open.png`, closed: `${A}/crops/potato-stage5-closed.png` },
-    6: { open: `${A}/crops/potato-stage6-open.png`, closed: `${A}/crops/potato-stage6-closed.png` },
+    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
+    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
+    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
+    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
   },
   'product.onion': {
-    1: { open: `${A}/crops/potato-stage1-open.png`, closed: `${A}/crops/potato-stage1-closed.png` },
-    2: { open: `${A}/crops/potato-stage2-open.png`, closed: `${A}/crops/potato-stage2-closed.png` },
-    3: { open: `${A}/crops/potato-stage3-open.png`, closed: `${A}/crops/potato-stage3-closed.png` },
-    4: { open: `${A}/crops/potato-stage4-open.png`, closed: `${A}/crops/potato-stage4-closed.png` },
-    5: { open: `${A}/crops/potato-stage5-open.png`, closed: `${A}/crops/potato-stage5-closed.png` },
-    6: { open: `${A}/crops/potato-stage6-open.png`, closed: `${A}/crops/potato-stage6-closed.png` },
+    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
+    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
+    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
+    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
   },
 };
 
 export const CROP_BASE: Record<string, string> = {
-  'product.potato': `${A}/crops/potato-base.png`,
-  'product.tomato': `${A}/crops/potato-base.png`,
-  'product.carrot': `${A}/crops/potato-base.png`,
-  'product.cucumber': `${A}/crops/potato-base.png`,
-  'product.onion': `${A}/crops/potato-base.png`,
+  'product.potato': `${A}/crops/potato-base.webp`,
+  'product.tomato': `${A}/crops/potato-base.webp`,
+  'product.carrot': `${A}/crops/potato-base.webp`,
+  'product.cucumber': `${A}/crops/potato-base.webp`,
+  'product.onion': `${A}/crops/potato-base.webp`,
 };
 
 export const PET_IMAGES: Record<string, string> = {
-  monkey: `${A}/pets/monkey.png`,
-  rabbit: `${A}/pets/rabbit.png`,
-  hamster: `${A}/pets/hamster.png`,
-  hamsterGift: `${A}/pets/hamster-gift.png`,
+  monkey: `${A}/pets/monkey.webp`,
+  rabbit: `${A}/pets/rabbit.webp`,
+  hamster: `${A}/pets/hamster.webp`,
+  hamsterGift: `${A}/pets/hamster-gift.webp`,
 };
 
 export const HAMSTER_FRAMES: string[] = [
-  `${A}/pets/hamster.png`,
-  `${A}/pets/hamster-surprised.png`,
-  `${A}/pets/hamster-sleep.png`,
+  `${A}/pets/hamster.webp`,
+  `${A}/pets/hamster-surprised.webp`,
+  `${A}/pets/hamster-sleep.webp`,
 ];
 
 export const MONKEY_FRAMES: string[] = [
-  `${A}/pets/monkey.png`,
-  `${A}/pets/monkey-sleep.png`,
-  `${A}/pets/monkey-handstand.png`,
+  `${A}/pets/monkey.webp`,
+  `${A}/pets/monkey-sleep.webp`,
+  `${A}/pets/monkey-handstand.webp`,
 ];
 
 export const RABBIT_FRAMES: string[] = [
-  `${A}/pets/rabbit.png`,
-  `${A}/pets/rabbit-sleep.png`,
-  `${A}/pets/rabbit-sit.png`,
+  `${A}/pets/rabbit.webp`,
+  `${A}/pets/rabbit-sleep.webp`,
+  `${A}/pets/rabbit-sit.webp`,
 ];
 
 export const AVATAR_IMAGES: Record<string, string> = {
-  bear: `${A}/avatars/bear.png`,
-  penguin: `${A}/avatars/penguin.png`,
-  ram: `${A}/avatars/ram.png`,
-  dog: `${A}/avatars/dog.png`,
+  bear: `${A}/avatars/bear.webp`,
+  penguin: `${A}/avatars/penguin.webp`,
+  ram: `${A}/avatars/ram.webp`,
+  dog: `${A}/avatars/dog.webp`,
 };
 
 export const AVATAR_LIST = ['bear', 'penguin', 'ram', 'dog'] as const;
 
 export const UI = {
-  waterDrop: `${A}/ui/water-drop.png`,
-  fertilizer: `${A}/ui/fertilizer.png`,
-  wateringCan: `${A}/ui/watering-can.png`,
-  bucket: `${A}/ui/bucket.png`,
-  bucketFull: `${A}/ui/bucket-full.png`,
-  coupon: `${A}/ui/coupon.png`,
-  well: `${A}/ui/well.png`,
-  rainbow: `${A}/ui/rainbow.png`,
-  butterfly: `${A}/ui/butterfly.png`,
-  greetHand: `${A}/ui/greet-hand.png`,
-  bell: `${A}/ui/bell.png`,
-  gift: `${A}/ui/gift.png`,
-  challengeFrame: `${A}/ui/challenge-frame.png`,
+  waterDrop: `${A}/ui/water-drop.webp`,
+  fertilizer: `${A}/ui/fertilizer.webp`,
+  wateringCan: `${A}/ui/watering-can.webp`,
+  bucket: `${A}/ui/bucket.webp`,
+  bucketFull: `${A}/ui/bucket-full.webp`,
+  coupon: `${A}/ui/coupon.webp`,
+  well: `${A}/ui/well.webp`,
+  rainbow: `${A}/ui/rainbow.webp`,
+  butterfly: `${A}/ui/butterfly.webp`,
+  greetHand: `${A}/ui/greet-hand.webp`,
+  bell: `${A}/ui/bell.webp`,
+  gift: `${A}/ui/gift.webp`,
+  challengeFrame: `${A}/ui/challenge-frame.webp`,
 };
 
 export const PRODUCT_PHOTOS: Record<string, string> = {
-  'product.potato': `${A}/products/potato.png`,
-  'product.tomato': `${A}/products/tomato.png`,
-  'product.carrot': `${A}/products/carrot.png`,
-  'product.cucumber': `${A}/products/cucumber.png`,
-  'product.onion': `${A}/products/onion.png`,
+  'product.potato': `${A}/products/potato.webp`,
+  'product.tomato': `${A}/products/tomato.webp`,
+  'product.carrot': `${A}/products/carrot.webp`,
+  'product.cucumber': `${A}/products/cucumber.webp`,
+  'product.onion': `${A}/products/onion.webp`,
 };
 
 export const BG: Record<string, string> = {
-  morning: `${A}/bg/morning.png`,
-  afternoon: `${A}/bg/afternoon.png`,
-  evening: `${A}/bg/evening.png`,
-  night: `${A}/bg/night.png`,
+  morning: `${A}/bg/morning.webp`,
+  afternoon: `${A}/bg/afternoon.webp`,
+  evening: `${A}/bg/evening.webp`,
+  night: `${A}/bg/night.webp`,
 };
 
 export function getCropFrames(nameKey: string, stage: number): CropStageFrames | null {
@@ -126,7 +126,7 @@ export function getCropFrames(nameKey: string, stage: number): CropStageFrames |
 }
 
 export function getCropBase(nameKey: string): string {
-  return CROP_BASE[nameKey] ?? `${A}/crops/potato-base.png`;
+  return CROP_BASE[nameKey] ?? `${A}/crops/potato-base.webp`;
 }
 
 export function getAvatarImage(avatarId: string): string | null {

@@ -24,7 +24,7 @@ const PUSH_MESSAGES: Record<string, (p: Record<string, string | number>) => { ti
   }),
   stage: (p) => ({
     title: 'New Growth Stage!',
-    body: `Your plant reached stage ${p.stage || '?'}! Keep going!`,
+    body: `Your plant has grown to a new stage! +${p.bonus || 100}g water bonus. Keep going!`,
   }),
   harvest: (p) => ({
     title: 'Harvest Ready!',

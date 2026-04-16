@@ -26,6 +26,7 @@ import { useRewardToast } from '../components/RewardToast';
 import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
+import RankModal from '../components/RankModal';
 
 
 export default function FarmPage() {
@@ -50,6 +51,7 @@ export default function FarmPage() {
   const [showInvitePopup, setShowInvitePopup] = useState(false);
   const [showChallengeModal, setShowChallengeModal] = useState(false);
   const [challengeRewardAmount, setChallengeRewardAmount] = useState(0);
+  const [showRankModal, setShowRankModal] = useState(false);
   const prevStageRef = useRef<number | null>(null);
   const soundEnabled = useSyncExternalStore(
     (cb) => sounds.subscribe(cb),
@@ -309,7 +311,7 @@ export default function FarmPage() {
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-green-50">
-        <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
+        <img src="/assets/logo.webp" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
       </div>
     );
   }
@@ -358,19 +360,25 @@ export default function FarmPage() {
 
           <div className="flex items-center gap-1.5">
             {data?.rank && (
-              <div className={`rounded-full px-2 py-0.5 shadow-sm text-[9px] font-extrabold ${
-                data.rank === 'master' ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' :
-                data.rank === 'farmer' ? 'bg-gradient-to-r from-blue-400 to-blue-600 text-white' :
-                data.rank === 'amateur' ? 'bg-gradient-to-r from-green-400 to-green-600 text-white' :
-                'bg-white/60 text-gray-600'
-              }`}>
-                {data.rank === 'master' ? 'Master' : data.rank === 'farmer' ? 'Farmer' : data.rank === 'amateur' ? 'Amateur' : 'Novice'}
-              </div>
+              <button
+                onClick={() => setShowRankModal(true)}
+                className={`flex items-center gap-1 rounded-full px-2.5 py-1 shadow-sm text-[10px] font-bold ${
+                  data.rank === 'master' ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' :
+                  data.rank === 'farmer' ? 'bg-gradient-to-r from-blue-400 to-blue-600 text-white' :
+                  data.rank === 'amateur' ? 'bg-gradient-to-r from-green-400 to-green-600 text-white' :
+                  'bg-white/50 backdrop-blur-sm text-gray-600'
+                }`}
+              >
+                <span>{data.rank === 'master' ? 'Master' : data.rank === 'farmer' ? 'Farmer' : data.rank === 'amateur' ? 'Amateur' : 'Novice'}</span>
+              </button>
             )}
             <div className="flex items-center gap-1 bg-white/50 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-sm">
               <img src={UI.waterDrop} alt="" className="w-3 h-3" />
               <span className="text-[10px] font-bold text-blue-700 tabular-nums">
                 {(farm.total_water_this_month ?? 0).toFixed(0)}g
+              </span>
+              <span className="text-[8px] text-gray-500 ml-0.5">
+                {new Date().toLocaleString(i18n.language, { month: 'short' })}
               </span>
             </div>
           </div>
@@ -423,7 +431,7 @@ export default function FarmPage() {
                 </p>
               </div>
             ) : dailyChallengeData.tomorrowReward ? (
-              <div className="flex items-center justify-center gap-1.5">
+              <div className="bg-white/70 backdrop-blur-sm rounded-full px-3 py-1.5 shadow-sm flex items-center justify-center gap-1.5">
                 <img src={UI.gift} alt="" className="w-5 h-5 object-contain" />
                 <span className="text-xs font-bold text-green-700">Challenge done!</span>
                 <span className="text-[11px] text-green-600">Reward tomorrow morning</span>
@@ -660,7 +668,7 @@ export default function FarmPage() {
               <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center border border-dashed border-gray-300 shadow-sm">
                 <span className="text-gray-400 text-sm">+</span>
               </div>
-              <span className="text-[8px] text-gray-500 font-medium w-9 text-center truncate">
+              <span className="text-[8px] text-white font-semibold w-9 text-center truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
                 {t('friends.add')}
               </span>
             </button>
@@ -677,7 +685,7 @@ export default function FarmPage() {
                   <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center border border-white/50 shadow-sm overflow-hidden">
                     <img src={avatarSrc || AVATAR_IMAGES.bear} alt="" className="w-7 h-7 object-contain" />
                   </div>
-                  <span className="text-[8px] text-gray-500 font-medium w-9 text-center truncate">
+                  <span className="text-[8px] text-white font-semibold w-9 text-center truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]">
                     {friend.nickname}
                   </span>
                 </button>
@@ -763,6 +771,13 @@ export default function FarmPage() {
         onClose={() => setShowBucketAd(false)}
         rewardAmount={1}
         onComplete={handleBucketAdComplete}
+      />
+
+      <RankModal
+        open={showRankModal}
+        onClose={() => setShowRankModal(false)}
+        currentRank={data?.rank ?? 'novice'}
+        totalWater={farm.total_water_this_month ?? 0}
       />
     </Background>
   );

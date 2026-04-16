@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -62,9 +62,15 @@ export default function FriendFarmPage() {
   const myMonthlyWater = myFarmData?.farm?.total_water_this_month ?? 0;
 
   const friend = useMemo(
-    () => friendsData?.friends?.find((f) => f.id === friendId) ?? null,
+    () => friendsData?.friends?.find((f: any) => f.id === friendId) ?? null,
     [friendsData?.friends, friendId]
   );
+
+  useEffect(() => {
+    if ((friend as any)?.greetedThisPhase) {
+      setGreetDone(true);
+    }
+  }, [(friend as any)?.greetedThisPhase]);
 
   const dropOffsets = useRef(
     Array.from({ length: 12 }, () => ({
@@ -135,7 +141,7 @@ export default function FriendFarmPage() {
     return (
       <Background>
         <div className="h-full flex items-center justify-center">
-          <img src="/assets/logo.png" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
+          <img src="/assets/logo.webp" alt="Boost Farm" className="w-32 h-auto animate-pulse" />
         </div>
       </Background>
     );
