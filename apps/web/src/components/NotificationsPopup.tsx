@@ -63,6 +63,19 @@ export default function NotificationsPopup({
   const { user, logout } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'list' | 'settings'>('list');
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await api('/user/account', { method: 'DELETE' });
+    } finally {
+      logout();
+      onClose();
+    }
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const [allNotifications, setAllNotifications] = useState<Notification[]>([]);
@@ -358,17 +371,90 @@ export default function NotificationsPopup({
                   </div>
                 </div>
 
-                {/* Logout */}
-                <button
-                  className="w-full bg-white/60 rounded-2xl p-4 text-left text-sm font-semibold text-red-500 hover:bg-red-50/60 transition-colors active:scale-[0.98]"
+                {/* Account actions — Logout sits above Delete Account in the
+                    same visual group. Delete is intentionally muted (no red,
+                    smaller text) so casual users don't tap it by accident,
+                    but it's still discoverable right where Play Store policy
+                    expects it. Confirmation happens in a centered modal. */}
+                <div
+                  className="bg-white/60 rounded-2xl overflow-hidden"
                   style={{ border: '1px solid rgba(200,170,120,0.2)' }}
-                  onClick={() => { logout(); onClose(); }}
                 >
-                  {t('profile.logout')} →
-                </button>
+                  <button
+                    className="w-full p-4 text-left text-sm font-semibold text-red-500 hover:bg-red-50/60 transition-colors active:scale-[0.98]"
+                    onClick={() => { logout(); onClose(); }}
+                  >
+                    {t('profile.logout')} →
+                  </button>
+                  <div className="border-t" style={{ borderColor: 'rgba(200,170,120,0.25)' }} />
+                  <button
+                    className="w-full p-4 text-left text-sm text-amber-800/70 hover:bg-amber-50/60 transition-colors active:scale-[0.98]"
+                    onClick={() => setShowDelete(true)}
+                  >
+                    {t('profile.delete_account')}
+                  </button>
+                </div>
               </div>
             )}
           </motion.div>
+
+          {/* Delete-account confirmation modal. Sits above the Settings
+              popup (z-[110]) so it captures all taps. Buttons are gray
+              (not red) to match the low-pressure tone the user asked for —
+              this is destructive, but it shouldn't look scary. */}
+          <AnimatePresence>
+            {showDelete && (
+              <>
+                <motion.div
+                  className="fixed inset-0 bg-black/50 z-[110]"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => !deleting && setShowDelete(false)}
+                />
+                <motion.div
+                  className="fixed inset-0 z-[111] flex items-center justify-center px-6 pointer-events-none"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <motion.div
+                    className="bg-white rounded-3xl shadow-2xl w-full max-w-[340px] p-6 pointer-events-auto"
+                    initial={{ scale: 0.9, y: 16 }}
+                    animate={{ scale: 1, y: 0 }}
+                    exit={{ scale: 0.9, y: 16 }}
+                    transition={{ type: 'spring', damping: 24, stiffness: 340 }}
+                  >
+                    <h3 className="text-base font-bold text-gray-800 text-center mb-2">
+                      {t('profile.delete_confirm_title', 'Delete account?')}
+                    </h3>
+                    <p className="text-sm text-gray-500 text-center mb-5 leading-relaxed">
+                      {t(
+                        'profile.delete_confirm_body',
+                        'Your account, farm progress, friends and push subscriptions will be permanently removed. This cannot be undone.',
+                      )}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-sm font-semibold hover:bg-gray-200 transition-colors disabled:opacity-50"
+                        onClick={() => setShowDelete(false)}
+                        disabled={deleting}
+                      >
+                        {t('profile.delete_no', 'No')}
+                      </button>
+                      <button
+                        className="flex-1 py-2.5 rounded-xl bg-gray-700 text-white text-sm font-semibold hover:bg-gray-800 transition-colors disabled:opacity-50"
+                        onClick={handleDelete}
+                        disabled={deleting}
+                      >
+                        {deleting ? '…' : t('profile.delete_yes', 'Yes')}
+                      </button>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
         </>
       )}
     </AnimatePresence>
