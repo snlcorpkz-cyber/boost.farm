@@ -27,7 +27,6 @@ import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
-import BottomNav from '../components/farm/BottomNav';
 import { requestRewardedAdNative } from '../lib/native';
 
 
@@ -364,9 +363,7 @@ export default function FarmPage() {
 
   return (
     <Background>
-      {/* pb-16 reserves space for the fixed BottomNav below, preventing it
-          from covering the friends strip at the bottom of the flex column. */}
-      <div className="flex flex-col h-[100dvh] pb-16">
+      <div className="flex flex-col h-[100dvh]">
         {/* ═══ TOP BAR ═══ */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
@@ -802,10 +799,6 @@ export default function FarmPage() {
         currentRank={data?.rank ?? 'novice'}
         totalWater={farm.total_water_this_month ?? 0}
       />
-
-      {/* H-4: BottomNav on FarmPage so users can reach Quests/Friends/Profile
-          without bouncing through the loading screen. */}
-      <BottomNav />
     </Background>
   );
 }

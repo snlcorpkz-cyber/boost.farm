@@ -13,7 +13,6 @@ import ProgressBar from '../components/farm/ProgressBar';
 import WateringCan from '../components/farm/WateringCan';
 import { AVATAR_IMAGES, PET_IMAGES, UI, getCropBase } from '../lib/assets';
 import { useRewardToast } from '../components/RewardToast';
-import BottomNav from '../components/farm/BottomNav';
 
 interface FriendFarm {
   growth_percent: number;
@@ -176,8 +175,7 @@ export default function FriendFarmPage() {
 
   return (
     <Background>
-      {/* pb-16 reserves space for the fixed BottomNav below. */}
-      <div className="flex flex-col h-[100dvh] pb-16">
+      <div className="flex flex-col h-[100dvh]">
         {/* ═══ TOP BAR — same height as FarmPage ═══ */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
@@ -428,9 +426,6 @@ export default function FriendFarmPage() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* H-4: BottomNav for global navigation without going back first. */}
-      <BottomNav />
     </Background>
   );
 }
