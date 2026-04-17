@@ -176,7 +176,8 @@ export default function FriendFarmPage() {
 
   return (
     <Background>
-      <div className="flex flex-col h-[100dvh]">
+      {/* pb-16 reserves space for the fixed BottomNav below. */}
+      <div className="flex flex-col h-[100dvh] pb-16">
         {/* ═══ TOP BAR — same height as FarmPage ═══ */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
