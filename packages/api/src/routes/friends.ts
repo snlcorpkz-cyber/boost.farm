@@ -11,11 +11,13 @@ import {
 } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
 import { incrementActivityQuest } from './quests.js';
+import { activityTracker } from '../middleware/activity.js';
 
 const MAX_NUTRITION = 10000;
 
 export const friendsRouter = Router();
 friendsRouter.use(requireAuth);
+friendsRouter.use(activityTracker);
 
 async function getUserRank(userId: string) {
   const farm = await queryOne(

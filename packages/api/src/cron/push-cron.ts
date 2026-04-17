@@ -121,6 +121,35 @@ async function checkCheckin(): Promise<void> {
   }
 }
 
+/**
+ * Close sessions that have been idle for > 30 minutes. We consider the client
+ * "gone" when `ended_at` (which the activity tracker / heartbeat keeps fresh)
+ * hasn't moved for a while. Duration is computed from started_at → ended_at.
+ *
+ * This is the single source of truth for session_duration metrics; as long as
+ * this cron runs regularly, admin dashboards get accurate "avg session time"
+ * even if the user just closes the app without hitting logout.
+ */
+async function closeIdleSessions(): Promise<void> {
+  try {
+    const rows = await query<{ id: string }>(
+      `UPDATE sessions
+       SET duration_sec = GREATEST(0, EXTRACT(EPOCH FROM (ended_at - started_at))::int)
+       WHERE duration_sec IS NULL
+         AND ended_at < now() - interval '30 minutes'
+       RETURNING id`,
+    );
+    if (rows.length > 0) {
+      console.log(`[push-cron] closed ${rows.length} idle sessions`);
+    }
+  } catch (err) {
+    const msg = (err as Error).message || '';
+    if (!/does not exist|relation.*sessions/i.test(msg)) {
+      console.error('[push-cron] closeIdleSessions failed:', msg);
+    }
+  }
+}
+
 // C-3: batch rollover of total_water_last_month for farms that have not been
 // touched in the current month. Idempotent — only affects rows where
 // water_month is older than the current UTC month.
@@ -150,10 +179,11 @@ export async function runPushCron(): Promise<void> {
       checkDailyChallenge(),
       checkCheckin(),
       rolloverWaterMonth(),
+      closeIdleSessions(),
     ]);
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
-        const names = ['bucket', 'pet', 'challenge', 'checkin', 'rollover'];
+        const names = ['bucket', 'pet', 'challenge', 'checkin', 'rollover', 'sessions'];
         console.error(`[push-cron] ${names[i]} failed:`, r.reason);
       }
     });

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query, queryOne, execute, withTransaction } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rate-limit.js';
-import { trackEvent, updateLastActive } from '../lib/analytics.js';
+import { activityTracker } from '../middleware/activity.js';
 import {
   computeBucketWater,
   collectBucket,
@@ -20,20 +20,7 @@ import { incrementActivityQuest } from './quests.js';
 
 export const farmRouter = Router();
 farmRouter.use(requireAuth);
-farmRouter.use((req, res, next) => {
-  if (req.user?.userId) updateLastActive(req.user.userId);
-  if (req.method === 'POST') {
-    const origJson = res.json.bind(res);
-    res.json = function(body: any) {
-      if (res.statusCode < 400 && req.user?.userId) {
-        const route = req.path.replace(/^\//, '').replace(/\//g, '_') || 'unknown';
-        trackEvent(req.user.userId, `farm.${route}`, { ...req.body }, req).catch(() => {});
-      }
-      return origJson(body);
-    };
-  }
-  next();
-});
+farmRouter.use(activityTracker);
 
 const waterSchema = z.object({
   times: z.union([z.literal(1), z.literal(5), z.literal(20)]),

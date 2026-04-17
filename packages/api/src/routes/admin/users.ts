@@ -139,6 +139,89 @@ adminUsersRouter.post('/:id/grant', async (req, res) => {
   }
 });
 
+/**
+ * Paginated, filterable event log for a single user. This is the audit trail —
+ * every POST/DELETE the user made gets recorded here with full properties,
+ * device info, geo, IP, and session id. Filters: ?eventName=&from=&to=&limit=.
+ */
+adminUsersRouter.get('/:id/events', async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(10, parseInt(req.query.limit as string) || 100));
+    const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
+    const eventName = (req.query.eventName as string || '').trim();
+    const from = (req.query.from as string || '').trim();
+    const to = (req.query.to as string || '').trim();
+
+    const where: string[] = [`user_id = $1`];
+    const params: any[] = [req.params.id];
+    let pi = 1;
+    if (eventName) { pi++; where.push(`event_name = $${pi}`); params.push(eventName); }
+    if (from)      { pi++; where.push(`created_at >= $${pi}`); params.push(from); }
+    if (to)        { pi++; where.push(`created_at <= $${pi}`); params.push(to); }
+
+    const rows = await query(
+      `SELECT id, event_name, properties, device, geo, session_id,
+              ip::text AS ip, created_at
+       FROM events
+       WHERE ${where.join(' AND ')}
+       ORDER BY created_at DESC
+       LIMIT $${pi + 1} OFFSET $${pi + 2}`,
+      [...params, limit, offset]
+    );
+    const countRow = await queryOne(
+      `SELECT count(*)::int AS c FROM events WHERE ${where.join(' AND ')}`,
+      params
+    );
+    res.json({ events: rows, total: countRow?.c || 0, limit, offset });
+  } catch (err) {
+    console.error('[admin/users/events]', err);
+    res.status(500).json({ error: 'Failed to load events' });
+  }
+});
+
+/**
+ * List sessions for a user with accurate duration. Sessions still open (user
+ * hasn't logged out and the inactivity cron hasn't closed them yet) return
+ * duration_sec = null — the UI should show them as "active".
+ */
+adminUsersRouter.get('/:id/sessions', async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(5, parseInt(req.query.limit as string) || 50));
+    const rows = await query(
+      `SELECT id, started_at, ended_at, events_count,
+              COALESCE(duration_sec,
+                       GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int)
+              ) AS duration_sec,
+              device, geo, ip::text AS ip,
+              duration_sec IS NULL AS is_active
+       FROM sessions
+       WHERE user_id = $1
+       ORDER BY started_at DESC
+       LIMIT $2`,
+      [req.params.id, limit]
+    );
+    // Aggregate totals for quick admin view.
+    const agg = await queryOne(
+      `SELECT
+         count(*)::int AS total_sessions,
+         COALESCE(SUM(
+           COALESCE(duration_sec,
+                    GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int))
+         ), 0)::int AS total_seconds,
+         COALESCE(AVG(
+           COALESCE(duration_sec,
+                    GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int))
+         ), 0)::int AS avg_seconds
+       FROM sessions WHERE user_id = $1`,
+      [req.params.id]
+    );
+    res.json({ sessions: rows, totals: agg });
+  } catch (err) {
+    console.error('[admin/users/sessions]', err);
+    res.status(500).json({ error: 'Failed to load sessions' });
+  }
+});
+
 adminUsersRouter.post('/:id/toggle-admin', async (req, res) => {
   try {
     const user = await queryOne(`SELECT is_admin FROM users WHERE id = $1`, [req.params.id]);

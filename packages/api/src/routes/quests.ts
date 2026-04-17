@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { activityTracker } from '../middleware/activity.js';
 import { getCurrentPhase, getRankForWater } from '@eco-farm/game-engine';
 import { notify } from '../lib/notify.js';
 
@@ -21,6 +22,7 @@ const ACTIVITY_QUEST_KEYS = new Set([
 
 export const questsRouter = Router();
 questsRouter.use(requireAuth);
+questsRouter.use(activityTracker);
 
 async function getUserRank(userId: string) {
   const farm = await queryOne(

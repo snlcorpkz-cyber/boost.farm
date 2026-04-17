@@ -67,6 +67,47 @@ export default function App() {
     tg.expand();
   }, [isAuthenticated]);
 
+  // Session heartbeat — pings the server every 60s while the app is in the
+  // foreground so the analytics session stays open with an accurate duration.
+  // We also ping on focus/visibilitychange because WebView throttles setInterval
+  // in the background and on mobile browsers intervals can drift.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+
+    const ping = () => {
+      if (cancelled || document.visibilityState !== 'visible') return;
+      api('/user/session-heartbeat', { method: 'POST', body: '{}' }).catch(() => {});
+    };
+
+    ping();
+    const id = window.setInterval(ping, 60_000);
+    const onVisible = () => ping();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    // Best-effort logout ping when the tab is closed — not guaranteed but
+    // catches most of the "user closed the tab" cases.
+    const onBye = () => {
+      try {
+        const url = (import.meta as any).env?.VITE_API_URL?.replace(/\/$/, '') || '';
+        const token = localStorage.getItem('eco_access_token');
+        if (!token) return;
+        const blob = new Blob(['{}'], { type: 'application/json' });
+        navigator.sendBeacon?.(`${url}/user/session-heartbeat`, blob);
+      } catch { /* ignore */ }
+    };
+    window.addEventListener('pagehide', onBye);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.removeEventListener('pagehide', onBye);
+    };
+  }, [isAuthenticated]);
+
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-farm-green/10">

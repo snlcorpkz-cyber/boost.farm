@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { activityTracker } from '../middleware/activity.js';
 import {
   PetId,
   PET_IDS,
@@ -10,6 +11,7 @@ import {
 
 export const petsRouter = Router();
 petsRouter.use(requireAuth);
+petsRouter.use(activityTracker);
 
 async function getPetStats(userId: string) {
   const refRow = await queryOne(

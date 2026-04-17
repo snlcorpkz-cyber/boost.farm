@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { activityTracker } from '../middleware/activity.js';
 import { notify } from '../lib/notify.js';
 
 export const gamesRouter = Router();
 gamesRouter.use(requireAuth);
+gamesRouter.use(activityTracker);
 
 function todayStr(): string {
   const d = new Date();

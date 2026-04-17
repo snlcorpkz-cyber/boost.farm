@@ -15,6 +15,22 @@ export function UserDetailPage() {
     enabled: !!id,
   });
 
+  const [eventFilter, setEventFilter] = useState('');
+  const { data: eventsData } = useQuery({
+    queryKey: ['admin', 'user', id, 'events', eventFilter],
+    queryFn: () =>
+      api(
+        `/users/${id}/events?limit=200${eventFilter ? `&eventName=${encodeURIComponent(eventFilter)}` : ''}`,
+      ),
+    enabled: !!id,
+  });
+
+  const { data: sessionsData } = useQuery({
+    queryKey: ['admin', 'user', id, 'sessions'],
+    queryFn: () => api(`/users/${id}/sessions?limit=50`),
+    enabled: !!id,
+  });
+
   const grant = useMutation({
     mutationFn: () => api(`/users/${id}/grant`, { method: 'POST', body: { type: grantType, amount: Number(grantAmount) } }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'user', id] }); },
@@ -115,18 +131,65 @@ export function UserDetailPage() {
         </div>
       )}
 
-      {/* Recent Events */}
-      <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent Events</h3>
-        {(!user.recentEvents || user.recentEvents.length === 0) ? (
-          <p className="text-sm text-gray-400">No events tracked yet</p>
+      {/* Sessions */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">Sessions</h3>
+          {sessionsData?.totals && (
+            <div className="text-xs text-gray-500">
+              Total: {sessionsData.totals.total_sessions} · Avg: {formatDuration(sessionsData.totals.avg_seconds)} · Sum: {formatDuration(sessionsData.totals.total_seconds)}
+            </div>
+          )}
+        </div>
+        {(!sessionsData?.sessions || sessionsData.sessions.length === 0) ? (
+          <p className="text-sm text-gray-400">No sessions recorded yet</p>
         ) : (
-          <div className="space-y-1.5 max-h-96 overflow-y-auto">
-            {user.recentEvents.map((e: any, i: number) => (
-              <div key={i} className="flex items-center gap-3 text-xs py-1.5 border-b border-gray-50">
-                <span className="bg-gray-100 text-gray-600 font-mono rounded px-1.5 py-0.5">{e.event_name}</span>
-                <span className="text-gray-400 shrink-0">{new Date(e.created_at).toLocaleString()}</span>
-                <span className="text-gray-500 truncate">{JSON.stringify(e.properties)}</span>
+          <div className="space-y-1 max-h-96 overflow-y-auto">
+            {sessionsData.sessions.map((s: any) => (
+              <div key={s.id} className="flex items-center gap-3 text-xs py-1.5 border-b border-gray-50">
+                <span className={`font-mono rounded px-1.5 py-0.5 ${s.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                  {s.is_active ? 'ACTIVE' : 'CLOSED'}
+                </span>
+                <span className="text-gray-700 shrink-0 w-44">{new Date(s.started_at).toLocaleString()}</span>
+                <span className="text-gray-700 font-medium">{formatDuration(s.duration_sec)}</span>
+                <span className="text-gray-500">· {s.events_count} events</span>
+                <span className="text-gray-400 truncate">
+                  {s.device?.platform || 'web'}
+                  {s.geo?.country ? ` · ${s.geo.country}` : ''}
+                  {s.geo?.city ? `, ${s.geo.city}` : ''}
+                  {s.ip ? ` · ${s.ip}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Full event log */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <h3 className="text-sm font-semibold text-gray-700">Activity Log {eventsData?.total != null && (<span className="text-gray-400 font-normal">({eventsData.total})</span>)}</h3>
+          <input
+            value={eventFilter}
+            onChange={e => setEventFilter(e.target.value)}
+            placeholder="Filter: e.g. farm.water"
+            className="rounded-lg border border-gray-300 px-2 py-1 text-xs w-56"
+          />
+        </div>
+        {(!eventsData?.events || eventsData.events.length === 0) ? (
+          <p className="text-sm text-gray-400">No events match this filter</p>
+        ) : (
+          <div className="space-y-1 max-h-[28rem] overflow-y-auto">
+            {eventsData.events.map((e: any) => (
+              <div key={e.id} className="flex items-start gap-3 text-xs py-1.5 border-b border-gray-50">
+                <span className="bg-gray-100 text-gray-700 font-mono rounded px-1.5 py-0.5 shrink-0">{e.event_name}</span>
+                <span className="text-gray-400 shrink-0 w-36">{new Date(e.created_at).toLocaleString()}</span>
+                <span className="text-gray-500 truncate flex-1" title={JSON.stringify(e.properties)}>
+                  {JSON.stringify(e.properties)}
+                </span>
+                <span className="text-gray-400 shrink-0">
+                  {e.geo?.country || '—'}{e.ip ? ` · ${e.ip}` : ''}
+                </span>
               </div>
             ))}
           </div>
@@ -134,6 +197,16 @@ export function UserDetailPage() {
       </div>
     </div>
   );
+}
+
+function formatDuration(sec: number | null | undefined): string {
+  if (sec == null) return '—';
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 function InfoCard({ label, value }: { label: string; value: string | number }) {

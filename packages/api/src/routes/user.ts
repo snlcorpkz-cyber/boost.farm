@@ -2,10 +2,13 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { activityTracker } from '../middleware/activity.js';
 import { sendPush } from '../lib/push.js';
+import { endSession } from '../lib/analytics.js';
 
 export const userRouter = Router();
 userRouter.use(requireAuth);
+userRouter.use(activityTracker);
 
 const updateProfileSchema = z.object({
   nickname: z.string().min(2).max(20).optional(),
@@ -180,6 +183,11 @@ userRouter.post('/push-opened', async (req: Request, res: Response) => {
 
 userRouter.delete('/account', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
+  const sid = req.user?.sessionId;
+
+  // Close the analytics session before cascading the user row away, so we
+  // don't lose duration info for the final session.
+  if (sid) await endSession(sid).catch(() => {});
 
   // We rely on ON DELETE CASCADE for most tables; however friends has two FKs
   // to users, and some tables (e.g., referrals) may not cascade invitee-side
@@ -189,4 +197,32 @@ userRouter.delete('/account', async (req: Request, res: Response) => {
   await execute(`DELETE FROM users WHERE id = $1`, [userId]);
 
   res.json({ success: true, data: { message: 'Account deleted' } });
+});
+
+/**
+ * Explicit logout — closes the analytics session so we get an exact duration.
+ * Client should call this on the Logout button. We also invalidate server-side
+ * session by bumping session_id, forcing any still-valid JWT to be rejected.
+ */
+userRouter.post('/logout', async (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const sid = req.user?.sessionId;
+  if (sid) await endSession(sid).catch(() => {});
+  await execute(`UPDATE users SET session_id = NULL WHERE id = $1`, [userId]).catch(() => {});
+  res.json({ success: true });
+});
+
+/**
+ * Session heartbeat — called by the web client every ~60s while the app is
+ * foregrounded. Keeps the session "alive" so the inactivity cron doesn't
+ * close it prematurely. Cheap (single UPDATE), safe to call often.
+ */
+userRouter.post('/session-heartbeat', async (req: Request, res: Response) => {
+  const sid = req.user?.sessionId;
+  if (!sid) { res.json({ success: true }); return; }
+  await execute(
+    `UPDATE sessions SET ended_at = now() WHERE id = $1 AND duration_sec IS NULL`,
+    [sid],
+  ).catch(() => {});
+  res.json({ success: true });
 });

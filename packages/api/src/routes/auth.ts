@@ -5,7 +5,7 @@ import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
-import { trackEvent } from '../lib/analytics.js';
+import { trackEvent, startSession, enrichUserProfile } from '../lib/analytics.js';
 import { verifyGoogleIdToken } from '../lib/google-auth.js';
 import { Resend } from 'resend';
 
@@ -251,7 +251,10 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
 
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, email, sessionId);
-    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'email' }, req).catch(() => {});
+    // Analytics: record session row (geo/device/ip) and backfill user cohort fields.
+    startSession(user.id, sessionId, req).catch(() => {});
+    enrichUserProfile(user.id, req).catch(() => {});
+    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'email' }, req, sessionId).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -307,7 +310,9 @@ authRouter.post('/google', async (req: Request, res: Response) => {
 
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, email, sessionId);
-    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'google' }, req).catch(() => {});
+    startSession(user.id, sessionId, req).catch(() => {});
+    enrichUserProfile(user.id, req).catch(() => {});
+    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'google' }, req, sessionId).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -381,6 +386,9 @@ authRouter.post('/telegram', async (req: Request, res: Response) => {
 
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, user.email, sessionId);
+    startSession(user.id, sessionId, req).catch(() => {});
+    enrichUserProfile(user.id, req).catch(() => {});
+    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'telegram' }, req, sessionId).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
