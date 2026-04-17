@@ -134,21 +134,21 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Logout */}
-        <button
-          className="w-full bg-white rounded-2xl p-4 shadow-sm text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-          onClick={logout}
-        >
-          {t('profile.logout')} →
-        </button>
-
-        {/* Account deletion — Play Store requires this control to be
-            reachable, but we keep it muted (gray, non-bold) so casual users
-            don't tap it by accident. Confirmation happens in a centered modal,
-            not inline, so it's clearly an intentional action. */}
-        <div className="mt-8 pt-6 border-t border-gray-100">
+        {/* Account actions — Logout and Delete Account live side-by-side in
+            the same settings card so users can find both in the obvious
+            place. Delete sits BELOW logout with a muted look (no red, smaller
+            text) so accidental taps are unlikely, but it's still findable
+            (required by Play Store policy). */}
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
           <button
-            className="w-full text-center text-xs text-gray-400 hover:text-gray-600 transition-colors py-2"
+            className="w-full p-4 text-left text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+            onClick={logout}
+          >
+            {t('profile.logout')} →
+          </button>
+          <div className="border-t border-gray-100" />
+          <button
+            className="w-full p-4 text-left text-sm text-gray-500 hover:bg-gray-50 transition-colors"
             onClick={() => setShowDelete(true)}
           >
             {t('profile.delete_account')}

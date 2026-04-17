@@ -150,7 +150,9 @@ async function processReferral(newUserId: string, refCode: string) {
 // Defaults to `test@boostfarm.io` + `000000` so the current publisher can ship
 // the listing. Override via env vars `REVIEWER_EMAILS` (comma-separated) and
 // `REVIEWER_CODE` to rotate later without a redeploy.
-const REVIEWER_EMAILS = (process.env.REVIEWER_EMAILS ?? 'test@boostfarm.io')
+const REVIEWER_EMAILS = (
+  process.env.REVIEWER_EMAILS ?? 'test@boostfarm.io,test@manyboost.io'
+)
   .split(',')
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
