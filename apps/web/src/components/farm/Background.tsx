@@ -1,9 +1,12 @@
 import { usePhase } from '../../hooks/usePhase';
 import { BG } from '../../lib/assets';
 
+// NOTE: /assets/bg/afternoon.webp does not ship with the app (never committed),
+// so we fall back to morning.webp for the daytime phase. If/when an
+// afternoon-specific asset is added, switching back is a one-line change.
 const PHASE_BG: Record<string, string> = {
   morning: BG.morning,
-  afternoon: BG.afternoon,
+  afternoon: BG.morning,
   evening: BG.evening,
 };
 
@@ -16,7 +19,7 @@ export default function Background({ children }: { children: React.ReactNode }) 
   const hour = new Date().getHours();
   const night = isNight(hour);
 
-  const bgImage = night ? BG.night : PHASE_BG[phase] || BG.afternoon;
+  const bgImage = night ? BG.night : PHASE_BG[phase] || BG.morning;
 
   return (
     <div className="relative h-full overflow-hidden bg-[#1a3a2a]">

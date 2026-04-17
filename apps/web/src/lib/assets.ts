@@ -114,9 +114,12 @@ export const PRODUCT_PHOTOS: Record<string, string> = {
   'product.onion': `${A}/products/onion.webp`,
 };
 
+// NOTE: /assets/bg/afternoon.webp was never committed. Background.tsx
+// maps the 'afternoon' phase to morning.webp. Keep the key here so existing
+// references don't 500, but point it at the real file.
 export const BG: Record<string, string> = {
   morning: `${A}/bg/morning.webp`,
-  afternoon: `${A}/bg/afternoon.webp`,
+  afternoon: `${A}/bg/morning.webp`,
   evening: `${A}/bg/evening.webp`,
   night: `${A}/bg/night.webp`,
 };

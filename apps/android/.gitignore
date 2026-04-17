@@ -5,3 +5,7 @@
 *.iml
 local.properties
 .DS_Store
+keystore.properties
+keystore/
+*.jks
+*.keystore
