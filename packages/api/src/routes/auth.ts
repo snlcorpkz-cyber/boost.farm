@@ -6,7 +6,11 @@ import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
 import { trackEvent } from '../lib/analytics.js';
+import { verifyGoogleIdToken } from '../lib/google-auth.js';
 import { Resend } from 'resend';
+
+const MAX_NUTRITION = 10000;
+const GOOGLE_AUDIENCE = (process.env.GOOGLE_CLIENT_ID || '').trim() || undefined;
 
 const AVATARS = ['bear', 'penguin', 'ram', 'dog'] as const;
 function randomAvatar(): string {
@@ -87,7 +91,7 @@ function nicknameFromTelegram(tg: { id: number; first_name?: string; last_name?:
 
 async function processReferral(newUserId: string, refCode: string) {
   const referral = await queryOne(
-    `SELECT inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
+    `SELECT id, inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
     [refCode]
   );
   if (!referral || referral.inviter_id === newUserId) return;
@@ -103,15 +107,34 @@ async function processReferral(newUserId: string, refCode: string) {
     [newUserId, referral.inviter_id, referral.inviter_id, newUserId]
   );
 
+  // C-4: mark referral as completed so pet unlock logic (referrals-based) works.
+  await execute(
+    `UPDATE referrals SET completed = true, completed_at = now() WHERE id = $1`,
+    [referral.id]
+  );
+
   const fertReward = REFERRAL_REWARDS.NUTRITION;
+
+  // M-2: apply nutrition cap to inviter's farm.
   await execute(
-    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
-    [fertReward, newUserId]
+    `UPDATE farms SET nutrition = LEAST($3, nutrition + $1)
+     WHERE user_id = $2 AND harvested = false`,
+    [fertReward, referral.inviter_id, MAX_NUTRITION]
   );
-  await execute(
-    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
-    [fertReward, referral.inviter_id]
+
+  // C-5: new user may not have a farm yet. Try to credit; if no rows updated,
+  // stash the bonus on users.pending_nutrition_bonus so /farm/new-crop can apply it.
+  const credited = await execute(
+    `UPDATE farms SET nutrition = LEAST($3, nutrition + $1)
+     WHERE user_id = $2 AND harvested = false`,
+    [fertReward, newUserId, MAX_NUTRITION]
   );
+  if (credited === 0) {
+    await execute(
+      `UPDATE users SET pending_nutrition_bonus = pending_nutrition_bonus + $1 WHERE id = $2`,
+      [fertReward, newUserId]
+    );
+  }
 
   const joinerName = await getUserNickname(newUserId);
   const inviterName = await getUserNickname(referral.inviter_id);
@@ -244,11 +267,19 @@ authRouter.post('/google', async (req: Request, res: Response) => {
   try {
     const { idToken } = googleAuthSchema.parse(req.body);
 
-    const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString());
-    const email = payload.email;
+    // C-2: cryptographically verify Google's signature and claims.
+    let payload;
+    try {
+      payload = await verifyGoogleIdToken(idToken, GOOGLE_AUDIENCE);
+    } catch (verifyErr) {
+      console.warn('[auth/google] Token verification failed:', (verifyErr as Error).message);
+      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid Google token' } });
+      return;
+    }
 
-    if (!email) {
-      res.status(400).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'No email in token' } });
+    const email = payload.email;
+    if (!email || payload.email_verified === false) {
+      res.status(400).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Email not verified' } });
       return;
     }
 
@@ -265,6 +296,8 @@ authRouter.post('/google', async (req: Request, res: Response) => {
            VALUES ($1, $2, $3, 'en') RETURNING *`,
           [email, payload.name || email.split('@')[0], randomAvatar()]
         );
+      } else {
+        await execute(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
       }
     } catch (dbErr) {
       console.warn('[auth/google] DB unavailable, using demo user');
@@ -274,6 +307,7 @@ authRouter.post('/google', async (req: Request, res: Response) => {
 
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, email, sessionId);
+    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'google' }, req).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
@@ -370,9 +404,12 @@ authRouter.post('/refresh', async (req: Request, res: Response) => {
   try {
     const payload = verifyToken(refreshToken);
 
-    if (payload.sessionId) {
-      const user = await queryOne(`SELECT session_id FROM users WHERE id = $1`, [payload.userId]);
-      if (user && user.session_id && user.session_id !== payload.sessionId) {
+    // M-3: Tokens must be tied to a session. If the user currently has a
+    // session_id, any refresh token without one (legacy) or with a mismatching
+    // one must be rejected.
+    const user = await queryOne(`SELECT session_id FROM users WHERE id = $1`, [payload.userId]);
+    if (user && user.session_id) {
+      if (!payload.sessionId || payload.sessionId !== user.session_id) {
         res.status(401).json({ success: false, error: { code: 'SESSION_EXPIRED', message: 'Logged in on another device' } });
         return;
       }

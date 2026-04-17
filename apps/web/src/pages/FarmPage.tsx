@@ -27,6 +27,8 @@ import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
+import BottomNav from '../components/farm/BottomNav';
+import { requestRewardedAdNative } from '../lib/native';
 
 
 export default function FarmPage() {
@@ -176,7 +178,11 @@ export default function FarmPage() {
     if (prevStageRef.current !== null && currentStage > prevStageRef.current) {
       setCelebrationStage(currentStage);
       setShowCelebration(true);
-      showReward('water', 100, 'Level-up bonus!');
+      // H-9: show the real bonus amount if we just received it from /farm/water,
+      // otherwise fall back to the default configured constant (100).
+      const bonus = pendingStageBonusRef.current ?? 100;
+      pendingStageBonusRef.current = null;
+      showReward('water', bonus, 'Level-up bonus!');
     }
     prevStageRef.current = currentStage;
   }, [farm?.current_stage]);
@@ -201,20 +207,20 @@ export default function FarmPage() {
     bucketAdPendingRef.current = true;
     setBucketAdPending(true);
 
-    const bridge = (window as any).EcoFarmAndroid;
-    if (bridge?.requestRewardedAd) {
-      const native = (window as any).__ecoFarmNative ??= {};
-      native.onRewardedFinished = (payload: any) => {
-        bucketAdPendingRef.current = false;
-        setBucketAdPending(false);
-        const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
-        if (p.success) {
-          sounds.bucketCollectToCan();
-          handleCollect(true);
-        }
-      };
-      bridge.requestRewardedAd(JSON.stringify({ placement: 'bucket_collect' }));
-    } else {
+    // H-2: use requestId-based routing so this callback never gets clobbered
+    // by a concurrent ad (e.g. water/fert popup).
+    const reqId = requestRewardedAdNative('bucket_collect', (result) => {
+      bucketAdPendingRef.current = false;
+      setBucketAdPending(false);
+      if (result.success) {
+        sounds.bucketCollectToCan();
+        handleCollect(true);
+      }
+    });
+
+    if (reqId === null) {
+      bucketAdPendingRef.current = false;
+      setBucketAdPending(false);
       setShowBucketAd(true);
     }
   }, [handleCollect]);
@@ -238,17 +244,32 @@ export default function FarmPage() {
   const [monkeyFrame, setMonkeyFrame] = useState(0);
   const [rabbitFrame, setRabbitFrame] = useState(0);
 
+  // H-3: one idempotency key per user intent (one tap on a batch button).
+  // Even if the network is flaky and the mutation auto-retries, the server
+  // will reject duplicates instead of watering twice.
   const handleWater = useCallback(
     (times: 1 | 5 | 20) => {
       setIsWatering(true);
-      water.mutate(times, {
-        onSettled: () => {
-          setTimeout(() => setIsWatering(false), 1200);
-        },
-      });
+      const idempotencyKey = crypto.randomUUID();
+      water.mutate(
+        { times, idempotencyKey },
+        {
+          onSuccess: (res) => {
+            // H-9: use the actual server-granted bonus amount.
+            if (res?.stageUpBonus && res.stageUpBonus > 0) {
+              pendingStageBonusRef.current = res.stageUpBonus;
+            }
+          },
+          onSettled: () => {
+            setTimeout(() => setIsWatering(false), 1200);
+          },
+        }
+      );
     },
     [water]
   );
+
+  const pendingStageBonusRef = useRef<number | null>(null);
 
   const hamsterPet = petsData?.pets?.find((p) => p.id === 'hamster');
   const giftCooldownMs = 24 * 60 * 60 * 1000;
@@ -779,6 +800,10 @@ export default function FarmPage() {
         currentRank={data?.rank ?? 'novice'}
         totalWater={farm.total_water_this_month ?? 0}
       />
+
+      {/* H-4: BottomNav on FarmPage so users can reach Quests/Friends/Profile
+          without bouncing through the loading screen. */}
+      <BottomNav />
     </Background>
   );
 }

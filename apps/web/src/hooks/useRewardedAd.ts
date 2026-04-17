@@ -1,26 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { sounds } from '../lib/sounds';
 import { useRewardToast } from '../components/RewardToast';
+import { requestRewardedAdNative } from '../lib/native';
 
 type RewardType = 'water' | 'nutrition';
 
 interface UseRewardedAdOptions {
   placement: string;
   rewardType: RewardType;
-  rewardAmount: number;
+  // rewardAmount is only used for the fallback toast / UI hint. The server
+  // always decides the real reward amount (C-1).
+  rewardAmount?: number;
   onError?: (msg: string) => void;
-}
-
-function getBridge() {
-  try {
-    const b = (window as any).EcoFarmAndroid;
-    if (!b || !b.requestRewardedAd) return null;
-    return b;
-  } catch {
-    return null;
-  }
 }
 
 export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: UseRewardedAdOptions) {
@@ -28,55 +21,50 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
   const { showReward } = useRewardToast();
   const [showFallbackAd, setShowFallbackAd] = useState(false);
   const [pending, setPending] = useState(false);
-  const creditedRef = useRef(false);
+  const creditedKeyRef = useRef<string | null>(null);
 
   const creditReward = useCallback(async () => {
-    if (creditedRef.current) return;
-    creditedRef.current = true;
+    // H-3/C-1: server authoritative, idempotent per request.
+    const idempotencyKey = crypto.randomUUID();
+    if (creditedKeyRef.current === idempotencyKey) return;
+    creditedKeyRef.current = idempotencyKey;
     try {
-      await api('/farm/ad-reward', {
+      const res = await api<{ amount: number }>('/farm/ad-reward', {
         method: 'POST',
-        body: JSON.stringify({ type: rewardType, amount: rewardAmount }),
+        body: JSON.stringify({ type: rewardType, placement, idempotencyKey }),
       });
       qc.invalidateQueries({ queryKey: ['farm'] });
       qc.invalidateQueries({ queryKey: ['ad-limits'] });
       sounds.rewardChime();
-      showReward(rewardType === 'water' ? 'water' : 'fertilizer', rewardAmount);
+      const amount = res?.amount ?? rewardAmount ?? 0;
+      if (amount > 0) {
+        showReward(rewardType === 'water' ? 'water' : 'fertilizer', amount);
+      }
     } catch (err: any) {
       onError?.(err?.message || 'Failed to credit ad reward');
     }
-  }, [rewardType, rewardAmount, qc, showReward, onError]);
+  }, [rewardType, rewardAmount, placement, qc, showReward, onError]);
 
   const requestAd = useCallback(() => {
     if (pending) return;
-    creditedRef.current = false;
-
-    const nativeBridge = getBridge();
-    if (!nativeBridge) {
-      setShowFallbackAd(true);
-      return;
-    }
 
     setPending(true);
 
-    const native = (window as any).__ecoFarmNative ??= {};
-    native.onRewardedFinished = (payload: any) => {
-      const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+    const reqId = requestRewardedAdNative(placement, (result) => {
       setPending(false);
-      if (p.placement === placement && p.success) {
+      if (result.placement === placement && result.success) {
         creditReward();
       } else {
         onError?.('Ad not available, please try again');
       }
-    };
+    });
 
-    try {
-      nativeBridge.requestRewardedAd(JSON.stringify({ placement }));
-    } catch {
+    if (reqId === null) {
+      // No native bridge — use the fallback popup.
       setPending(false);
       setShowFallbackAd(true);
     }
-  }, [placement, pending, creditReward]);
+  }, [placement, pending, creditReward, onError]);
 
   const handleFallbackComplete = useCallback(async (r: { amount: number }) => {
     if (r.amount) await creditReward();

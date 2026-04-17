@@ -160,15 +160,20 @@ userRouter.post('/push-opened', async (req: Request, res: Response) => {
     return;
   }
   try {
-    await execute(
+    // H-5: only bump the campaign "opened" counter if the recipient row
+    // transitions from non-opened to opened. Prevents inflated analytics when
+    // users tap the same push multiple times or reopen the app.
+    const updated = await execute(
       `UPDATE push_campaign_recipients SET status = 'opened', opened_at = now()
        WHERE campaign_id = $1 AND user_id = $2 AND status != 'opened'`,
       [campaignId, userId]
     );
-    await execute(
-      `UPDATE push_campaigns SET opened = opened + 1 WHERE id = $1`,
-      [campaignId]
-    );
+    if (updated > 0) {
+      await execute(
+        `UPDATE push_campaigns SET opened = opened + 1 WHERE id = $1`,
+        [campaignId]
+      );
+    }
   } catch { /* non-critical */ }
   res.json({ success: true });
 });
@@ -176,8 +181,11 @@ userRouter.post('/push-opened', async (req: Request, res: Response) => {
 userRouter.delete('/account', async (req: Request, res: Response) => {
   const userId = req.user!.userId;
 
-  await execute(`DELETE FROM farms WHERE user_id = $1`, [userId]);
+  // We rely on ON DELETE CASCADE for most tables; however friends has two FKs
+  // to users, and some tables (e.g., referrals) may not cascade invitee-side
+  // correctly. Do a best-effort clean first.
   await execute(`DELETE FROM friends WHERE user_id = $1 OR friend_id = $1`, [userId]);
+  await execute(`DELETE FROM push_tokens WHERE user_id = $1`, [userId]);
   await execute(`DELETE FROM users WHERE id = $1`, [userId]);
 
   res.json({ success: true, data: { message: 'Account deleted' } });

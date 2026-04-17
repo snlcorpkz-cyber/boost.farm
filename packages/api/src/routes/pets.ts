@@ -128,6 +128,7 @@ petsRouter.post('/:id/gift', async (req: Request, res: Response) => {
   }
 
   const giftAmount = PET_BONUSES.hamster.giftAmount!;
+  const cooldownInterval = `${Math.floor(PET_BONUSES.hamster.giftCooldownMs! / 1000)} seconds`;
 
   const farm = await queryOne(
     `SELECT id FROM farms WHERE user_id = $1 AND harvested = false`,
@@ -139,31 +140,23 @@ petsRouter.post('/:id/gift', async (req: Request, res: Response) => {
     return;
   }
 
-  const cooldownInterval = `${Math.floor(PET_BONUSES.hamster.giftCooldownMs! / 1000)} seconds`;
-
+  // H-7: atomically ensure-and-claim. Race-safe because we either
+  //  (a) insert the row and commit the gift for the very first time, or
+  //  (b) bump last_gift_at only when the cooldown has elapsed (by updated > 0).
+  // When neither succeeds, the request is on cooldown.
   const updated = await execute(
-    `UPDATE user_pets SET last_gift_at = NOW()
-     WHERE user_id = $1 AND pet_id = 'hamster'
-     AND (last_gift_at IS NULL OR last_gift_at < NOW() - $2::interval)`,
+    `INSERT INTO user_pets (user_id, pet_id, is_active, last_gift_at)
+     VALUES ($1, 'hamster', true, NOW())
+     ON CONFLICT (user_id, pet_id) DO UPDATE
+       SET last_gift_at = NOW()
+       WHERE user_pets.last_gift_at IS NULL
+          OR user_pets.last_gift_at < NOW() - $2::interval`,
     [userId, cooldownInterval]
   );
 
   if (updated === 0) {
-    const userPet = await queryOne(
-      `SELECT id FROM user_pets WHERE user_id = $1 AND pet_id = 'hamster'`,
-      [userId]
-    );
-
-    if (!userPet) {
-      await execute(
-        `INSERT INTO user_pets (user_id, pet_id, is_active, last_gift_at) VALUES ($1, 'hamster', true, NOW())
-         ON CONFLICT DO NOTHING`,
-        [userId]
-      );
-    } else {
-      res.status(400).json({ success: false, error: { code: 'COOLDOWN', message: 'Gift on cooldown' } });
-      return;
-    }
+    res.status(400).json({ success: false, error: { code: 'COOLDOWN', message: 'Gift on cooldown' } });
+    return;
   }
 
   const mo = new Date().toISOString().slice(0, 7);

@@ -3,10 +3,18 @@ import { query, queryOne, execute } from '../lib/db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { sendPush } from '../lib/push.js';
 import { notify } from '../lib/notify.js';
+import { getCurrentPhase } from '@eco-farm/game-engine';
+import { incrementActivityQuest } from './quests.js';
 
 export const offersRouter = Router();
 
-const POSTBACK_SECRET = process.env.EVERFLOW_POSTBACK_SECRET || '';
+const POSTBACK_SECRET = (process.env.EVERFLOW_POSTBACK_SECRET || '').trim();
+if (!POSTBACK_SECRET) {
+  console.warn(
+    '[offers] EVERFLOW_POSTBACK_SECRET is empty — postbacks will be rejected. ' +
+    'Set the env var before going live!',
+  );
+}
 
 // ──────────────────────────────────────────────
 // PUBLIC: Everflow S2S postback receiver
@@ -31,8 +39,10 @@ offersRouter.get('/postback', async (req: Request, res: Response) => {
     );
   } catch { /* logging should not block response */ }
 
-  if (POSTBACK_SECRET && secret !== POSTBACK_SECRET) {
-    console.warn('[offers/postback] invalid secret', { offer_id, event_id, userId });
+  // M-10: HARD fail when the expected secret is missing in config — otherwise
+  // anyone could forge postbacks on a misconfigured server.
+  if (!POSTBACK_SECRET || secret !== POSTBACK_SECRET) {
+    console.warn('[offers/postback] invalid or missing secret', { offer_id, event_id, userId });
     await logPostbackStatus(transaction_id, 'rejected', 'Invalid secret');
     res.status(200).send('ok');
     return;
@@ -239,6 +249,13 @@ offersRouter.get('/:id/link', requireAuth, async (req: Request, res: Response) =
   let link = offer.tracking_link_template;
   const separator = link.includes('?') ? '&' : '?';
   link = `${link}${separator}sub1=${encodeURIComponent(userId)}`;
+
+  // H-1: opening an offer counts as a real "view_product" action.
+  const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+  const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+  const phase = getCurrentPhase(localHour);
+  const today = new Date().toISOString().slice(0, 10);
+  await incrementActivityQuest(userId, 'view_product', phase, today).catch(() => {});
 
   res.json({ success: true, data: { url: link } });
 });

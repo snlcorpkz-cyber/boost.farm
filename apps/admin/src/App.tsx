@@ -10,9 +10,11 @@ import { OfferEditPage } from '@/pages/OfferEditPage';
 import { PushCampaignsPage } from '@/pages/PushCampaignsPage';
 import { PushCreatePage } from '@/pages/PushCreatePage';
 import { LogsPage } from '@/pages/LogsPage';
+import { RetentionPage } from '@/pages/RetentionPage';
 
 const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
+  { to: '/retention', label: 'Retention', icon: '📈' },
   { to: '/users', label: 'Users', icon: '👥' },
   { to: '/offers', label: 'Offers', icon: '🎮' },
   { to: '/push', label: 'Push', icon: '🔔' },
@@ -119,6 +121,7 @@ export default function App() {
         <main className="flex-1 overflow-auto p-4 md:p-8">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/retention" element={<RetentionPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserDetailPage />} />
             <Route path="/offers" element={<OffersPage />} />

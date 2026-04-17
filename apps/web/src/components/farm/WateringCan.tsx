@@ -10,18 +10,36 @@ interface WateringCanProps {
   isWatering: boolean;
   canWater: boolean;
   shaking: boolean;
+  /**
+   * H-8: when true, hides the batch selector (1/5/20) because the backing
+   * endpoint only supports a single action per user intent (e.g. watering
+   * a friend — one action per phase).
+   */
+  singleShot?: boolean;
+  /** Optional label shown instead of the batch pill when singleShot is on. */
+  actionLabel?: string;
 }
 
 const BATCH_OPTIONS = [1, 5, 20] as const;
 type BatchSize = (typeof BATCH_OPTIONS)[number];
 
-export default function WateringCan({ waterAmount, onWater, isWatering, canWater, shaking }: WateringCanProps) {
+export default function WateringCan({
+  waterAmount,
+  onWater,
+  isWatering,
+  canWater,
+  shaking,
+  singleShot = false,
+  actionLabel,
+}: WateringCanProps) {
   const { t } = useTranslation();
   const [selectedBatch, setSelectedBatch] = useState<BatchSize>(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const displayAmount = Math.round(waterAmount);
-  const requiredWater = selectedBatch * 10;
+  // H-8: in singleShot mode we always water exactly once.
+  const effectiveBatch: BatchSize = singleShot ? 1 : selectedBatch;
+  const requiredWater = effectiveBatch * 10;
   const canDoSelected = canWater && displayAmount >= requiredWater && !isWatering;
 
   useEffect(() => {
@@ -45,6 +63,13 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
   return (
     <div className="flex flex-col items-center" data-tutorial="watering-can">
       {/* Batch selector — single pill with dropdown */}
+      {singleShot ? (
+        <div className="mb-1.5 z-20">
+          <span className="px-3.5 py-1 rounded-full text-[10px] font-extrabold bg-gradient-to-b from-blue-400 to-blue-600 text-white shadow-md inline-flex items-center gap-1">
+            {actionLabel ?? t('farm.water_x', { count: 1 })}
+          </span>
+        </div>
+      ) : (
       <div className="relative mb-1.5 z-20" ref={menuRef}>
         <button
           className="px-3.5 py-1 rounded-full text-[10px] font-extrabold bg-gradient-to-b from-blue-400 to-blue-600 text-white shadow-md active:scale-95 transition-transform flex items-center gap-1"
@@ -97,12 +122,13 @@ export default function WateringCan({ waterAmount, onWater, isWatering, canWater
           )}
         </AnimatePresence>
       </div>
+      )}
 
       {/* Can — tap to water */}
       <motion.button
         className="relative w-[96px] h-[96px] rounded-full bg-blue-100/80 backdrop-blur-sm flex items-center justify-center shadow-md border-2 border-white/60"
         whileTap={canDoSelected ? { scale: 0.88 } : {}}
-        onClick={() => { if (canDoSelected) { sounds.waterDrip(); onWater(selectedBatch); } }}
+        onClick={() => { if (canDoSelected) { sounds.waterDrip(); onWater(effectiveBatch); } }}
         disabled={!canDoSelected}
         animate={
           shaking

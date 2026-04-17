@@ -59,7 +59,7 @@ export async function api<T = any>(
     'Content-Type': 'application/json',
     'X-Timezone-Offset': String(new Date().getTimezoneOffset()),
     'X-Device-Info': JSON.stringify({
-      platform: (window as any).FarmBridge ? 'android' : 'web',
+      platform: (window as any).EcoFarmAndroid ? 'android' : 'web',
       screen: `${screen.width}x${screen.height}`,
       language: navigator.language,
     }),

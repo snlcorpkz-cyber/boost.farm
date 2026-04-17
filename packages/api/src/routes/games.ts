@@ -70,8 +70,10 @@ gamesRouter.post('/:id/claim', async (req: Request, res: Response) => {
       [game.reward_amount, userId, mo]
     );
   } else if (game.reward_type === 'nutrition') {
+    // M-2: cap at 10000 like other fertilizer endpoints.
     await execute(
-      `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
+      `UPDATE farms SET nutrition = LEAST(10000, nutrition + $1)
+       WHERE user_id = $2 AND harvested = false`,
       [game.reward_amount, userId]
     );
   }

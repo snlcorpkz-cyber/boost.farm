@@ -29,16 +29,31 @@ export function useCollectBucket() {
   });
 }
 
+// H-3: For watering, idempotency must be per *user intent* (one tap = one key),
+// not per mutation invocation (which triggers a new key even for retries).
+// The caller supplies the key; mutation just forwards it.
+export interface WaterPayload {
+  times: 1 | 5 | 20;
+  idempotencyKey: string;
+}
+
+export interface WaterResponse {
+  newStage: number;
+  newGrowthPercent: number;
+  newWaterInCan: number;
+  newNutrition: number;
+  waterConsumed: number;
+  harvested: boolean;
+  stageUpBonus: number;
+}
+
 export function useWater() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (times: number) =>
-      api('/farm/water', {
+  return useMutation<WaterResponse, any, WaterPayload>({
+    mutationFn: ({ times, idempotencyKey }) =>
+      api<WaterResponse>('/farm/water', {
         method: 'POST',
-        body: JSON.stringify({
-          times,
-          idempotencyKey: crypto.randomUUID(),
-        }),
+        body: JSON.stringify({ times, idempotencyKey }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['farm'] }),
   });

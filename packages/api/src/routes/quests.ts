@@ -5,6 +5,20 @@ import { requireAuth } from '../middleware/auth.js';
 import { getCurrentPhase, getRankForWater } from '@eco-farm/game-engine';
 import { notify } from '../lib/notify.js';
 
+const MAX_NUTRITION = 10000;
+
+// H-1: Some quests are "activity-based" — they must not be granted just by
+// clicking a Claim button. The server auto-increments their progress when the
+// corresponding real action happens (greet_friend, water_friend, watch_ad,
+// view_product is redirected to offers). For those we reject direct
+// /:id/complete calls unless the proof-of-action is present.
+const ACTIVITY_QUEST_KEYS = new Set([
+  'greet_friend',
+  'water_friend',
+  'watch_ad',
+  'view_product',
+]);
+
 export const questsRouter = Router();
 questsRouter.use(requireAuth);
 
@@ -109,7 +123,11 @@ questsRouter.post('/checkin', async (req: Request, res: Response) => {
         [quest.reward_amount, farm.id, mo]
       );
     } else if (quest.reward_type === 'nutrition') {
-      await execute(`UPDATE farms SET nutrition = nutrition + $1 WHERE id = $2`, [quest.reward_amount, farm.id]);
+      // M-2: cap nutrition at MAX_NUTRITION.
+      await execute(
+        `UPDATE farms SET nutrition = LEAST($3, nutrition + $1) WHERE id = $2`,
+        [quest.reward_amount, farm.id, MAX_NUTRITION]
+      );
     }
   }
 
@@ -128,6 +146,20 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
 
   if (!quest) {
     res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Quest not found' } });
+    return;
+  }
+
+  // H-1: Activity quests cannot be claimed directly via this endpoint — they
+  // require real proof of action, which is recorded by the respective
+  // endpoints (friends/greet, friends/water, farm/ad-reward, offers/postback).
+  if (ACTIVITY_QUEST_KEYS.has(quest.quest_key)) {
+    res.status(403).json({
+      success: false,
+      error: {
+        code: 'REQUIRES_ACTION',
+        message: 'This quest completes automatically after the real action',
+      },
+    });
     return;
   }
 
@@ -162,9 +194,10 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
         [quest.reward_amount, farm.id, mo]
       );
     } else if (quest.reward_type === 'nutrition') {
+      // M-2
       await execute(
-        `UPDATE farms SET nutrition = nutrition + $1 WHERE id = $2`,
-        [quest.reward_amount, farm.id]
+        `UPDATE farms SET nutrition = LEAST($3, nutrition + $1) WHERE id = $2`,
+        [quest.reward_amount, farm.id, MAX_NUTRITION]
       );
     }
   }
@@ -179,6 +212,35 @@ questsRouter.post('/:id/complete', async (req: Request, res: Response) => {
     data: { rewardType: quest.reward_type, rewardAmount: quest.reward_amount },
   });
 });
+
+// H-1 helper: internal function that other routes call to increment progress
+// for an activity quest (e.g., after a real greet or water_friend).
+// Exported so other route modules can piggy-back automatically.
+export async function incrementActivityQuest(
+  userId: string,
+  questKey: string,
+  phase: string,
+  date: string,
+): Promise<void> {
+  const quest = await queryOne(
+    `SELECT id, limit_per_phase, reward_type, reward_amount FROM quests
+     WHERE quest_key = $1 AND active = true`,
+    [questKey]
+  );
+  if (!quest) return;
+  const upserted = await queryOne(
+    `INSERT INTO quest_completions (user_id, quest_id, phase, completion_date, count)
+     VALUES ($1, $2, $3, $4, 1)
+     ON CONFLICT (user_id, quest_id, phase, completion_date)
+     DO UPDATE SET count = quest_completions.count + 1
+     WHERE quest_completions.count < $5
+     RETURNING count`,
+    [userId, quest.id, phase, date, quest.limit_per_phase]
+  );
+  if (!upserted) return;
+  // Note: reward is already granted by the primary action; here we only
+  // progress the quest counter. Do not double-credit water/nutrition.
+}
 
 function yesterdayStr(): string {
   const d = new Date(Date.now() - 86400000);

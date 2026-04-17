@@ -121,6 +121,26 @@ async function checkCheckin(): Promise<void> {
   }
 }
 
+// C-3: batch rollover of total_water_last_month for farms that have not been
+// touched in the current month. Idempotent — only affects rows where
+// water_month is older than the current UTC month.
+async function rolloverWaterMonth(): Promise<void> {
+  try {
+    const rows = await query<{ rollover_water_month_batch: number }>(
+      `SELECT rollover_water_month_batch()`,
+    );
+    const n = rows[0]?.rollover_water_month_batch ?? 0;
+    if (n > 0) console.log(`[push-cron] rolled over water month for ${n} farms`);
+  } catch (err) {
+    // If the function doesn't exist (e.g. migration 017 not applied yet), fall
+    // back to a safe no-op. Do not throw — other cron tasks shouldn't fail.
+    const msg = (err as Error).message || '';
+    if (!/does not exist/i.test(msg)) {
+      console.error('[push-cron] rollover failed:', msg);
+    }
+  }
+}
+
 export async function runPushCron(): Promise<void> {
   console.log('[push-cron] running checks...');
   try {
@@ -129,10 +149,11 @@ export async function runPushCron(): Promise<void> {
       checkPetGift(),
       checkDailyChallenge(),
       checkCheckin(),
+      rolloverWaterMonth(),
     ]);
     results.forEach((r, i) => {
       if (r.status === 'rejected') {
-        const names = ['bucket', 'pet', 'challenge', 'checkin'];
+        const names = ['bucket', 'pet', 'challenge', 'checkin', 'rollover'];
         console.error(`[push-cron] ${names[i]} failed:`, r.reason);
       }
     });

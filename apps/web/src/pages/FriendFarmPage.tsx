@@ -13,6 +13,7 @@ import ProgressBar from '../components/farm/ProgressBar';
 import WateringCan from '../components/farm/WateringCan';
 import { AVATAR_IMAGES, PET_IMAGES, UI, getCropBase } from '../lib/assets';
 import { useRewardToast } from '../components/RewardToast';
+import BottomNav from '../components/farm/BottomNav';
 
 interface FriendFarm {
   growth_percent: number;
@@ -391,13 +392,16 @@ export default function FriendFarmPage() {
             <div className="w-[80px]" />
             <div className="w-[80px]" />
 
-            {/* Watering Can */}
+            {/* Watering Can — H-8: server allows one water per phase per friend,
+                so disable the batch selector on this page. */}
             <WateringCan
               waterAmount={myWater}
               onWater={handleWater}
               isWatering={isWatering}
               canWater={!!farm && !waterLimitHit}
               shaking={false}
+              singleShot
+              actionLabel={t('friendFarm.water_friend_once', 'Water 1×')}
             />
           </div>
         </div>
@@ -423,6 +427,9 @@ export default function FriendFarmPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* H-4: BottomNav for global navigation without going back first. */}
+      <BottomNav />
     </Background>
   );
 }

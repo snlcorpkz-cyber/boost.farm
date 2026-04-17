@@ -10,6 +10,9 @@ import {
   REFERRAL_REWARDS,
 } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
+import { incrementActivityQuest } from './quests.js';
+
+const MAX_NUTRITION = 10000;
 
 export const friendsRouter = Router();
 friendsRouter.use(requireAuth);
@@ -90,7 +93,7 @@ friendsRouter.post('/add', async (req: Request, res: Response) => {
   }
 
   const referral = await queryOne(
-    `SELECT inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
+    `SELECT id, inviter_id FROM referrals WHERE UPPER(invite_code) = UPPER($1)`,
     [code]
   );
 
@@ -117,16 +120,33 @@ friendsRouter.post('/add', async (req: Request, res: Response) => {
     throw err;
   }
 
+  // C-4: mark referral completed for pet-unlock logic.
+  await execute(
+    `UPDATE referrals SET completed = true, completed_at = COALESCE(completed_at, now()) WHERE id = $1`,
+    [referral.id]
+  );
+
   const fertReward = REFERRAL_REWARDS.NUTRITION;
 
+  // M-2: cap inviter's nutrition.
   await execute(
-    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
-    [fertReward, userId]
+    `UPDATE farms SET nutrition = LEAST($3, nutrition + $1)
+     WHERE user_id = $2 AND harvested = false`,
+    [fertReward, referral.inviter_id, MAX_NUTRITION]
   );
-  await execute(
-    `UPDATE farms SET nutrition = nutrition + $1 WHERE user_id = $2 AND harvested = false`,
-    [fertReward, referral.inviter_id]
+
+  // C-5: new user may not have a farm yet — stash bonus on users.pending_nutrition_bonus.
+  const credited = await execute(
+    `UPDATE farms SET nutrition = LEAST($3, nutrition + $1)
+     WHERE user_id = $2 AND harvested = false`,
+    [fertReward, userId, MAX_NUTRITION]
   );
+  if (credited === 0) {
+    await execute(
+      `UPDATE users SET pending_nutrition_bonus = pending_nutrition_bonus + $1 WHERE id = $2`,
+      [fertReward, userId]
+    );
+  }
 
   const joinerName = await getUserNickname(userId);
   const inviterName = await getUserNickname(referral.inviter_id);
@@ -176,22 +196,22 @@ friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
     return;
   }
 
-  const alreadyGreeted = await queryOne(
-    `SELECT id FROM friend_actions
-     WHERE actor_id = $1 AND target_id = $2 AND action_type = 'greet' AND phase = $3 AND action_date = $4`,
-    [userId, friendId, phase, today]
-  );
-
-  if (alreadyGreeted) {
-    res.status(400).json({ success: false, error: { code: 'ALREADY_GREETED', message: 'Already greeted this friend in this phase' } });
-    return;
+  // H-6: rely on UNIQUE (actor_id, target_id, action_type, phase, action_date) from migration 017.
+  // If the insert fails due to the unique constraint, we treat it as ALREADY_GREETED — this
+  // closes the race window between two near-simultaneous requests.
+  try {
+    await execute(
+      `INSERT INTO friend_actions (actor_id, target_id, action_type, phase, action_date)
+       VALUES ($1, $2, 'greet', $3, $4)`,
+      [userId, friendId, phase, today]
+    );
+  } catch (err: any) {
+    if (err.code === '23505') {
+      res.status(400).json({ success: false, error: { code: 'ALREADY_GREETED', message: 'Already greeted this friend in this phase' } });
+      return;
+    }
+    throw err;
   }
-
-  await execute(
-    `INSERT INTO friend_actions (actor_id, target_id, action_type, phase, action_date)
-     VALUES ($1, $2, 'greet', $3, $4)`,
-    [userId, friendId, phase, today]
-  );
 
   const rank = await getUserRank(userId);
   const waterReward = rank.greetWater;
@@ -207,6 +227,9 @@ friendsRouter.post('/:id/greet', async (req: Request, res: Response) => {
 
   const actorName = await getUserNickname(userId);
   await notify(friendId, 'greet', 'notif.greeted_you', { name: actorName, amount: waterReward });
+
+  // H-1: advance the greet_friend activity quest counter (no extra reward — it's bundled).
+  await incrementActivityQuest(userId, 'greet_friend', phase, today).catch(() => {});
 
   res.json({ success: true, data: { waterEarned: waterReward } });
 });
@@ -241,17 +264,6 @@ friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
     return;
   }
 
-  const alreadyWatered = await queryOne(
-    `SELECT id FROM friend_actions
-     WHERE actor_id = $1 AND target_id = $2 AND action_type = 'water' AND phase = $3 AND action_date = $4`,
-    [userId, friendId, phase, today]
-  );
-
-  if (alreadyWatered) {
-    res.status(400).json({ success: false, error: { code: 'ALREADY_WATERED', message: 'Already watered this friend in this phase' } });
-    return;
-  }
-
   const myFarm = await queryOne(
     `SELECT id, water_in_can, nutrition, total_water_last_month FROM farms
      WHERE user_id = $1 AND harvested = false`,
@@ -266,15 +278,25 @@ friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
   const rank = getRankForWater(myFarm.total_water_last_month ?? 0);
   const fertReward = rank.waterFriendFert;
 
-  await execute(
-    `INSERT INTO friend_actions (actor_id, target_id, action_type, phase, action_date)
-     VALUES ($1, $2, 'water', $3, $4)`,
-    [userId, friendId, phase, today]
-  );
+  // H-6: rely on UNIQUE constraint as the atomic idempotency guard.
+  try {
+    await execute(
+      `INSERT INTO friend_actions (actor_id, target_id, action_type, phase, action_date)
+       VALUES ($1, $2, 'water', $3, $4)`,
+      [userId, friendId, phase, today]
+    );
+  } catch (err: any) {
+    if (err.code === '23505') {
+      res.status(400).json({ success: false, error: { code: 'ALREADY_WATERED', message: 'Already watered this friend in this phase' } });
+      return;
+    }
+    throw err;
+  }
 
+  // M-2: cap nutrition.
   await execute(
-    `UPDATE farms SET water_in_can = water_in_can - $1, nutrition = nutrition + $2 WHERE id = $3`,
-    [FRIEND_WATERING_COST, fertReward, myFarm.id]
+    `UPDATE farms SET water_in_can = water_in_can - $1, nutrition = LEAST($4, nutrition + $2) WHERE id = $3`,
+    [FRIEND_WATERING_COST, fertReward, myFarm.id, MAX_NUTRITION]
   );
 
   await execute(
@@ -285,6 +307,9 @@ friendsRouter.post('/:id/water', async (req: Request, res: Response) => {
 
   const actorName = await getUserNickname(userId);
   await notify(friendId, 'water', 'notif.watered_you', { name: actorName, amount: FRIEND_WATERING_COST });
+
+  // H-1: progress water_friend activity quest.
+  await incrementActivityQuest(userId, 'water_friend', phase, today).catch(() => {});
 
   res.json({
     success: true,
