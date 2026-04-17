@@ -2,6 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { getCropFrames, getCropBase } from '../../lib/assets';
 
+/**
+ * Broadcasts fallback sprite when the primary crop frame 404s. Some stages in
+ * public/assets/crops/ were never committed (stage 1, 2, 4 for potato). Rather
+ * than showing a broken image icon OR an empty screen (which is what the user
+ * saw), we swap the src to the nearest-available stage 3 sprite on error.
+ */
+const FALLBACK_OPEN = '/assets/crops/potato-stage3-open.webp';
+const FALLBACK_CLOSED = '/assets/crops/potato-stage3-closed.webp';
+
 interface PlantProps {
   stage: number;
   growthPercent: number;
@@ -62,6 +71,12 @@ export default function Plant({ stage, productNameKey, isWatering, showEarth = t
       alt=""
       className="w-full h-full object-contain object-bottom drop-shadow-lg"
       draggable={false}
+      onError={(e) => {
+        const img = e.currentTarget;
+        const fallback = eyesOpen ? FALLBACK_OPEN : FALLBACK_CLOSED;
+        if (img.src.endsWith(fallback)) return; // already on fallback
+        img.src = fallback;
+      }}
     />
   ) : (
     <div className="w-full h-full flex items-end justify-center text-6xl select-none">🌱</div>

@@ -5,47 +5,26 @@ export interface CropStageFrames {
   closed: string;
 }
 
+// NOTE: only stage 3, 5, 6 assets were ever committed. Stages 1/2/4 would 404
+// and make the vegetable disappear from the center of the screen. Until real
+// art for the missing stages exists, we fall back to the nearest stage that
+// does exist (1,2 → 3; 4 → 5). The visual "growth" progression is still
+// preserved because we have 3 distinct sprites.
+const potatoStages: Record<number, CropStageFrames> = {
+  1: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+  2: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+  3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+  4: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+  5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+  6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
+};
+
 export const CROP_STAGES: Record<string, Record<number, CropStageFrames>> = {
-  'product.potato': {
-    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
-    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
-    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
-    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
-    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
-  },
-  'product.tomato': {
-    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
-    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
-    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
-    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
-    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
-  },
-  'product.carrot': {
-    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
-    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
-    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
-    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
-    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
-  },
-  'product.cucumber': {
-    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
-    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
-    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
-    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
-    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
-  },
-  'product.onion': {
-    1: { open: `${A}/crops/potato-stage1-open.webp`, closed: `${A}/crops/potato-stage1-closed.webp` },
-    2: { open: `${A}/crops/potato-stage2-open.webp`, closed: `${A}/crops/potato-stage2-closed.webp` },
-    3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-    4: { open: `${A}/crops/potato-stage4-open.webp`, closed: `${A}/crops/potato-stage4-closed.webp` },
-    5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
-    6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
-  },
+  'product.potato':   potatoStages,
+  'product.tomato':   potatoStages,
+  'product.carrot':   potatoStages,
+  'product.cucumber': potatoStages,
+  'product.onion':    potatoStages,
 };
 
 export const CROP_BASE: Record<string, string> = {
