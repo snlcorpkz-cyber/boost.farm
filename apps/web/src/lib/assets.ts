@@ -5,16 +5,14 @@ export interface CropStageFrames {
   closed: string;
 }
 
-// NOTE: only stage 3, 5, 6 assets were ever committed. Stages 1/2/4 would 404
-// and make the vegetable disappear from the center of the screen. Until real
-// art for the missing stages exists, we fall back to the nearest stage that
-// does exist (1,2 → 3; 4 → 5). The visual "growth" progression is still
-// preserved because we have 3 distinct sprites.
+// All 6 stages exist in public/assets/crops/. Stages 3, 5, 6 were optimised
+// into .webp; stages 1, 2, 4 remain as .png. Keep the correct extension per
+// stage so every growth step renders the right sprite.
 const potatoStages: Record<number, CropStageFrames> = {
-  1: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-  2: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
+  1: { open: `${A}/crops/potato-stage1-open.png`,  closed: `${A}/crops/potato-stage1-closed.png`  },
+  2: { open: `${A}/crops/potato-stage2-open.png`,  closed: `${A}/crops/potato-stage2-closed.png`  },
   3: { open: `${A}/crops/potato-stage3-open.webp`, closed: `${A}/crops/potato-stage3-closed.webp` },
-  4: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
+  4: { open: `${A}/crops/potato-stage4-open.png`,  closed: `${A}/crops/potato-stage4-closed.png`  },
   5: { open: `${A}/crops/potato-stage5-open.webp`, closed: `${A}/crops/potato-stage5-closed.webp` },
   6: { open: `${A}/crops/potato-stage6-open.webp`, closed: `${A}/crops/potato-stage6-closed.webp` },
 };
