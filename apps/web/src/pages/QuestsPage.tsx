@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { usePhase } from '../hooks/usePhase';
 import { api } from '../lib/api';
@@ -17,10 +18,16 @@ const QUEST_ICONS: Record<string, string> = {
   daily_challenge: '🎁',
 };
 
+// H-1: quests that can only progress from real in-app actions (not by clicking
+// the Claim button on this page). For these we disable the button and show the
+// user where to go instead of calling /quests/:id/complete.
+const REQUIRES_REAL_ACTION = new Set(['greet_friend', 'water_friend', 'view_product']);
+
 export default function QuestsPage() {
   const { t } = useTranslation();
   const { phase } = usePhase();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const { data } = useQuery({
     queryKey: ['quests', phase],
@@ -48,26 +55,58 @@ export default function QuestsPage() {
     },
   });
 
+  // H-1: for watch_ad quests we credit via /farm/ad-reward (server authoritative,
+  // rank-based amount). That endpoint also auto-increments the watch_ad quest
+  // counter via incrementActivityQuest — single source of truth.
+  const creditAdReward = useMutation({
+    mutationFn: (vars: { type: 'water' | 'nutrition' }) =>
+      api('/farm/ad-reward', {
+        method: 'POST',
+        body: JSON.stringify({ type: vars.type, placement: 'quest', idempotencyKey: crypto.randomUUID() }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['quests'] });
+      qc.invalidateQueries({ queryKey: ['farm'] });
+      qc.invalidateQueries({ queryKey: ['ad-limits'] });
+    },
+    onError: (err: any) => {
+      const msg = err?.error?.message || err?.message || 'Ad reward failed';
+      setQuestError(msg);
+      setTimeout(() => setQuestError(null), 3000);
+    },
+  });
+
   const [adOpen, setAdOpen] = useState(false);
-  const [adQuestId, setAdQuestId] = useState<string | null>(null);
+  const [adQuest, setAdQuest] = useState<any | null>(null);
 
   const quests = data?.quests || [];
   const waterQuests = quests.filter((q: any) => q.reward_type === 'water');
   const nutritionQuests = quests.filter((q: any) => q.reward_type === 'nutrition');
 
   const handleQuestAction = (quest: any) => {
-    if (quest.quest_key === 'watch_ad') {
-      setAdQuestId(quest.id);
+    const key = quest.quest_key;
+    if (key === 'watch_ad') {
+      setAdQuest(quest);
       setAdOpen(true);
-    } else {
-      completeQuest.mutate(quest.id);
+      return;
     }
+    if (key === 'greet_friend' || key === 'water_friend') {
+      navigate('/friends');
+      return;
+    }
+    if (key === 'view_product') {
+      // Offers are shown on the farm page; send the user there.
+      navigate('/');
+      return;
+    }
+    completeQuest.mutate(quest.id);
   };
 
   const handleAdComplete = () => {
-    if (adQuestId) {
-      completeQuest.mutate(adQuestId);
-      setAdQuestId(null);
+    if (adQuest) {
+      const type: 'water' | 'nutrition' = adQuest.reward_type === 'nutrition' ? 'nutrition' : 'water';
+      creditAdReward.mutate({ type });
+      setAdQuest(null);
     }
     setAdOpen(false);
   };
@@ -140,7 +179,7 @@ export default function QuestsPage() {
                 key={quest.id}
                 quest={quest}
                 onComplete={() => handleQuestAction(quest)}
-                isLoading={completeQuest.isPending}
+                isLoading={completeQuest.isPending || creditAdReward.isPending}
               />
             ))}
           </div>
@@ -157,7 +196,7 @@ export default function QuestsPage() {
                 key={quest.id}
                 quest={quest}
                 onComplete={() => handleQuestAction(quest)}
-                isLoading={completeQuest.isPending}
+                isLoading={completeQuest.isPending || creditAdReward.isPending}
               />
             ))}
           </div>
@@ -181,6 +220,15 @@ function QuestCard({
   const { t } = useTranslation();
   const icon = QUEST_ICONS[quest.quest_key] || '📋';
   const isCompleted = quest.isCompleted;
+  const requiresRealAction = REQUIRES_REAL_ACTION.has(quest.quest_key);
+
+  let buttonLabel: string;
+  if (isCompleted) buttonLabel = t('quests.completed');
+  else if (quest.quest_key === 'greet_friend' || quest.quest_key === 'water_friend')
+    buttonLabel = t('nav.friends', { defaultValue: 'Friends' });
+  else if (quest.quest_key === 'view_product')
+    buttonLabel = t('nav.offers', { defaultValue: 'Offers' });
+  else buttonLabel = t('quests.available');
 
   return (
     <motion.div
@@ -210,12 +258,14 @@ function QuestCard({
         className={`px-4 py-1.5 rounded-full text-xs font-bold ${
           isCompleted
             ? 'bg-gray-200 text-gray-400'
-            : 'bg-farm-green text-white shadow-md'
+            : requiresRealAction
+              ? 'bg-blue-500 text-white shadow-md'
+              : 'bg-farm-green text-white shadow-md'
         }`}
         onClick={onComplete}
         disabled={isCompleted || isLoading}
       >
-        {isCompleted ? t('quests.completed') : t('quests.available')}
+        {buttonLabel}
       </button>
     </motion.div>
   );
