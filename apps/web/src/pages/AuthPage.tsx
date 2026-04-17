@@ -2,9 +2,19 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
+import { getInstallReferrer, consumeInstallReferrer } from '../lib/native';
 
 const REF_KEY = 'eco_ref_code';
 
+/**
+ * Priority order for resolving a referral code on the auth screen:
+ *   1. `?ref=CODE` query string (works when user clicks a referral link and
+ *      the app opens directly to the auth page).
+ *   2. Previously cached localStorage value (survives reloads / navigation).
+ *   3. Android Install Referrer (populated by the native layer after a Play
+ *      Store install attributed to a referral link). This is the key step —
+ *      without it, a fresh install has no way to know about the inviter.
+ */
 function captureRefCode(): string | null {
   const params = new URLSearchParams(window.location.search);
   const ref = params.get('ref');
@@ -13,7 +23,15 @@ function captureRefCode(): string | null {
     window.history.replaceState({}, '', window.location.pathname);
     return ref;
   }
-  return localStorage.getItem(REF_KEY);
+  const cached = localStorage.getItem(REF_KEY);
+  if (cached) return cached;
+
+  const installRef = getInstallReferrer();
+  if (installRef?.refCode) {
+    localStorage.setItem(REF_KEY, installRef.refCode);
+    return installRef.refCode;
+  }
+  return null;
 }
 
 type Step = 'email' | 'code';
@@ -60,6 +78,9 @@ export default function AuthPage() {
     try {
       await login(email, code, effectiveRef);
       localStorage.removeItem(REF_KEY);
+      // Tell native side we've successfully used the install referrer so it
+      // can't be replayed onto a second account from the same device.
+      if (effectiveRef) consumeInstallReferrer();
     } catch (err: any) {
       setError(err.message || 'Invalid code');
     } finally {

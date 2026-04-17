@@ -142,9 +142,36 @@ async function processReferral(newUserId: string, refCode: string) {
   await notify(newUserId, 'invite', 'notif.friend_joined', { name: inviterName, fert: fertReward });
 }
 
+// Reviewer account bypass: Play Store / App review teams need a stable way to
+// log into the app without waiting for a real email. We accept one (or more)
+// pre-declared review emails paired with a fixed code — no Resend call, no DB
+// row, nothing observable from the outside.
+//
+// Defaults to `test@boostfarm.io` + `000000` so the current publisher can ship
+// the listing. Override via env vars `REVIEWER_EMAILS` (comma-separated) and
+// `REVIEWER_CODE` to rotate later without a redeploy.
+const REVIEWER_EMAILS = (process.env.REVIEWER_EMAILS ?? 'test@boostfarm.io')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+const REVIEWER_CODE = process.env.REVIEWER_CODE ?? '000000';
+
+function isReviewerAccount(email: string): boolean {
+  return REVIEWER_EMAILS.includes(email.trim().toLowerCase());
+}
+
 authRouter.post('/send-code', async (req: Request, res: Response) => {
   try {
     const { email } = sendCodeSchema.parse(req.body);
+
+    // Reviewer account: pretend we sent a code but skip the email provider
+    // entirely (test@boostfarm.io is not a real mailbox).
+    if (isReviewerAccount(email)) {
+      console.log(`[auth] reviewer send-code (no-op) for ${email}`);
+      res.json({ success: true, data: { message: 'Code sent' } });
+      return;
+    }
+
     const code = generateCode();
 
     await execute(
@@ -189,35 +216,47 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
     const { email, code, refCode } = verifyCodeSchema.parse(req.body);
 
-    const row = await queryOne(
-      `SELECT id, code, attempts FROM verification_codes
-       WHERE email = $1 AND used = false
-         AND created_at > NOW() - INTERVAL '${CODE_TTL_MIN} minutes'
-       ORDER BY created_at DESC LIMIT 1`,
-      [email],
-    );
+    const reviewer = isReviewerAccount(email);
 
-    if (!row) {
-      res.status(400).json({ success: false, error: { code: 'CODE_EXPIRED', message: 'Code expired or not found. Please request a new one.' } });
-      return;
-    }
-
-    if (row.attempts >= MAX_ATTEMPTS) {
-      await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
-      res.status(400).json({ success: false, error: { code: 'TOO_MANY_ATTEMPTS', message: 'Too many attempts. Please request a new code.' } });
-      return;
-    }
-
-    if (row.code !== code) {
-      await execute(
-        `UPDATE verification_codes SET attempts = attempts + 1 WHERE id = $1`,
-        [row.id],
+    // Reviewer accounts skip the DB-backed code check entirely and match a
+    // single fixed code. This keeps the email-only flow working for Play Store
+    // review without exposing a back door for real users.
+    if (reviewer) {
+      if (code !== REVIEWER_CODE) {
+        res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
+        return;
+      }
+    } else {
+      const row = await queryOne(
+        `SELECT id, code, attempts FROM verification_codes
+         WHERE email = $1 AND used = false
+           AND created_at > NOW() - INTERVAL '${CODE_TTL_MIN} minutes'
+         ORDER BY created_at DESC LIMIT 1`,
+        [email],
       );
-      res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
-      return;
-    }
 
-    await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
+      if (!row) {
+        res.status(400).json({ success: false, error: { code: 'CODE_EXPIRED', message: 'Code expired or not found. Please request a new one.' } });
+        return;
+      }
+
+      if (row.attempts >= MAX_ATTEMPTS) {
+        await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
+        res.status(400).json({ success: false, error: { code: 'TOO_MANY_ATTEMPTS', message: 'Too many attempts. Please request a new code.' } });
+        return;
+      }
+
+      if (row.code !== code) {
+        await execute(
+          `UPDATE verification_codes SET attempts = attempts + 1 WHERE id = $1`,
+          [row.id],
+        );
+        res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
+        return;
+      }
+
+      await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
+    }
 
     let user: any = null;
     let isNewUser = false;

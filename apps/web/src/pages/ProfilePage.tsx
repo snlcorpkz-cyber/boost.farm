@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
 import { api } from '../lib/api';
 import { AVATAR_IMAGES } from '../lib/assets';
@@ -17,6 +18,7 @@ export default function ProfilePage() {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const { data: farmData } = useQuery({
     queryKey: ['farm'],
@@ -33,8 +35,13 @@ export default function ProfilePage() {
   };
 
   const handleDelete = async () => {
-    await api('/user/account', { method: 'DELETE' });
-    logout();
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await api('/user/account', { method: 'DELETE' });
+    } finally {
+      logout();
+    }
   };
 
   return (
@@ -135,27 +142,73 @@ export default function ProfilePage() {
           {t('profile.logout')} →
         </button>
 
-        {/* Danger zone - buried deep */}
-        <div className="mt-8 pt-8 border-t border-gray-100">
+        {/* Account deletion — Play Store requires this control to be
+            reachable, but we keep it muted (gray, non-bold) so casual users
+            don't tap it by accident. Confirmation happens in a centered modal,
+            not inline, so it's clearly an intentional action. */}
+        <div className="mt-8 pt-6 border-t border-gray-100">
           <button
-            className="text-xs text-gray-300 hover:text-red-400 transition-colors"
-            onClick={() => setShowDelete(!showDelete)}
+            className="w-full text-center text-xs text-gray-400 hover:text-gray-600 transition-colors py-2"
+            onClick={() => setShowDelete(true)}
           >
             {t('profile.delete_account')}
           </button>
-          {showDelete && (
-            <div className="mt-3 bg-red-50 rounded-xl p-3 border border-red-200">
-              <p className="text-xs text-red-600 mb-2">This action is irreversible.</p>
-              <button
-                className="bg-red-500 text-white text-xs font-bold px-4 py-2 rounded-lg"
-                onClick={handleDelete}
-              >
-                Confirm Delete
-              </button>
-            </div>
-          )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {showDelete && (
+          <>
+            <motion.div
+              className="fixed inset-0 bg-black/40 z-[90]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !deleting && setShowDelete(false)}
+            />
+            <motion.div
+              className="fixed inset-0 z-[91] flex items-center justify-center px-6 pointer-events-none"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <motion.div
+                className="bg-white rounded-3xl shadow-2xl w-full max-w-[340px] p-6 pointer-events-auto"
+                initial={{ scale: 0.9, y: 16 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 16 }}
+                transition={{ type: 'spring', damping: 24, stiffness: 340 }}
+              >
+                <h3 className="text-base font-bold text-gray-800 text-center mb-2">
+                  {t('profile.delete_confirm_title', 'Delete account?')}
+                </h3>
+                <p className="text-sm text-gray-500 text-center mb-5 leading-relaxed">
+                  {t(
+                    'profile.delete_confirm_body',
+                    'Your account, farm progress, friends and push subscriptions will be permanently removed. This cannot be undone.',
+                  )}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-sm font-semibold hover:bg-gray-200 transition-colors disabled:opacity-50"
+                    onClick={() => setShowDelete(false)}
+                    disabled={deleting}
+                  >
+                    {t('profile.delete_no', 'No')}
+                  </button>
+                  <button
+                    className="flex-1 py-2.5 rounded-xl bg-gray-700 text-white text-sm font-semibold hover:bg-gray-800 transition-colors disabled:opacity-50"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                  >
+                    {deleting ? '…' : t('profile.delete_yes', 'Yes')}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       <BottomNav />
     </div>

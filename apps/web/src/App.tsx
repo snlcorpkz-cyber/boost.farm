@@ -11,6 +11,7 @@ import QuestsPage from './pages/QuestsPage';
 import FriendsPage from './pages/FriendsPage';
 import FriendFarmPage from './pages/FriendFarmPage';
 import ProfilePage from './pages/ProfilePage';
+import ReferralLandingPage from './pages/ReferralLandingPage';
 
 const ONBOARDING_KEY = 'eco_onboarding_done';
 
@@ -108,11 +109,25 @@ export default function App() {
     };
   }, [isAuthenticated]);
 
-  if (isLoading) {
+  // Referral landing must work for both authed and unauthed users — and on
+  // mobile browsers before the app is even installed. Route it before the
+  // auth gate so visitors from a share link always land here.
+  const isReferralLanding = /^\/r\//.test(window.location.pathname);
+
+  if (isLoading && !isReferralLanding) {
     return (
       <div className="h-full flex items-center justify-center bg-farm-green/10">
         <img src="/assets/logo.webp" alt="Boost Farm" className="w-40 h-auto animate-pulse" />
       </div>
+    );
+  }
+
+  if (isReferralLanding) {
+    return (
+      <Routes>
+        <Route path="/r/:code" element={<ReferralLandingPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     );
   }
 

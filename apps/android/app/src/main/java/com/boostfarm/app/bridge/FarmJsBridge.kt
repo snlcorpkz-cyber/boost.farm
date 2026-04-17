@@ -12,6 +12,7 @@ import android.webkit.WebView
 import com.boostfarm.app.BuildConfig
 import com.boostfarm.app.ads.OfferwallPort
 import com.boostfarm.app.ads.RewardedAdsPort
+import com.boostfarm.app.referrer.InstallReferrerHelper
 import org.json.JSONObject
 
 /**
@@ -93,6 +94,35 @@ class FarmJsBridge(
         }
     }
 
+    /**
+     * Returns the cached Play Install Referrer as a JSON string:
+     *   { refCode, raw, utmSource, utmMedium, utmCampaign, clickTs, installTs, processed }
+     * `refCode` is the value the web signup flow should pass as `refCode` to
+     * /auth/verify-code so the referral is attributed automatically.
+     *
+     * Returns an empty JSON object if there's no referrer (organic install).
+     */
+    @JavascriptInterface
+    fun getInstallReferrer(): String {
+        val snap = InstallReferrerHelper.snapshot(webView.context)
+        val obj = JSONObject()
+        for ((k, v) in snap) {
+            if (v == null) continue
+            obj.put(k, v)
+        }
+        return obj.toString()
+    }
+
+    /**
+     * Called by the web layer after it has successfully used the referrer code
+     * during signup. Clears the cached code so it can't be accidentally
+     * re-applied on a second account from the same device.
+     */
+    @JavascriptInterface
+    fun consumeInstallReferrer() {
+        InstallReferrerHelper.markConsumed(webView.context)
+    }
+
     @JavascriptInterface
     fun requestRewardedAd(json: String) {
         val placement = parsePlacement(json)
@@ -142,8 +172,10 @@ class FarmJsBridge(
          *
          * v3: rewarded/offerwall callbacks now forward the caller-supplied
          *      `requestId` so concurrent requests don't clobber each other.
+         * v4: added getInstallReferrer / consumeInstallReferrer for automatic
+         *      Google Play Install Referrer attribution.
          */
-        const val BRIDGE_API_VERSION = 3
+        const val BRIDGE_API_VERSION = 4
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?) {

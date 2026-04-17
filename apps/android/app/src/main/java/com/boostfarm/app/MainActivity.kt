@@ -4,19 +4,26 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.boostfarm.app.ads.AdMobRewardedAds
 import com.boostfarm.app.ads.StubOfferwall
 import com.boostfarm.app.bridge.FarmJsBridge
+import com.boostfarm.app.referrer.InstallReferrerHelper
 import com.google.android.gms.ads.MobileAds
 import com.google.firebase.messaging.FirebaseMessaging
 
@@ -28,8 +35,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Android 15 (API 35) forces edge-to-edge, so without inset handling
+        // the system navigation bar overlaps the bottom of the WebView and
+        // eats interactive UI. We opt-in explicitly here so behaviour is
+        // consistent on older devices too, then pad the WebView below.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         requestNotificationPermission()
         MobileAds.initialize(this) {}
+
+        // Fire-and-forget: grabs the Play Store install referrer on first launch
+        // and caches it. Web layer picks it up via the JS bridge during signup.
+        InstallReferrerHelper.fetchOnce(applicationContext)
 
         webView = WebView(this)
         webView.settings.apply {
@@ -72,8 +89,38 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Wrap the WebView in a FrameLayout that we pad with the system bar /
+        // display cutout insets. Doing it on a plain container (instead of on
+        // the WebView itself) is the reliable pattern — some WebView
+        // implementations consume or swallow the insets callback before our
+        // listener fires, which is what produced the overlap screenshots we
+        // saw on Xiaomi/HyperOS devices. The black background fills the
+        // padded edges so nothing looks washed-out behind the status /
+        // navigation bars.
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            fitsSystemWindows = false
+        }
+        root.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+
         webView.loadUrl(BuildConfig.WEB_APP_URL)
-        setContentView(webView)
+        setContentView(root)
+        ViewCompat.requestApplyInsets(root)
     }
 
     private fun requestNotificationPermission() {

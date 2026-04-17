@@ -12,6 +12,8 @@ type AndroidBridge = {
   reload?: () => void;
   clearCache?: () => void;
   vibrate?: (ms: number) => void;
+  getInstallReferrer?: () => string;
+  consumeInstallReferrer?: () => void;
 };
 
 function bridge(): AndroidBridge | null {
@@ -95,6 +97,43 @@ export const haptics = {
   success: () => vibrate(15),
   error: () => vibrate(80),
 };
+
+// ────────────────────────────────────────────────────────────
+// Google Play Install Referrer (bridge API v4+).
+// Captures the `ref` code passed via a Play Store referral link so a fresh
+// install is attributed to the inviter without manual code entry.
+// ────────────────────────────────────────────────────────────
+
+export interface InstallReferrer {
+  refCode?: string;
+  raw?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  clickTs?: number;
+  installTs?: number;
+  processed?: boolean;
+}
+
+/** Reads the Play Install Referrer from the native side. Null on web / old bridge. */
+export function getInstallReferrer(): InstallReferrer | null {
+  const b = bridge();
+  if (!b?.getInstallReferrer) return null;
+  try {
+    const raw = b.getInstallReferrer();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InstallReferrer;
+    return parsed && Object.keys(parsed).length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tells native side to clear the stored referrer after the server applied it. */
+export function consumeInstallReferrer(): void {
+  const b = bridge();
+  try { b?.consumeInstallReferrer?.(); } catch { /* ignore */ }
+}
 
 // ────────────────────────────────────────────────────────────
 // H-2: requestId-based routing of rewarded / offerwall callbacks.

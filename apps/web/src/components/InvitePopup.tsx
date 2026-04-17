@@ -13,12 +13,17 @@ interface InvitePopupProps {
 export default function InvitePopup({ open, onClose }: InvitePopupProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const { data: inviteData } = useQuery({
     queryKey: ['invite-code'],
     queryFn: () => api<{ code: string }>('/friends/invite-code'),
     enabled: open,
   });
+
+  const inviteLink = inviteData?.code
+    ? `${window.location.origin}/r/${inviteData.code}`
+    : '';
 
   const copyCode = async () => {
     if (!inviteData?.code) return;
@@ -27,6 +32,33 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch { /* fallback: ignore */ }
+  };
+
+  const copyLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  // Use the native Web Share API on mobile — opens the share sheet and lets
+  // the user send the link via WhatsApp / Telegram / SMS / etc. in one tap.
+  const shareLink = async () => {
+    if (!inviteLink) return;
+    const anyNav = navigator as any;
+    if (typeof anyNav.share === 'function') {
+      try {
+        await anyNav.share({
+          title: 'Boost Farm',
+          text: "Join me on Boost Farm and we both get a bonus!",
+          url: inviteLink,
+        });
+        return;
+      } catch { /* user cancelled */ }
+    }
+    copyLink();
   };
 
   return (
@@ -84,6 +116,31 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
                         {copied ? t('ref.copied') : t('ref.copy_code')}
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Invite link — Play Store attribution built-in */}
+                {inviteData && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Invite link</p>
+                    <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2">
+                      <span className="flex-1 text-xs font-medium text-gray-700 truncate">{inviteLink}</span>
+                      <button
+                        className="shrink-0 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
+                        onClick={copyLink}
+                      >
+                        {linkCopied ? t('ref.copied') : 'Copy'}
+                      </button>
+                    </div>
+                    <button
+                      className="mt-2 w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold py-2.5 rounded-xl text-sm shadow-md active:scale-95 transition-transform"
+                      onClick={shareLink}
+                    >
+                      Share link
+                    </button>
+                    <p className="text-[10px] text-gray-400 mt-1.5 text-center">
+                      When a friend installs via your link, you both get the bonus automatically.
+                    </p>
                   </div>
                 )}
 
