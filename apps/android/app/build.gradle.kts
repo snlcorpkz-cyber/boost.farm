@@ -39,17 +39,24 @@ android {
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
 
-        // AdMob: test IDs until account is approved; then switch to production IDs
-        // Production Water: ca-app-pub-3079122554551679/6905057993
-        // Production Fert:  ca-app-pub-3079122554551679/2742451701
-        buildConfigField("String", "ADMOB_REWARDED_WATER", "\"ca-app-pub-3940256099942544/5224354917\"")
-        buildConfigField("String", "ADMOB_REWARDED_FERT", "\"ca-app-pub-3940256099942544/5224354917\"")
+        // Unity LevelPlay (ironSource) single per-app key. Placements are named in
+        // the LevelPlay dashboard (water_popup, fert_popup). Key is read from
+        // apps/android/keystore.properties (gitignored) so it never lands in git.
+        // Leave blank during bootstrap — code falls back to StubRewardedAds /
+        // StubOfferwall so debug builds keep working without a key.
+        val levelPlayAppKey = (keystoreProps["levelPlayAppKey"] as String?) ?: ""
+        buildConfigField("String", "LEVELPLAY_APP_KEY", "\"$levelPlayAppKey\"")
     }
 
+    // Release signing is opt-in: only wire it up when keystore.properties
+    // actually contains the storeFile entry. This lets us reuse the same
+    // keystore.properties file just for `levelPlayAppKey` during dev without
+    // forcing every contributor to also have the upload keystore.
+    val releaseStoreFile = keystoreProps["storeFile"] as String?
     signingConfigs {
         create("release") {
-            if (keystorePropsFile.exists()) {
-                storeFile = rootProject.file(keystoreProps["storeFile"] as String)
+            if (!releaseStoreFile.isNullOrBlank()) {
+                storeFile = rootProject.file(releaseStoreFile)
                 storePassword = keystoreProps["storePassword"] as String
                 keyAlias = keystoreProps["keyAlias"] as String
                 keyPassword = keystoreProps["keyPassword"] as String
@@ -61,7 +68,7 @@ android {
         release {
             // R8 shrinks + obfuscates Kotlin code in release AABs, so a
             // decompiled bundle shows `a.b.c()` instead of readable names.
-            // Keep rules for WebView JS bridge / Firebase / AdMob live in
+            // Keep rules for WebView JS bridge / Firebase / LevelPlay live in
             // proguard-rules.pro.
             isMinifyEnabled = true
             isShrinkResources = true
@@ -69,7 +76,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (keystorePropsFile.exists()) {
+            if (!releaseStoreFile.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
@@ -97,7 +104,35 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
 
-    implementation("com.google.android.gms:play-services-ads:24.1.0")
+    // ─────────────────────────────────────────────────────────────
+    // Unity LevelPlay (ironSource mediation). Replaces the previous
+    // play-services-ads (AdMob standalone) integration. Placements are
+    // configured in the LevelPlay dashboard and referenced by name from
+    // the web layer (water_popup, fert_popup).
+    //
+    // ironSource Ads itself is bundled with the mediation SDK — no extra
+    // adapter needed for the default network. To plug in additional
+    // networks (AppLovin / AdMob / Meta / Pangle / Mintegral / Unity Ads),
+    // grab the auto-generated dependency snippet from:
+    //   LevelPlay dashboard → Setup → Mediation Networks → Get script
+    // and paste it below. Each adapter must match a specific network SDK
+    // version, so let the dashboard pick the matrix for you.
+    //
+    // SDK changelog: https://developers.is.com/ironsource-mobile/android/sdk-change-log/
+    //
+    // We pin the 8.x line (last release: 8.12.0) because LevelPlay 9.x
+    // removed the legacy IronSource.* API (IronSource.init,
+    // showRewardedVideo, OfferwallListener, …) in favour of per-placement
+    // LevelPlayRewardedAd objects identified by ad-unit IDs. Migrating to
+    // 9.x is a separate task — it forces creating real ad units in the
+    // dashboard and threading their IDs through BuildConfig.
+    // ─────────────────────────────────────────────────────────────
+    implementation("com.unity3d.ads-mediation:mediation-sdk:8.12.0")
+
+    // Required by ironSource for advertising-ID lookup on Google Play
+    // devices (also a dependency of every Google-family adapter).
+    implementation("com.google.android.gms:play-services-basement:18.5.0")
+    implementation("com.google.android.gms:play-services-ads-identifier:18.1.0")
 
     // Google Play Install Referrer — attributes installs back to a referral link
     // like https://play.google.com/store/apps/details?id=...&referrer=CODE.

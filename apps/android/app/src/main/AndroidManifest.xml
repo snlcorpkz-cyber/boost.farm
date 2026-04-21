@@ -14,11 +14,8 @@
         android:theme="@style/Theme.BoostFarm"
         android:usesCleartextTraffic="false">
 
-        <!-- AdMob App ID: test ID until account approved -->
-        <!-- Production: ca-app-pub-3079122554551679~5565499122 -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713"/>
+        <!-- Ads are handled by Unity LevelPlay (ironSource) — initialization is
+             purely runtime in MainActivity, no manifest meta-data required. -->
 
         <!-- FCM: default icon & channel for notifications when app is killed -->
         <meta-data
