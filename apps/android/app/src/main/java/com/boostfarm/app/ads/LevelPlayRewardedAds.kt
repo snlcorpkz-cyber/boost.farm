@@ -4,6 +4,8 @@ import android.app.Activity
 import android.util.Log
 import com.ironsource.mediationsdk.IronSource
 import com.ironsource.mediationsdk.adunit.adapter.utility.AdInfo
+import com.ironsource.mediationsdk.impressionData.ImpressionData
+import com.ironsource.mediationsdk.impressionData.ImpressionDataListener
 import com.ironsource.mediationsdk.logger.IronSourceError
 import com.ironsource.mediationsdk.model.Placement
 import com.ironsource.mediationsdk.sdk.LevelPlayRewardedVideoListener
@@ -31,6 +33,11 @@ class LevelPlayRewardedAds(
     private var currentCallback: ((Boolean) -> Unit)? = null
     private var rewardedThisSession = false
     private var currentPlacement: String? = null
+    // ILRD can arrive after onAdClosed (which clears currentPlacement via
+    // deliver()), so we keep a separate "last shown" pointer that lives
+    // until the next successful show. This is what gets tagged onto the
+    // revenue event so it attributes to the right placement.
+    @Volatile private var lastShownPlacement: String? = null
 
     init {
         IronSource.setLevelPlayRewardedVideoListener(object : LevelPlayRewardedVideoListener {
@@ -114,6 +121,40 @@ class LevelPlayRewardedAds(
                 )
             }
         })
+
+        // Impression-Level Revenue Data (ILRD) — one callback per filled
+        // impression across ALL ad units (rewarded / interstitial / banner).
+        // Revenue is reported in USD from ironSource and must be converted
+        // to integer cents on the web layer before hitting /api/track. We
+        // also pair the impression with the *currently playing* placement
+        // (water_popup / fert_popup / bucket_collect / quest) because the
+        // SDK's own `placement` field is the ironSource dashboard placement
+        // name, not our product placement.
+        IronSource.addImpressionDataListener(object : ImpressionDataListener {
+            override fun onImpressionSuccess(data: ImpressionData?) {
+                if (data == null) return
+                Log.d(
+                    TAG,
+                    "ILRD network=${data.adNetwork} revenue=${data.revenue} precision=${data.precision}",
+                )
+                adEventSink.emit(
+                    "revenue",
+                    mapOf(
+                        "placement" to (currentPlacement ?: lastShownPlacement),
+                        "network" to data.adNetwork,
+                        "ad_unit" to data.adUnit,
+                        "revenue" to data.revenue,
+                        "precision" to data.precision,
+                        "country" to data.country,
+                        "instance" to data.instanceName,
+                        "impression_id" to data.auctionId,
+                        "ab" to data.ab,
+                        "segment" to data.segmentName,
+                        "mediation_placement" to data.placement,
+                    ),
+                )
+            }
+        })
     }
 
     override fun showRewarded(placement: String, onFinished: (Boolean) -> Unit) {
@@ -152,6 +193,7 @@ class LevelPlayRewardedAds(
             }
             currentCallback = onFinished
             currentPlacement = placement
+            lastShownPlacement = placement
             rewardedThisSession = false
             IronSource.showRewardedVideo(activity, placement)
         }

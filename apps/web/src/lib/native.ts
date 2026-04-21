@@ -193,8 +193,23 @@ export function installAdEventForwarder(): void {
       const placement: string | undefined =
         typeof meta.placement === 'string' ? meta.placement : undefined;
       const { placement: _p, ...rest } = meta;
+
+      // ILRD revenue payload arrives in USD — convert to integer cents so
+      // the backend can sum it cheaply in SQL (events.revenue_cents is int).
+      // We also keep the original USD number under `revenue_usd` in props
+      // for debugging/export.
+      let options: { placement?: string; revenueCents?: number } | undefined =
+        placement ? { placement } : undefined;
+      if (state === 'revenue' && typeof rest.revenue === 'number' && Number.isFinite(rest.revenue)) {
+        const cents = Math.round(rest.revenue * 100);
+        rest.revenue_usd = rest.revenue;
+        rest.revenue_cents = cents;
+        delete rest.revenue;
+        options = { ...(options ?? {}), revenueCents: cents };
+      }
+
       import('./track').then(({ trackClient }) => {
-        trackClient(`ad.${state}`, rest, placement ? { placement } : undefined);
+        trackClient(`ad.${state}`, rest, options);
       }).catch(() => { /* ignore */ });
     } catch { /* ignore */ }
   };

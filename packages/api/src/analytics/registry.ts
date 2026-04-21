@@ -81,6 +81,22 @@ export const EVENT_REGISTRY: readonly EventSpec[] = [
     description: 'Server successfully credited the reward in response to /farm/ad-reward or collect-bucket.',
     props: ['placement', 'type', 'amount', 'idempotencyKey'],
   },
+  {
+    name: 'ad.revenue',
+    category: 'ads',
+    description:
+      'ironSource Impression-Level Revenue Data (ILRD) for a rewarded impression. Fired once per filled impression. `revenue_cents` carries the eCPM-derived net revenue in USD cents.',
+    props: [
+      'placement',
+      'network',
+      'ad_unit',
+      'precision',
+      'country',
+      'instance',
+      'impression_id',
+      'ab',
+    ],
+  },
 
   // ── Onboarding funnel ───────────────────────────────────────────
   {
