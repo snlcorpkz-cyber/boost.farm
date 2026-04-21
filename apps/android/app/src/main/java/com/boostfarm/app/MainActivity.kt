@@ -30,6 +30,10 @@ import com.google.firebase.messaging.FirebaseMessaging
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    // Set when the activity is (re)opened by tapping a push. Consumed once
+    // `onPageFinished` fires so the web layer can report the open to the API.
+    private var pendingCampaignId: String? = null
+    private var pageLoaded: Boolean = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +47,8 @@ class MainActivity : AppCompatActivity() {
 
         requestNotificationPermission()
         MobileAds.initialize(this) {}
+
+        pendingCampaignId = intent?.getStringExtra("campaign_id")
 
         // Fire-and-forget: grabs the Play Store install referrer on first launch
         // and caches it. Web layer picks it up via the JS bridge during signup.
@@ -67,7 +73,9 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                pageLoaded = true
                 injectFcmToken()
+                dispatchPendingPushOpenedIfAny()
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -121,6 +129,33 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(BuildConfig.WEB_APP_URL)
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val cid = intent.getStringExtra("campaign_id")
+        if (!cid.isNullOrBlank()) {
+            pendingCampaignId = cid
+            if (pageLoaded) dispatchPendingPushOpenedIfAny()
+        }
+    }
+
+    // Fires a CustomEvent on the WebView so the React layer (see useAuth)
+    // can POST to /user/push-opened. Only runs after the page reports
+    // finished, otherwise the dispatch lands before any listeners attach.
+    private fun dispatchPendingPushOpenedIfAny() {
+        val cid = pendingCampaignId ?: return
+        pendingCampaignId = null
+        val escaped = cid.replace("\\", "\\\\").replace("\"", "\\\"")
+        val script = """
+            (function(){
+              try {
+                window.dispatchEvent(new CustomEvent('push-opened', { detail: "$escaped" }));
+              } catch (e) {}
+            })();
+        """.trimIndent()
+        webView.post { webView.evaluateJavascript(script, null) }
     }
 
     private fun requestNotificationPermission() {

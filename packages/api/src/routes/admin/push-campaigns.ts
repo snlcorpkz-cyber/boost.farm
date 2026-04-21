@@ -231,6 +231,25 @@ async function sendCampaign(campaign: any): Promise<void> {
       const batch = tokens.slice(i, i + batchSize);
       const userIds = batch.map((t: any) => t.user_id);
 
+      // Mirror the push into the in-app inbox so users who tap the bell
+      // icon see the campaign even if they swiped the system notification
+      // away (or never got one, e.g. web / notifications disabled).
+      try {
+        const payload = JSON.stringify({
+          message_key: 'notif.campaign',
+          title: campaign.title,
+          body: campaign.body,
+          campaign_id: campaign.id,
+        });
+        await execute(
+          `INSERT INTO notifications (user_id, type, payload)
+           SELECT unnest($1::uuid[]), 'campaign', $2::jsonb`,
+          [userIds, payload]
+        );
+      } catch (err) {
+        console.warn('[sendCampaign] inbox insert failed:', (err as Error).message);
+      }
+
       try {
         await sendPushBatch(
           userIds,

@@ -68,6 +68,41 @@ export default function App() {
     tg.expand();
   }, [isAuthenticated]);
 
+  // Push open tracking. The native Android layer (MainActivity.kt) fires a
+  // `push-opened` CustomEvent on window after the WebView page finishes,
+  // carrying the `campaign_id` from the FCM data payload. We POST it back
+  // so the admin can see delivery → open conversion per campaign.
+  // Events that arrive before this effect mounts are buffered on
+  // `window.__pushOpenedQueue` by the native dispatcher (see MainActivity).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const report = (campaignId: string) => {
+      if (!campaignId) return;
+      api('/user/push-opened', {
+        method: 'POST',
+        body: JSON.stringify({ campaignId }),
+      }).catch(() => { /* ignore — best-effort analytics */ });
+    };
+
+    const queue = (window as any).__pushOpenedQueue as string[] | undefined;
+    if (Array.isArray(queue) && queue.length) {
+      queue.splice(0).forEach(report);
+    }
+    (window as any).__pushOpenedQueue = { push: report } as any;
+
+    const onEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail === 'string') report(detail);
+    };
+    window.addEventListener('push-opened', onEvent as EventListener);
+
+    return () => {
+      window.removeEventListener('push-opened', onEvent as EventListener);
+      (window as any).__pushOpenedQueue = undefined;
+    };
+  }, [isAuthenticated]);
+
   // Session heartbeat — pings the server every 60s while the app is in the
   // foreground so the analytics session stays open with an accurate duration.
   // We also ping on focus/visibilitychange because WebView throttles setInterval

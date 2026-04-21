@@ -30,10 +30,10 @@ class FcmService : FirebaseMessagingService() {
             ?: message.data["body"]
             ?: return
 
-        showNotification(title, body)
+        showNotification(title, body, message.data)
     }
 
-    private fun showNotification(title: String, body: String) {
+    private fun showNotification(title: String, body: String, data: Map<String, String>) {
         val channelId = "boostfarm_default"
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
@@ -51,12 +51,18 @@ class FcmService : FirebaseMessagingService() {
             manager.createNotificationChannel(channel)
         }
 
+        // Forward FCM data payload as Intent extras so MainActivity can
+        // pick up `campaign_id` and tell the backend the push was opened.
+        // Without this, admin-campaign open-rates stay stuck at 0.
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            for ((k, v) in data) putExtra(k, v)
         }
         val pending = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            this,
+            System.currentTimeMillis().toInt(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notification = NotificationCompat.Builder(this, channelId)

@@ -34,6 +34,7 @@ const NOTIF_ICON: Record<string, { src: string; bg: string }> = {
   invite: { src: UI.greetHand, bg: 'bg-pink-100' },
   gift: { src: UI.gift, bg: 'bg-orange-100' },
   game: { src: UI.gift, bg: 'bg-indigo-100' },
+  campaign: { src: UI.bell, bg: 'bg-amber-50' },
 };
 
 const LANGUAGES = [
@@ -303,9 +304,27 @@ export default function NotificationsPopup({
                         >
                           {getIcon(n)}
                           <div className="flex-1 min-w-0">
-                            <p className={`text-sm leading-snug ${n.read ? 'text-amber-800/70' : 'text-amber-900 font-semibold'}`}>
-                              {t(n.message_key, translateParams(n))}
-                            </p>
+                            {/* Admin-broadcast campaigns carry raw title/body
+                                from the dashboard — render them verbatim and
+                                skip the i18n lookup (the key is filler). */}
+                            {n.type === 'campaign' && (n.params.title || n.params.body) ? (
+                              <>
+                                {n.params.title && (
+                                  <p className={`text-sm leading-snug ${n.read ? 'text-amber-800/70' : 'text-amber-900 font-semibold'}`}>
+                                    {String(n.params.title)}
+                                  </p>
+                                )}
+                                {n.params.body && (
+                                  <p className={`text-xs leading-snug mt-0.5 ${n.read ? 'text-amber-700/60' : 'text-amber-800/80'}`}>
+                                    {String(n.params.body)}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <p className={`text-sm leading-snug ${n.read ? 'text-amber-800/70' : 'text-amber-900 font-semibold'}`}>
+                                {t(n.message_key, translateParams(n))}
+                              </p>
+                            )}
                             <p className="text-[10px] text-amber-600/60 mt-0.5">
                               {timeAgo(n.created_at, t)}
                             </p>
