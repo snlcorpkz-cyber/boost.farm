@@ -170,7 +170,11 @@ export async function aggregateAdFunnel(): Promise<void> {
        WHERE e.event_name LIKE 'ad.%'
          AND e.created_at >= (current_date - interval '2 days')::date
          AND e.created_at  < current_date
-       GROUP BY stat_date, platform, placement, ad_unit`,
+       -- GROUP BY ordinals instead of aliases: the alias names platform
+       -- and placement collide with real columns on events (migration
+       -- 020), and Postgres resolves to the column, not the alias, which
+       -- leaves the JSON-fallback branch un-aggregated and throws 42803.
+       GROUP BY 1, 2, 3, 4`,
     );
 
     console.log(

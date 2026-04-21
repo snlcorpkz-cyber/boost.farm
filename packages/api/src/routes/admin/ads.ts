@@ -36,6 +36,12 @@ adminAdsRouter.get('/funnel', async (req, res) => {
       [days],
     );
 
+    // IMPORTANT: we GROUP BY ordinals (1,2,3) instead of the aliases
+    // `platform` / `placement` / `ad_unit` because those alias names
+    // collide with real columns on `events` (added in migration 020).
+    // Postgres resolves `GROUP BY platform` to the column, not the alias,
+    // which leaves the `e.device->>'platform'` branch of the coalesce
+    // un-aggregated and throws 42803.
     const todayByDim = await query<any>(
       `SELECT
          coalesce(e.platform, e.device->>'platform', 'unknown') AS platform,
@@ -52,7 +58,7 @@ adminAdsRouter.get('/funnel', async (req, res) => {
        FROM events e
        WHERE e.event_name LIKE 'ad.%'
          AND e.created_at::date = current_date
-       GROUP BY platform, placement, ad_unit`,
+       GROUP BY 1, 2, 3`,
     );
 
     const todayRows = todayByDim.map((r) => ({
