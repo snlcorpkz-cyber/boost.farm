@@ -83,10 +83,25 @@ userRouter.get('/notifications', async (req: Request, res: Response) => {
       payload = {};
     }
     const { message_key, ...params } = payload;
+
+    // Admin-broadcast push campaigns carry the real headline text inside
+    // payload.title / payload.body. We surface it through message_key so
+    // even older web clients — which just render t(n.message_key) without
+    // special-casing type='campaign' — show the actual message instead
+    // of the literal i18n key "notif.campaign".
+    let finalKey: string = message_key || `notif.${n.type}`;
+    if (n.type === 'campaign') {
+      const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+      const body = typeof payload.body === 'string' ? payload.body.trim() : '';
+      if (title && body) finalKey = `${title}\n${body}`;
+      else if (title) finalKey = title;
+      else if (body) finalKey = body;
+    }
+
     return {
       id: n.id,
       type: n.type,
-      message_key: message_key || `notif.${n.type}`,
+      message_key: finalKey,
       params,
       created_at: n.created_at,
       read: n.read,
