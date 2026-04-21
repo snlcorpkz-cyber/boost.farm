@@ -156,6 +156,39 @@ class FarmJsBridge(
         }
     }
 
+    /**
+     * Generic analytics event forwarder. The web layer calls
+     * `EcoFarmAndroid.track('ad.loaded', '{"placement":"water_popup"}')` which
+     * ultimately becomes a row in the server `events` table via
+     * `POST /api/track`. We re-dispatch to `window.__ecoFarmNative.onAdEvent`
+     * so the native path and the Kotlin ad listener share one sink.
+     *
+     * NOTE: this is a pass-through for future native-originated events
+     * (e.g. in-app-review prompt, crash survival marker). Today the only
+     * caller is LevelPlayRewardedAds via [AdEventSink] which bypasses this
+     * method entirely — we still expose it so web code can feature-detect
+     * arbitrary analytics from native.
+     */
+    @JavascriptInterface
+    fun track(name: String, propsJson: String) {
+        val props = runCatching { JSONObject(propsJson) }.getOrElse { JSONObject() }
+        val payload = JSONObject()
+            .put("state", name.removePrefix("ad."))
+            .put("meta", props)
+        val payloadStr = payload.toString()
+        val script = """
+            (function(){
+              var p = $payloadStr;
+              if (window.__ecoFarmNative && window.__ecoFarmNative.onAdEvent) {
+                window.__ecoFarmNative.onAdEvent(p);
+              }
+            })();
+        """.trimIndent()
+        webView.post {
+            webView.evaluateJavascript(script, null)
+        }
+    }
+
     private fun parsePlacement(json: String): String =
         runCatching { JSONObject(json).optString("placement", "default") }.getOrElse { "default" }
 
@@ -174,8 +207,12 @@ class FarmJsBridge(
          *      `requestId` so concurrent requests don't clobber each other.
          * v4: added getInstallReferrer / consumeInstallReferrer for automatic
          *      Google Play Install Referrer attribution.
+         * v5: ad lifecycle events forwarded to web via
+         *      `window.__ecoFarmNative.onAdEvent` + generic `track()` method
+         *      for native-originated analytics. Used by the product-analytics
+         *      funnel on the admin side (Ads → Funnel / Placements / Status).
          */
-        const val BRIDGE_API_VERSION = 4
+        const val BRIDGE_API_VERSION = 5
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?) {

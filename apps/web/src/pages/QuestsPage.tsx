@@ -8,6 +8,7 @@ import { api } from '../lib/api';
 import { UI } from '../lib/assets';
 import BottomNav from '../components/farm/BottomNav';
 import MockAdModal from '../components/MockAdModal';
+import { trackClient } from '../lib/track';
 
 const QUEST_ICONS: Record<string, string> = {
   checkin: '📋',
@@ -64,7 +65,12 @@ export default function QuestsPage() {
         method: 'POST',
         body: JSON.stringify({ type: vars.type, placement: 'quest', idempotencyKey: crypto.randomUUID() }),
       }),
-    onSuccess: () => {
+    onSuccess: (res: any, vars) => {
+      trackClient(
+        'ad.server_granted',
+        { type: vars.type, amount: res?.amount ?? 0, source: 'quest' },
+        { placement: 'quest' },
+      );
       qc.invalidateQueries({ queryKey: ['quests'] });
       qc.invalidateQueries({ queryKey: ['farm'] });
       qc.invalidateQueries({ queryKey: ['ad-limits'] });
@@ -86,6 +92,11 @@ export default function QuestsPage() {
   const handleQuestAction = (quest: any) => {
     const key = quest.quest_key;
     if (key === 'watch_ad') {
+      trackClient(
+        'ad.requested',
+        { ad_unit: 'rewarded', type: quest.reward_type, source: 'quest', quest_id: quest.id },
+        { placement: 'quest' },
+      );
       setAdQuest(quest);
       setAdOpen(true);
       return;
@@ -105,6 +116,8 @@ export default function QuestsPage() {
   const handleAdComplete = () => {
     if (adQuest) {
       const type: 'water' | 'nutrition' = adQuest.reward_type === 'nutrition' ? 'nutrition' : 'water';
+      trackClient('ad.rewarded', { fallback: true, source: 'quest', type }, { placement: 'quest' });
+      trackClient('quest.ad_watched', { quest_key: adQuest.quest_key, quest_id: adQuest.id });
       creditAdReward.mutate({ type });
       setAdQuest(null);
     }

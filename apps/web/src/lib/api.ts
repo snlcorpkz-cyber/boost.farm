@@ -4,6 +4,17 @@ let accessToken: string | null = localStorage.getItem('eco_token');
 let refreshToken: string | null = localStorage.getItem('eco_refresh');
 let isRefreshing: Promise<boolean> | null = null;
 
+function nativeAppVersion(): string | undefined {
+  try {
+    const bridge = (window as any).EcoFarmAndroid;
+    if (bridge?.getAppVersion) {
+      const parsed = JSON.parse(bridge.getAppVersion());
+      if (parsed && typeof parsed.versionName === 'string') return parsed.versionName;
+    }
+  } catch { /* ignore */ }
+  return undefined;
+}
+
 export function setToken(token: string | null) {
   accessToken = token;
   if (token) {
@@ -62,6 +73,7 @@ export async function api<T = any>(
       platform: (window as any).EcoFarmAndroid ? 'android' : 'web',
       screen: `${screen.width}x${screen.height}`,
       language: navigator.language,
+      appVersion: nativeAppVersion(),
     }),
     ...(options.headers as Record<string, string>),
   };

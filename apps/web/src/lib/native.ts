@@ -14,6 +14,8 @@ type AndroidBridge = {
   vibrate?: (ms: number) => void;
   getInstallReferrer?: () => string;
   consumeInstallReferrer?: () => void;
+  /** Generic analytics event forwarder (bridge API v5+). */
+  track?: (name: string, propsJson: string) => void;
 };
 
 function bridge(): AndroidBridge | null {
@@ -152,8 +154,16 @@ type RewardedCallback = (r: RewardedAdResult) => void;
 interface NativeCallbackRegistry {
   onRewardedFinished?: (payload: string | RewardedAdResult) => void;
   onOfferwallFinished?: (payload: string | RewardedAdResult) => void;
+  /**
+   * Granular ad-funnel event pushed from the native LevelPlay listener. The
+   * `state` corresponds to the event names used in the server-side event
+   * registry: requested | loaded | no_fill | shown | failed | closed |
+   * rewarded. `meta` carries placement, error codes, network, etc.
+   */
+  onAdEvent?: (payload: string | { state: string; meta?: Record<string, any> }) => void;
   __rewardedHandlers?: Map<string, RewardedCallback>;
   __fallbackRewarded?: RewardedCallback;
+  __adEventInstalled?: boolean;
 }
 
 function registry(): NativeCallbackRegistry {
@@ -162,10 +172,39 @@ function registry(): NativeCallbackRegistry {
   return (w.__ecoFarmNative ??= {}) as NativeCallbackRegistry;
 }
 
+/**
+ * Lazily registers the granular ad-event forwarder. Safe to call multiple
+ * times — the flag on `registry()` makes it idempotent.
+ *
+ * Note: we do a dynamic require via an async import inside the handler so
+ * that we never form a static import cycle with `lib/track` (which imports
+ * `getAppVersion` from this module).
+ */
+export function installAdEventForwarder(): void {
+  const reg = registry();
+  if (reg.__adEventInstalled) return;
+  reg.__adEventInstalled = true;
+  reg.onAdEvent = (raw) => {
+    try {
+      const payload = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!payload || typeof payload.state !== 'string') return;
+      const state = payload.state.trim();
+      const meta = (payload.meta && typeof payload.meta === 'object' ? payload.meta : {}) as Record<string, any>;
+      const placement: string | undefined =
+        typeof meta.placement === 'string' ? meta.placement : undefined;
+      const { placement: _p, ...rest } = meta;
+      import('./track').then(({ trackClient }) => {
+        trackClient(`ad.${state}`, rest, placement ? { placement } : undefined);
+      }).catch(() => { /* ignore */ });
+    } catch { /* ignore */ }
+  };
+}
+
 function installDispatcher(): void {
   const reg = registry();
   if (reg.__rewardedHandlers) return;
   reg.__rewardedHandlers = new Map();
+  installAdEventForwarder();
   reg.onRewardedFinished = (raw) => {
     let payload: RewardedAdResult;
     try {

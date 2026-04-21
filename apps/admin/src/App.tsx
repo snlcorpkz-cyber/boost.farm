@@ -12,9 +12,13 @@ import { PushCreatePage } from '@/pages/PushCreatePage';
 import { LogsPage } from '@/pages/LogsPage';
 import { RetentionPage } from '@/pages/RetentionPage';
 import { HealthPage } from '@/pages/HealthPage';
+import { AdsPage } from '@/pages/AdsPage';
+import { AcquisitionPage } from '@/pages/AcquisitionPage';
 
 const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
+  { to: '/ads', label: 'Ads', icon: '💰' },
+  { to: '/acquisition', label: 'Acquisition', icon: '🚀' },
   { to: '/retention', label: 'Retention', icon: '📈' },
   { to: '/users', label: 'Users', icon: '👥' },
   { to: '/offers', label: 'Offers', icon: '🎮' },
@@ -123,6 +127,8 @@ export default function App() {
         <main className="flex-1 overflow-auto p-4 md:p-8">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/ads" element={<AdsPage />} />
+            <Route path="/acquisition" element={<AcquisitionPage />} />
             <Route path="/retention" element={<RetentionPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserDetailPage />} />

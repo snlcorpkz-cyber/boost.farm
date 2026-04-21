@@ -20,11 +20,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.boostfarm.app.ads.AdEventSink
 import com.boostfarm.app.ads.LevelPlayRewardedAds
 import com.boostfarm.app.ads.OfferwallPort
 import com.boostfarm.app.ads.RewardedAdsPort
 import com.boostfarm.app.ads.StubOfferwall
 import com.boostfarm.app.ads.StubRewardedAds
+import com.boostfarm.app.ads.WebViewAdEventSink
 import com.boostfarm.app.bridge.FarmJsBridge
 import com.boostfarm.app.referrer.InstallReferrerHelper
 import com.google.firebase.messaging.FirebaseMessaging
@@ -80,8 +82,9 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
 
+        val adEventSink: AdEventSink = WebViewAdEventSink(webView)
         val rewarded: RewardedAdsPort =
-            if (lpKey.isBlank()) StubRewardedAds() else LevelPlayRewardedAds(this)
+            if (lpKey.isBlank()) StubRewardedAds() else LevelPlayRewardedAds(this, adEventSink)
         // Offerwall provider TBD — keep StubOfferwall until we plug a real
         // network in (LevelPlay 8.x dropped Offerwall support entirely).
         val offerwall: OfferwallPort = StubOfferwall()
