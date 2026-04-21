@@ -123,14 +123,15 @@ export default function App() {
     window.addEventListener('focus', onVisible);
 
     // Best-effort logout ping when the tab is closed — not guaranteed but
-    // catches most of the "user closed the tab" cases.
+    // catches most of the "user closed the tab" cases. Uses the same `/api`
+    // prefix the rest of the client does (nginx strips it to `/…`) and the
+    // correct localStorage key.
     const onBye = () => {
       try {
-        const url = (import.meta as any).env?.VITE_API_URL?.replace(/\/$/, '') || '';
-        const token = localStorage.getItem('eco_access_token');
+        const token = localStorage.getItem('eco_token');
         if (!token) return;
         const blob = new Blob(['{}'], { type: 'application/json' });
-        navigator.sendBeacon?.(`${url}/user/session-heartbeat`, blob);
+        navigator.sendBeacon?.(`/api/user/session-heartbeat`, blob);
       } catch { /* ignore */ }
     };
     window.addEventListener('pagehide', onBye);

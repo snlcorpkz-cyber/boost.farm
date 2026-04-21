@@ -20,11 +20,13 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import com.boostfarm.app.ads.AdEventSink
 import com.boostfarm.app.ads.LevelPlayRewardedAds
 import com.boostfarm.app.ads.OfferwallPort
 import com.boostfarm.app.ads.RewardedAdsPort
 import com.boostfarm.app.ads.StubOfferwall
 import com.boostfarm.app.ads.StubRewardedAds
+import com.boostfarm.app.ads.WebViewAdEventSink
 import com.boostfarm.app.bridge.FarmJsBridge
 import com.boostfarm.app.referrer.InstallReferrerHelper
 import com.google.firebase.messaging.FirebaseMessaging
@@ -50,6 +52,25 @@ class MainActivity : AppCompatActivity() {
 
         requestNotificationPermission()
 
+        pendingCampaignId = intent?.getStringExtra("campaign_id")
+
+        // Fire-and-forget: grabs the Play Store install referrer on first launch
+        // and caches it. Web layer picks it up via the JS bridge during signup.
+        InstallReferrerHelper.fetchOnce(applicationContext)
+
+        // WebView is created first so the AdEventSink can bind to it. The
+        // sink is how LevelPlayRewardedAds emits funnel events
+        // (requested/loaded/shown/rewarded/failed/no_fill/closed) that the
+        // product-analytics pipeline (/track) consumes.
+        webView = WebView(this)
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+        }
+
+        val adEventSink: AdEventSink = WebViewAdEventSink(webView)
+
         // Unity LevelPlay (ironSource) mediation. The app key is injected via
         // BuildConfig from apps/android/keystore.properties (gitignored). If
         // the key is blank we skip init and wire the Stub adapter below so
@@ -66,7 +87,7 @@ class MainActivity : AppCompatActivity() {
         val rewarded: RewardedAdsPort = if (lpKey.isBlank()) {
             StubRewardedAds()
         } else {
-            val adsPort = LevelPlayRewardedAds(this)
+            val adsPort = LevelPlayRewardedAds(this, adEventSink)
 
             // Auto-retry loads when the device swaps between wifi and
             // mobile — without this a lost network at cold start leaves
@@ -107,18 +128,6 @@ class MainActivity : AppCompatActivity() {
             adsPort
         }
 
-        pendingCampaignId = intent?.getStringExtra("campaign_id")
-
-        // Fire-and-forget: grabs the Play Store install referrer on first launch
-        // and caches it. Web layer picks it up via the JS bridge during signup.
-        InstallReferrerHelper.fetchOnce(applicationContext)
-
-        webView = WebView(this)
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
-        }
         // Offerwall provider TBD — keep StubOfferwall until we plug a real
         // network in (LevelPlay 8.x dropped Offerwall support entirely).
         val offerwall: OfferwallPort = StubOfferwall()

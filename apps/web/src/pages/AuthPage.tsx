@@ -3,8 +3,38 @@ import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
 import { getInstallReferrer, consumeInstallReferrer } from '../lib/native';
+import { trackClient } from '../lib/track';
 
 const REF_KEY = 'eco_ref_code';
+const UTM_KEY = 'eco_utm';
+
+interface CapturedUtm {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+}
+
+/**
+ * Snapshot UTM params from the URL and persist them so they ride along with
+ * every subsequent trackClient call via localStorage('eco_utm'). This is the
+ * only place we "stick" the attribution — we want the first-touch value.
+ */
+function captureUtmOnce(): CapturedUtm | null {
+  try {
+    const existing = localStorage.getItem(UTM_KEY);
+    if (existing) return JSON.parse(existing) as CapturedUtm;
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get('utm_source') || undefined;
+    const medium = params.get('utm_medium') || undefined;
+    const campaign = params.get('utm_campaign') || undefined;
+    if (!source && !medium && !campaign) return null;
+    const utm = { source, medium, campaign };
+    localStorage.setItem(UTM_KEY, JSON.stringify(utm));
+    return utm;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Priority order for resolving a referral code on the auth screen:
@@ -47,10 +77,15 @@ export default function AuthPage() {
   const [refCode, setRefCode] = useState<string | null>(null);
   const [friendCode, setFriendCode] = useState('');
 
+  const [utmSnapshot, setUtmSnapshot] = useState<CapturedUtm | null>(null);
+  const [installRefSnapshot, setInstallRefSnapshot] = useState<ReturnType<typeof getInstallReferrer> | null>(null);
+
   useEffect(() => {
     const captured = captureRefCode();
     setRefCode(captured);
     if (captured) setFriendCode(captured);
+    setUtmSnapshot(captureUtmOnce());
+    setInstallRefSnapshot(getInstallReferrer());
   }, []);
 
   const effectiveRef = friendCode || refCode || undefined;
@@ -64,6 +99,9 @@ export default function AuthPage() {
       await sendCode(email);
       setCode('');
       setStep('code');
+      // Pre-auth event: queued locally and flushed after login when the
+      // token is available. `has_ref_code` is the key funnel dimension.
+      trackClient('onboarding.code_sent', { has_ref_code: Boolean(effectiveRef) });
     } catch (err: any) {
       setError(err.message || 'Failed to send code');
     } finally {
@@ -78,6 +116,23 @@ export default function AuthPage() {
     try {
       await login(email, code, effectiveRef);
       localStorage.removeItem(REF_KEY);
+      // Emit attribution + onboarding events now that we have a valid token.
+      trackClient('onboarding.code_verified', { has_ref_code: Boolean(effectiveRef) });
+      if (utmSnapshot) {
+        trackClient('utm.captured', {
+          utm_source: utmSnapshot.source,
+          utm_medium: utmSnapshot.medium,
+          utm_campaign: utmSnapshot.campaign,
+        });
+      }
+      if (installRefSnapshot) {
+        trackClient('install.referrer_captured', {
+          utmSource: installRefSnapshot.utmSource,
+          utmMedium: installRefSnapshot.utmMedium,
+          utmCampaign: installRefSnapshot.utmCampaign,
+          hasRefCode: Boolean(installRefSnapshot.refCode),
+        });
+      }
       // Tell native side we've successfully used the install referrer so it
       // can't be replayed onto a second account from the same device.
       if (effectiveRef) consumeInstallReferrer();

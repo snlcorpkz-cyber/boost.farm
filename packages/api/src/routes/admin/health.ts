@@ -214,55 +214,58 @@ async function checkPushCron(): Promise<HealthCheck> {
   // Cron status is reported without touching Firebase internals — we only
   // look at when the cron last wrote a row. Firebase / FCM health is owned
   // by a parallel branch and intentionally NOT probed here.
+  //
+  // The actual table written by the cron is `push_sent_log` (migration 010),
+  // which stores (user_id, trigger_key, sent_date). A "fresh" row means a
+  // campaign was actually delivered, not just scheduled.
   try {
     const row = await withTimeout(
-      queryOne<{ last_run: string | null }>(
-        `SELECT max(created_at)::text AS last_run FROM push_logs`,
+      queryOne<{ last_sent: string | null }>(
+        `SELECT max(sent_date)::text AS last_sent FROM push_sent_log`,
       ),
       3_000,
       'push_cron',
     );
-    if (!row?.last_run) {
+    if (!row?.last_sent) {
       return {
         id: 'push_cron',
         label: 'Push cron',
         status: 'warn',
-        detail: 'No push_logs rows yet — cron has not executed a campaign',
+        detail: 'No push_sent_log rows yet — cron has not delivered any push',
       };
     }
-    const lastRun = new Date(row.last_run);
+    const lastRun = new Date(row.last_sent);
     const ageMs = Date.now() - lastRun.getTime();
     const hours = Math.round(ageMs / 3_600_000);
-    if (hours > 24) {
+    if (hours > 48) {
       return {
         id: 'push_cron',
         label: 'Push cron',
         status: 'warn',
-        detail: `Last push_logs entry was ${hours}h ago`,
+        detail: `Last push_sent_log entry was ${hours}h ago`,
       };
     }
     return {
       id: 'push_cron',
       label: 'Push cron',
       status: 'ok',
-      detail: `Last push_logs entry: ${lastRun.toISOString()}`,
+      detail: `Last push_sent_log entry: ${lastRun.toISOString().slice(0, 10)}`,
     };
   } catch (err: any) {
     const msg: string = err?.message ?? '';
-    // The push_logs table may not exist yet in fresh environments.
     if (msg.includes('relation') && msg.includes('does not exist')) {
       return {
         id: 'push_cron',
         label: 'Push cron',
         status: 'warn',
-        detail: 'push_logs table is missing — cron has never been run',
+        detail: 'push_sent_log table is missing — migration 010 not applied',
       };
     }
     return {
       id: 'push_cron',
       label: 'Push cron',
       status: 'warn',
-      detail: msg || 'Unable to read push_logs',
+      detail: msg || 'Unable to read push_sent_log',
     };
   }
 }

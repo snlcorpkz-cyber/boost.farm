@@ -7,6 +7,24 @@ interface DeviceInfo {
   screen?: string;
   language?: string;
   userAgent?: string;
+  appVersion?: string;
+}
+
+export interface EventExtras {
+  /** Override placement (ad context, modal origin, etc.). */
+  placement?: string | null;
+  /** Override platform when the caller knows better than the request header. */
+  platform?: string | null;
+  /** App version reported by the native bridge. */
+  appVersion?: string | null;
+  /** Revenue associated with the event in cents. */
+  revenueCents?: number | null;
+  /** Pre-parsed UTM params (fallback is the request headers). */
+  utm?: {
+    source?: string | null;
+    medium?: string | null;
+    campaign?: string | null;
+  };
 }
 
 export interface GeoInfo {
@@ -19,12 +37,35 @@ export interface GeoInfo {
 function parseDeviceInfo(req: Request): DeviceInfo {
   try {
     const raw = req.get('x-device-info');
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed as DeviceInfo;
+    }
   } catch { /* ignore */ }
   return {
     userAgent: req.get('user-agent') || '',
     platform: req.get('user-agent')?.includes('Android') ? 'android' : 'web',
   };
+}
+
+function parseUtmFromRequest(req: Request): {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+} {
+  const raw = req.get('x-utm');
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        source: typeof parsed.source === 'string' ? parsed.source : undefined,
+        medium: typeof parsed.medium === 'string' ? parsed.medium : undefined,
+        campaign: typeof parsed.campaign === 'string' ? parsed.campaign : undefined,
+      };
+    }
+  } catch { /* ignore */ }
+  return {};
 }
 
 /**
@@ -80,6 +121,7 @@ export async function trackEvent(
   properties: Record<string, any> = {},
   req?: Request,
   sessionId?: string,
+  extras?: EventExtras,
 ): Promise<void> {
   try {
     const device = req ? parseDeviceInfo(req) : {};
@@ -87,9 +129,27 @@ export async function trackEvent(
     const ip = req ? getIp(req) : null;
     const sid = sessionId || (req as any)?.user?.sessionId || null;
 
+    // Prefer explicit extras, fall back to device/header signals. Keeps NULL
+    // in the DB for truly unknown values so aggregation queries behave sanely.
+    const platform = extras?.platform ?? device.platform ?? null;
+    const appVersion = extras?.appVersion ?? device.appVersion ?? null;
+    const placement = extras?.placement ?? null;
+    const revenueCents = extras?.revenueCents ?? null;
+    const headerUtm = req ? parseUtmFromRequest(req) : {};
+    const utmSource = extras?.utm?.source ?? headerUtm.source ?? null;
+    const utmMedium = extras?.utm?.medium ?? headerUtm.medium ?? null;
+    const utmCampaign = extras?.utm?.campaign ?? headerUtm.campaign ?? null;
+
     await execute(
-      `INSERT INTO events (user_id, event_name, properties, device, geo, session_id, ip)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::inet)`,
+      `INSERT INTO events (
+         user_id, event_name, properties, device, geo, session_id, ip,
+         platform, app_version, placement, revenue_cents,
+         utm_source, utm_medium, utm_campaign
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7::inet,
+         $8, $9, $10, $11,
+         $12, $13, $14
+       )`,
       [
         userId,
         eventName,
@@ -98,6 +158,13 @@ export async function trackEvent(
         JSON.stringify(geo),
         sid,
         ip,
+        platform,
+        appVersion,
+        placement,
+        revenueCents,
+        utmSource,
+        utmMedium,
+        utmCampaign,
       ],
     );
 
@@ -188,14 +255,25 @@ export async function enrichUserProfile(userId: string, req: Request): Promise<v
   try {
     const geo = resolveGeo(req);
     const device = parseDeviceInfo(req);
-    if (!geo.country && !device.platform) return;
+    const utm = parseUtmFromRequest(req);
+    if (!geo.country && !device.platform && !utm.source && !utm.medium && !utm.campaign) return;
     await execute(
       `UPDATE users SET
-         country = COALESCE(country, $2),
+         country         = COALESCE(country, $2),
          device_platform = COALESCE(device_platform, $3),
-         last_active_at = now()
+         utm_source      = COALESCE(utm_source, $4),
+         utm_medium      = COALESCE(utm_medium, $5),
+         utm_campaign    = COALESCE(utm_campaign, $6),
+         last_active_at  = now()
        WHERE id = $1`,
-      [userId, geo.country || null, device.platform || null],
+      [
+        userId,
+        geo.country || null,
+        device.platform || null,
+        utm.source || null,
+        utm.medium || null,
+        utm.campaign || null,
+      ],
     );
   } catch { /* non-critical */ }
 }

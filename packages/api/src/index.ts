@@ -13,6 +13,7 @@ import { gamesRouter } from './routes/games.js';
 import { petsRouter } from './routes/pets.js';
 import { productsRouter } from './routes/products.js';
 import { offersRouter } from './routes/offers.js';
+import { trackRouter } from './routes/track.js';
 import { adminRouter } from './routes/admin/index.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { globalRateLimit } from './middleware/rate-limit.js';
@@ -54,10 +55,12 @@ app.use('/pets', petsRouter);
 app.use('/admin/products', productsRouter);
 app.use('/admin', adminRouter);
 app.use('/offers', offersRouter);
+app.use('/track', trackRouter);
 
 app.use(errorHandler);
 
 import { runPushCron } from './cron/push-cron.js';
+import { runAnalyticsRollup } from './cron/analytics-rollup.js';
 
 app.listen(PORT, () => {
   console.log(`[API] Running on http://localhost:${PORT}`);
@@ -68,6 +71,20 @@ app.listen(PORT, () => {
     runPushCron().catch((err) => console.error('[push-cron]', err));
   }, PUSH_CRON_INTERVAL);
   console.log('[push-cron] Running now + every 15 min');
+
+  // Analytics rollup — once an hour is plenty since we only rebuild
+  // "yesterday". First run is deferred by 2 minutes so the server has time
+  // to warm up and accept traffic before this burst of DB writes.
+  const ROLLUP_INTERVAL = 60 * 60 * 1000;
+  setTimeout(() => {
+    runAnalyticsRollup().catch((err) =>
+      console.error('[analytics-rollup] initial run error:', err),
+    );
+    setInterval(() => {
+      runAnalyticsRollup().catch((err) => console.error('[analytics-rollup]', err));
+    }, ROLLUP_INTERVAL);
+  }, 2 * 60 * 1000);
+  console.log('[analytics-rollup] Scheduled hourly (first run in 2 min)');
 });
 
 export default app;

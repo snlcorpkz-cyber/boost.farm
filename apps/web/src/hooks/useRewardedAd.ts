@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { sounds } from '../lib/sounds';
 import { useRewardToast } from '../components/RewardToast';
-import { requestRewardedAdNative } from '../lib/native';
+import { requestRewardedAdNative, isAndroid } from '../lib/native';
+import { trackClient } from '../lib/track';
 
 type RewardType = 'water' | 'nutrition';
 
@@ -36,11 +37,13 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
       qc.invalidateQueries({ queryKey: ['farm'] });
       qc.invalidateQueries({ queryKey: ['ad-limits'] });
       sounds.rewardChime();
+      trackClient('ad.server_granted', { type: rewardType, amount: res?.amount ?? 0, idempotencyKey }, { placement });
       const amount = res?.amount ?? rewardAmount ?? 0;
       if (amount > 0) {
         showReward(rewardType === 'water' ? 'water' : 'fertilizer', amount);
       }
     } catch (err: any) {
+      trackClient('ad.failed', { stage: 'server_grant', error_message: err?.message ?? 'unknown' }, { placement });
       onError?.(err?.message || 'Failed to credit ad reward');
     }
   }, [rewardType, rewardAmount, placement, qc, showReward, onError]);
@@ -49,12 +52,17 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
     if (pending) return;
 
     setPending(true);
+    trackClient('ad.requested', { ad_unit: 'rewarded', type: rewardType, has_native: isAndroid() }, { placement });
 
     const reqId = requestRewardedAdNative(placement, (result) => {
       setPending(false);
       if (result.placement === placement && result.success) {
         creditReward();
       } else {
+        // Granular cause (no_fill / failed / closed_unrewarded) is emitted by
+        // the native bridge via the ad-event forwarder in lib/native.ts — we
+        // just log the terminal outcome here for completeness.
+        trackClient('ad.closed', { rewarded: false }, { placement });
         onError?.('Ad not available, please try again');
       }
     });
@@ -62,13 +70,19 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
     if (reqId === null) {
       // No native bridge — use the fallback popup.
       setPending(false);
+      trackClient('ad.no_fill', { reason: 'no_native_bridge' }, { placement });
       setShowFallbackAd(true);
     }
-  }, [placement, pending, creditReward, onError]);
+  }, [placement, pending, creditReward, onError, rewardType]);
 
   const handleFallbackComplete = useCallback(async (r: { amount: number }) => {
-    if (r.amount) await creditReward();
-  }, [creditReward]);
+    if (r.amount) {
+      trackClient('ad.rewarded', { fallback: true, reward_amount: r.amount }, { placement });
+      await creditReward();
+    } else {
+      trackClient('ad.closed', { fallback: true, rewarded: false }, { placement });
+    }
+  }, [creditReward, placement]);
 
   const closeFallback = useCallback(() => setShowFallbackAd(false), []);
 

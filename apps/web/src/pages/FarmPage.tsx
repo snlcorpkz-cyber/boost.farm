@@ -27,7 +27,8 @@ import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
-import { requestRewardedAdNative } from '../lib/native';
+import { requestRewardedAdNative, isAndroid } from '../lib/native';
+import { trackClient } from '../lib/track';
 
 
 export default function FarmPage() {
@@ -205,6 +206,11 @@ export default function FarmPage() {
     if (bucketAdPendingRef.current) return;
     bucketAdPendingRef.current = true;
     setBucketAdPending(true);
+    trackClient(
+      'ad.requested',
+      { ad_unit: 'rewarded', type: 'bucket', has_native: isAndroid() },
+      { placement: 'bucket_collect' },
+    );
 
     // H-2: use requestId-based routing so this callback never gets clobbered
     // by a concurrent ad (e.g. water/fert popup).
@@ -214,12 +220,15 @@ export default function FarmPage() {
       if (result.success) {
         sounds.bucketCollectToCan();
         handleCollect(true);
+      } else {
+        trackClient('ad.closed', { rewarded: false }, { placement: 'bucket_collect' });
       }
     });
 
     if (reqId === null) {
       bucketAdPendingRef.current = false;
       setBucketAdPending(false);
+      trackClient('ad.no_fill', { reason: 'no_native_bridge' }, { placement: 'bucket_collect' });
       setShowBucketAd(true);
     }
   }, [handleCollect]);
@@ -229,8 +238,11 @@ export default function FarmPage() {
     bucketAdPendingRef.current = false;
     setBucketAdPending(false);
     if (r.amount) {
+      trackClient('ad.rewarded', { fallback: true, reward_amount: r.amount }, { placement: 'bucket_collect' });
       sounds.bucketCollectToCan();
       handleCollect(true);
+    } else {
+      trackClient('ad.closed', { fallback: true, rewarded: false }, { placement: 'bucket_collect' });
     }
   }, [handleCollect]);
 
