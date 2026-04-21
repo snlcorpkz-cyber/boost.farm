@@ -50,16 +50,33 @@ class MainActivity : AppCompatActivity() {
 
         requestNotificationPermission()
 
-        // Initialize Unity LevelPlay (ironSource) mediation. The app key is
-        // injected via BuildConfig from apps/android/keystore.properties
-        // (gitignored). If the key is blank we skip init and wire the Stub
-        // adapters below — this lets developers run the app without any ads
-        // setup and still keeps automated tests / CI builds green.
+        // Unity LevelPlay (ironSource) mediation. The app key is injected via
+        // BuildConfig from apps/android/keystore.properties (gitignored). If
+        // the key is blank we skip init and wire the Stub adapter below so
+        // devs / CI can run without an ads setup.
+        //
+        // IMPORTANT ORDERING: the rewarded-video listener MUST be registered
+        // BEFORE IronSource.init — otherwise the SDK fires its first
+        // `onAdAvailable` / `onAdUnavailable` callback before we're
+        // subscribed and the app sits thinking no ad is ever loaded (even
+        // when demand is actually there). We create `LevelPlayRewardedAds`
+        // first (its `init` block installs the global listener) and only
+        // then kick off init.
         val lpKey = BuildConfig.LEVELPLAY_APP_KEY
-        if (lpKey.isNotBlank()) {
+        val rewarded: RewardedAdsPort = if (lpKey.isBlank()) {
+            StubRewardedAds()
+        } else {
+            val adsPort = LevelPlayRewardedAds(this)
+
+            // Auto-retry loads when the device swaps between wifi and
+            // mobile — without this a lost network at cold start leaves
+            // the SDK in a "no ad available" state for the whole session.
+            IronSource.shouldTrackNetworkState(this, true)
+
             // TODO: replace `true` with a real consent flag wired to the GDPR
             // dialog once the consent UI is added on the web side.
             IronSource.setConsent(true)
+
             // OFFERWALL is intentionally NOT initialised here — ironSource
             // removed Offerwall from LevelPlay 8.x and the OfferwallPort
             // implementation falls back to StubOfferwall. We can swap in
@@ -71,6 +88,23 @@ class MainActivity : AppCompatActivity() {
                 lpKey,
                 IronSource.AD_UNIT.REWARDED_VIDEO,
             )
+
+            // Debug builds only: dumps the LevelPlay integration state into
+            // Logcat (network adapters detected, AndroidManifest issues,
+            // missing Google Play Services, etc). Filter Logcat for
+            // `IronSourceIntegrationHelper` / `IntegrationHelper` to see
+            // the report. Never call this in a release build — it's slow
+            // and is explicitly documented as "debug only".
+            if (BuildConfig.DEBUG) {
+                try {
+                    com.ironsource.mediationsdk.integration.IntegrationHelper
+                        .validateIntegration(this)
+                } catch (e: Throwable) {
+                    android.util.Log.w("MainActivity", "validateIntegration failed", e)
+                }
+            }
+
+            adsPort
         }
 
         pendingCampaignId = intent?.getStringExtra("campaign_id")
@@ -85,9 +119,6 @@ class MainActivity : AppCompatActivity() {
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
         }
-
-        val rewarded: RewardedAdsPort =
-            if (lpKey.isBlank()) StubRewardedAds() else LevelPlayRewardedAds(this)
         // Offerwall provider TBD — keep StubOfferwall until we plug a real
         // network in (LevelPlay 8.x dropped Offerwall support entirely).
         val offerwall: OfferwallPort = StubOfferwall()
