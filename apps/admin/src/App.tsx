@@ -11,6 +11,7 @@ import { PushCampaignsPage } from '@/pages/PushCampaignsPage';
 import { PushCreatePage } from '@/pages/PushCreatePage';
 import { LogsPage } from '@/pages/LogsPage';
 import { RetentionPage } from '@/pages/RetentionPage';
+import { HealthPage } from '@/pages/HealthPage';
 
 const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
@@ -19,6 +20,7 @@ const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/offers', label: 'Offers', icon: '🎮' },
   { to: '/push', label: 'Push', icon: '🔔' },
   { to: '/logs', label: 'Logs', icon: '📋' },
+  { to: '/health', label: 'Health', icon: '💓' },
 ];
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
@@ -131,6 +133,7 @@ export default function App() {
             <Route path="/push/new" element={<PushCreatePage />} />
             <Route path="/push/:id" element={<PushCreatePage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/health" element={<HealthPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

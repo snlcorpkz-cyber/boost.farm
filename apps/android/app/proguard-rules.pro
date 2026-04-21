@@ -5,7 +5,8 @@
 # who decompiles the APK/AAB sees `a.b.c()` instead of readable
 # class/method names. The only things we MUST keep intact are the
 # JavaScript bridge methods (WebView calls them by name from JS) and
-# third-party SDK entry points (AdMob, Firebase, WorkManager, etc).
+# third-party SDK entry points (LevelPlay / ironSource, Firebase,
+# Play Install Referrer, etc).
 # ════════════════════════════════════════════════════════════════
 
 # --- JavaScript bridge: WebView reflects into these methods by name.
@@ -20,11 +21,22 @@
 -dontwarn com.google.firebase.**
 -keep class com.boostfarm.app.FcmService { *; }
 
-# --- Google Mobile Ads (AdMob) — reflection-heavy SDK.
+# --- Unity LevelPlay (ironSource) mediation — the SDK and per-network
+#     adapters load classes reflectively, so we blanket-keep them. The
+#     individual adapter artefacts (admob-adapter, applovin-adapter, …)
+#     ship their own consumer-proguard rules for the network SDKs they
+#     wrap, so we only need the mediation umbrella here.
+-keep class com.ironsource.** { *; }
+-dontwarn com.ironsource.**
+-keep class com.unity3d.mediation.** { *; }
+-dontwarn com.unity3d.mediation.**
+-keep class com.unity3d.ironsourceads.** { *; }
+-dontwarn com.unity3d.ironsourceads.**
+
+# Google Play Services base is still pulled in by the AdMob / AppLovin
+# adapters for advertising-ID lookups.
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
--keep class com.google.ads.** { *; }
--dontwarn com.google.ads.**
 
 # --- Google Play Install Referrer SDK (AIDL).
 -keep class com.android.installreferrer.** { *; }

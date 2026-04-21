@@ -6,6 +6,7 @@ import { adminOffersRouter } from './offers.js';
 import { adminPushRouter } from './push-campaigns.js';
 import { adminLogsRouter } from './logs.js';
 import { adminRetentionRouter } from './retention.js';
+import { adminHealthRouter } from './health.js';
 
 export const adminRouter = Router();
 
@@ -17,3 +18,4 @@ adminRouter.use('/offers', adminOffersRouter);
 adminRouter.use('/push', adminPushRouter);
 adminRouter.use('/logs', adminLogsRouter);
 adminRouter.use('/retention', adminRetentionRouter);
+adminRouter.use('/health', adminHealthRouter);
