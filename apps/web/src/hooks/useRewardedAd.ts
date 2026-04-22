@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { sounds } from '../lib/sounds';
 import { useRewardToast } from '../components/RewardToast';
-import { requestRewardedAdNative, isAndroid } from '../lib/native';
+import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible } from '../lib/native';
 import { trackClient } from '../lib/track';
 
 type RewardType = 'water' | 'nutrition';
@@ -58,13 +58,28 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
       setPending(false);
       if (result.placement === placement && result.success) {
         creditReward();
-      } else {
-        // Granular cause (no_fill / failed / closed_unrewarded) is emitted by
-        // the native bridge via the ad-event forwarder in lib/native.ts — we
-        // just log the terminal outcome here for completeness.
-        trackClient('ad.closed', { rewarded: false }, { placement });
-        onError?.('Ad not available, please try again');
+        return;
       }
+      // Granular cause (no_fill / failed / closed_unrewarded) is emitted by
+      // the native bridge via the ad-event forwarder in lib/native.ts — we
+      // just log the terminal outcome here for completeness.
+      trackClient('ad.closed', { rewarded: false, reason: result.reason ?? null }, { placement });
+
+      if (isRewardFallbackEligible(result.reason)) {
+        // The ad network simply couldn't serve an ad (SDK still initialising,
+        // ironSource account pending review, offline, no fill). Users are
+        // not at fault — transparently fall back to the mock-ad flow so
+        // they still get their reward.
+        trackClient(
+          'ad.fallback_shown',
+          { reason: result.reason ?? 'unavailable', trigger: 'native_unavailable' },
+          { placement },
+        );
+        setShowFallbackAd(true);
+      } else if (result.reason === 'concurrent') {
+        onError?.('Another ad is already loading. Please try again.');
+      }
+      // `closed_unrewarded` is a deliberate skip — no reward, no toast.
     });
 
     if (reqId === null) {

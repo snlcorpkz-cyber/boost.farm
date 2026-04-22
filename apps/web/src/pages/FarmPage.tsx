@@ -27,7 +27,7 @@ import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
-import { requestRewardedAdNative, isAndroid } from '../lib/native';
+import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible } from '../lib/native';
 import { trackClient } from '../lib/track';
 
 
@@ -220,9 +220,25 @@ export default function FarmPage() {
       if (result.success) {
         sounds.bucketCollectToCan();
         handleCollect(true);
-      } else {
-        trackClient('ad.closed', { rewarded: false }, { placement: 'bucket_collect' });
+        return;
       }
+      trackClient(
+        'ad.closed',
+        { rewarded: false, reason: result.reason ?? null },
+        { placement: 'bucket_collect' },
+      );
+      if (isRewardFallbackEligible(result.reason)) {
+        // Ad network couldn't serve an ad (ironSource account pending,
+        // offline, no fill…). Don't lock users out of their bucket —
+        // show the mock-ad fallback so they can still collect.
+        trackClient(
+          'ad.fallback_shown',
+          { reason: result.reason ?? 'unavailable', trigger: 'native_unavailable' },
+          { placement: 'bucket_collect' },
+        );
+        setShowBucketAd(true);
+      }
+      // `closed_unrewarded` / `concurrent` → silent no-op, user can retry.
     });
 
     if (reqId === null) {

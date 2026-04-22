@@ -128,8 +128,8 @@ class FarmJsBridge(
         val placement = parsePlacement(json)
         val requestId = parseRequestId(json)
         webView.post {
-            rewardedAds.showRewarded(placement) { ok ->
-                emit("onRewardedFinished", placement, ok, requestId)
+            rewardedAds.showRewarded(placement) { ok, reason ->
+                emit("onRewardedFinished", placement, ok, requestId, reason)
             }
         }
     }
@@ -151,7 +151,7 @@ class FarmJsBridge(
         val requestId = parseRequestId(json)
         webView.post {
             offerwall.showOfferwall(placement) { ok ->
-                emit("onOfferwallFinished", placement, ok, requestId)
+                emit("onOfferwallFinished", placement, ok, requestId, null)
             }
         }
     }
@@ -211,15 +211,21 @@ class FarmJsBridge(
          *      `window.__ecoFarmNative.onAdEvent` + generic `track()` method
          *      for native-originated analytics. Used by the product-analytics
          *      funnel on the admin side (Ads → Funnel / Placements / Status).
+         * v6: rewarded callback now carries a `reason` field describing why
+         *      a failed show happened (unavailable / show_failed /
+         *      closed_unrewarded / concurrent). Web layer uses this to decide
+         *      whether to offer a fallback reward flow (unavailable) or to
+         *      silently skip (closed_unrewarded).
          */
-        const val BRIDGE_API_VERSION = 5
+        const val BRIDGE_API_VERSION = 6
     }
 
-    private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?) {
+    private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?, reason: String?) {
         val payload = JSONObject()
             .put("placement", placement)
             .put("success", success)
         if (requestId != null) payload.put("requestId", requestId)
+        if (reason != null) payload.put("reason", reason)
         val payloadStr = payload.toString()
         val script = """
             (function(){

@@ -30,7 +30,7 @@ class LevelPlayRewardedAds(
     private val adEventSink: AdEventSink = AdEventSink.noop(),
 ) : RewardedAdsPort {
 
-    private var currentCallback: ((Boolean) -> Unit)? = null
+    private var currentCallback: ((Boolean, String?) -> Unit)? = null
     private var rewardedThisSession = false
     private var currentPlacement: String? = null
     // ILRD can arrive after onAdClosed (which clears currentPlacement via
@@ -64,7 +64,9 @@ class LevelPlayRewardedAds(
                         "network" to adInfo?.adNetwork,
                     ),
                 )
-                deliver(rewardedThisSession)
+                // `closed_unrewarded` is a deliberate skip by the user — no
+                // fallback should be offered (they saw a real ad SDK slot).
+                deliver(rewardedThisSession, if (rewardedThisSession) null else "closed_unrewarded")
             }
 
             override fun onAdRewarded(placement: Placement?, adInfo: AdInfo?) {
@@ -92,7 +94,9 @@ class LevelPlayRewardedAds(
                         "network" to adInfo?.adNetwork,
                     ),
                 )
-                deliver(false)
+                // SDK failed mid-show — user has done nothing wrong, let the
+                // web layer offer a fallback flow.
+                deliver(false, "show_failed")
             }
 
             override fun onAdClicked(placement: Placement?, adInfo: AdInfo?) {
@@ -157,7 +161,7 @@ class LevelPlayRewardedAds(
         })
     }
 
-    override fun showRewarded(placement: String, onFinished: (Boolean) -> Unit) {
+    override fun showRewarded(placement: String, onFinished: (Boolean, String?) -> Unit) {
         activity.runOnUiThread {
             adEventSink.emit(
                 "requested",
@@ -176,7 +180,7 @@ class LevelPlayRewardedAds(
                         "error_message" to "concurrent_show",
                     ),
                 )
-                onFinished(false)
+                onFinished(false, "concurrent")
                 return@runOnUiThread
             }
             if (!IronSource.isRewardedVideoAvailable()) {
@@ -188,7 +192,10 @@ class LevelPlayRewardedAds(
                         "reason" to "isRewardedVideoAvailable_false",
                     ),
                 )
-                onFinished(false)
+                // Ads not ready (SDK still initialising, no demand, ironSource
+                // account under review, offline, etc.) — signal the web layer
+                // so it can offer a fallback flow instead of blocking users.
+                onFinished(false, "unavailable")
                 return@runOnUiThread
             }
             currentCallback = onFinished
@@ -199,12 +206,12 @@ class LevelPlayRewardedAds(
         }
     }
 
-    private fun deliver(ok: Boolean) {
+    private fun deliver(ok: Boolean, reason: String?) {
         val cb = currentCallback
         currentCallback = null
         currentPlacement = null
         if (cb != null) {
-            activity.runOnUiThread { cb(ok) }
+            activity.runOnUiThread { cb(ok, reason) }
         }
     }
 

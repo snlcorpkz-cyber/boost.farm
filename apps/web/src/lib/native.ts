@@ -143,10 +143,54 @@ export function consumeInstallReferrer(): void {
 // via a "last-callback-wins" fallback for backwards compatibility.
 // ────────────────────────────────────────────────────────────
 
+/**
+ * Reason the native side returns when `success === false`. Used by the web
+ * layer to decide between:
+ *   - offering a fallback flow (MockAdModal) when the SDK couldn't serve an
+ *     ad through no fault of the user — e.g. the ironSource account is still
+ *     under review, the device is offline, or there is simply no fill right
+ *     now (`unavailable` / `show_failed` / `timeout`);
+ *   - silently skipping the reward when the user saw a real ad slot and
+ *     deliberately closed it before the reward event fired
+ *     (`closed_unrewarded`);
+ *   - surfacing a generic retry toast when another rewarded ad is already
+ *     in flight in the same process (`concurrent`).
+ */
+export type RewardedFailureReason =
+  | 'unavailable'
+  | 'show_failed'
+  | 'closed_unrewarded'
+  | 'concurrent'
+  | 'timeout';
+
 export interface RewardedAdResult {
   placement: string;
   success: boolean;
   requestId?: string;
+  reason?: RewardedFailureReason;
+}
+
+/**
+ * Returns true when a failed rewarded call should trigger the mock-ad
+ * fallback flow (so users aren't blocked when the network has no fill).
+ *
+ * We also treat a missing `reason` as fallback-eligible whenever the host
+ * app is running an **older** native bridge (API < 6) that predates the
+ * `reason` field: those builds always sent `success:false` for any failure
+ * and we have to assume the worst common case (no fill / SDK not ready).
+ * Once every install has updated to bridge API 6+, the `undefined` branch
+ * becomes unreachable and the reason check is strict again — which means
+ * we automatically stop granting fallback rewards to users who close real
+ * ads on purpose (`closed_unrewarded`).
+ */
+export function isRewardFallbackEligible(reason: RewardedFailureReason | undefined): boolean {
+  if (reason === 'unavailable' || reason === 'show_failed' || reason === 'timeout') {
+    return true;
+  }
+  if (reason === undefined && isAndroid() && bridgeApiVersion() < 6) {
+    return true;
+  }
+  return false;
 }
 
 type RewardedCallback = (r: RewardedAdResult) => void;
@@ -273,7 +317,9 @@ export function requestRewardedAdNative(
     const h = reg.__rewardedHandlers;
     if (h?.has(requestId)) {
       h.delete(requestId);
-      onFinished({ placement, success: false, requestId });
+      // Native side never reported back — treat as fallback-eligible
+      // (likely the SDK is stuck or the ad process crashed).
+      onFinished({ placement, success: false, requestId, reason: 'timeout' });
     }
   }, timeoutMs);
 
