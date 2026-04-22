@@ -9,7 +9,7 @@ import { useBucketTimer } from '../hooks/useBucketTimer';
 import { usePhase } from '../hooks/usePhase';
 import { api } from '../lib/api';
 import { sounds } from '../lib/sounds';
-import { AVATAR_IMAGES, PET_IMAGES, HAMSTER_FRAMES, MONKEY_FRAMES, RABBIT_FRAMES, UI, getCropBase } from '../lib/assets';
+import { AVATAR_IMAGES, PET_IMAGES, HAMSTER_FRAMES, MONKEY_FRAMES, RABBIT_FRAMES, UI, getCropBase, legacyImageFallback } from '../lib/assets';
 import Background from '../components/farm/Background';
 import Plant, { getPlantLayout } from '../components/farm/Plant';
 import Bucket from '../components/farm/Bucket';
@@ -330,6 +330,29 @@ export default function FarmPage() {
     return () => clearInterval(interval);
   }, [activePet]);
 
+  // Prefetch every frame of the currently active pet into the WebView/browser
+  // cache as soon as we know which pet it is. Without this, the 5-minute
+  // frame rotation can land on a frame that hasn't been fetched yet — if the
+  // network blips or the CDN returns stale bytes right at that moment, the
+  // pet appears to "disappear" next to the plot (reported by users after
+  // asset re-encodes changed ETags). Prefetch is idempotent per URL, so the
+  // cost is a one-time background fetch per install of the app.
+  useEffect(() => {
+    if (typeof Image === 'undefined') return;
+    const pet = activePet ?? 'hamster';
+    const frames =
+      pet === 'monkey' ? MONKEY_FRAMES :
+      pet === 'rabbit' ? RABBIT_FRAMES :
+      HAMSTER_FRAMES;
+    frames.forEach((url) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = url;
+      // Fire-and-forget: we don't care whether it resolves — we only want
+      // the GET to hit the HTTP cache before the user sees the frame.
+    });
+  }, [activePet]);
+
   const activePetImage = (() => {
     if (!activePet || activePet === 'hamster') {
       if (showGiftOnPet) return PET_IMAGES.hamsterGift;
@@ -581,6 +604,29 @@ export default function FarmPage() {
                       alt=""
                       className="w-12 h-12 object-contain drop-shadow"
                       draggable={false}
+                      decoding="async"
+                      onLoad={(e) => {
+                        // Reset the per-frame fallback flag so a future
+                        // frame-rotation that fails can still retry (the
+                        // dataset would otherwise survive across src swaps
+                        // on the same <img> node).
+                        delete (e.currentTarget as HTMLImageElement).dataset.fallbackTried;
+                      }}
+                      onError={(e) => {
+                        // Graceful degradation: if the .webp variant fails
+                        // to load (CDN miss, stale ETag after a re-encode,
+                        // transient network error), retry the .png sibling
+                        // once. Both formats are shipped under
+                        // public/assets/pets/. The dataset-based guard
+                        // makes sure we only retry once per frame so a
+                        // genuinely missing .png doesn't loop forever.
+                        const img = e.currentTarget as HTMLImageElement;
+                        if (img.dataset.fallbackTried === '1') return;
+                        const fallback = legacyImageFallback(activePetImage);
+                        if (!fallback || fallback === activePetImage) return;
+                        img.dataset.fallbackTried = '1';
+                        img.src = fallback;
+                      }}
                     />
                   </motion.div>
                   {showGiftOnPet && (

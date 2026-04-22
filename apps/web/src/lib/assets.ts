@@ -113,6 +113,22 @@ export function getAvatarImage(avatarId: string): string | null {
   return AVATAR_IMAGES[avatarId] ?? null;
 }
 
+/**
+ * Returns a legacy-format fallback URL for a given asset URL. Most pet/crop
+ * assets were shipped as .png first and re-encoded to .webp later — both
+ * copies still live in `public/assets/` (see scripts/fix-transparency.mjs).
+ * If a WebView request for the .webp version fails (CDN blip, cache miss,
+ * ETag mismatch during a re-deploy), we can cheaply retry the .png sibling
+ * instead of rendering a broken <img>. Returns `null` if the URL has no
+ * known legacy sibling.
+ */
+export function legacyImageFallback(src: string): string | null {
+  if (src.endsWith('.webp')) {
+    return src.slice(0, -'.webp'.length) + '.png';
+  }
+  return null;
+}
+
 export function getAvatarDisplay(avatarId: string): string {
   const img = AVATAR_IMAGES[avatarId];
   if (img) return avatarId;
