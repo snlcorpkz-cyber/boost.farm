@@ -147,25 +147,26 @@ export async function aggregateAdFunnel(): Promise<void> {
     );
 
     // Counting rules mirror /admin/ads/funnel (see that endpoint's
-    // docblock for the rationale):
-    //   - `requested` is deduped to web-only via properties ? 'has_native'
-    //     because the Kotlin bridge also emits one per show_rewarded;
-    //   - `no_fill` ignores the global onAdUnavailable SDK callback
-    //     (those events have NULL placement);
-    //   - `shown` counts both native impressions and fallback modals;
-    //   - `rewarded` counts `ad.rewarded` only — `ad.server_granted` is
-    //     a downstream ack of the same payout and was double-counting.
+    // docblock for the honest-stage rationale). We fill both the new
+    // explicit columns (attempts/sdk_impressions/mock_impressions/
+    // completions/rewards_paid/sdk_errors — added in migration 022)
+    // AND the legacy columns (requested/shown/rewarded/failed) so
+    // code paths that still read the old schema (e.g. an older
+    // deploy of the admin UI) keep working during rollout.
     await execute(
       `INSERT INTO ad_funnel_daily (
          stat_date, platform, placement, ad_unit,
          requested, loaded, no_fill, shown, rewarded, failed, closed,
+         attempts, sdk_impressions, mock_impressions,
+         completions, rewards_paid, sdk_errors,
          unique_users, updated_at
        )
        SELECT
          e.created_at::date AS stat_date,
          ${PLATFORM_EXPR}    AS platform,
-         coalesce(e.placement, 'unknown') AS placement,
+         coalesce(nullif(e.placement, ''), 'unknown') AS placement,
          'rewarded' AS ad_unit,
+         -- Legacy mirrors (kept in sync with the honest values).
          count(*) FILTER (
            WHERE e.event_name = 'ad.requested'
              AND e.properties ? 'has_native'
@@ -178,9 +179,19 @@ export async function aggregateAdFunnel(): Promise<void> {
          count(*) FILTER (
            WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
          )::int AS shown,
-         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int AS rewarded,
-         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int AS failed,
-         count(*) FILTER (WHERE e.event_name = 'ad.closed')::int AS closed,
+         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int       AS rewarded,
+         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int         AS failed,
+         count(*) FILTER (WHERE e.event_name = 'ad.closed')::int         AS closed,
+         -- New honest columns (migration 022).
+         count(*) FILTER (
+           WHERE e.event_name = 'ad.requested'
+             AND e.properties ? 'has_native'
+         )::int AS attempts,
+         count(*) FILTER (WHERE e.event_name = 'ad.shown')::int          AS sdk_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.fallback_shown')::int AS mock_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int       AS completions,
+         count(*) FILTER (WHERE e.event_name = 'ad.server_granted')::int AS rewards_paid,
+         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int         AS sdk_errors,
          count(DISTINCT e.user_id)::int AS unique_users,
          now() AS updated_at
        FROM events e

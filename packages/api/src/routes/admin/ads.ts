@@ -14,48 +14,68 @@ function parseDays(raw: unknown): number {
 }
 
 /**
- * GET /admin/ads/funnel
- * Per-day / per-placement funnel built directly from the raw `events`
- * table so admins can see *exactly* what happened, with no rollup skew.
+ * Honest rewarded-ad funnel — one stage per distinct user intent.
  *
- * Counting rules — these are the answer to "why do the numbers in the
- * table actually add up now" (see below for each column):
+ * The numbers in the admin used to mismatch (shown > requested, rewarded
+ * > shown) because multiple emitters fire for the same user intent and
+ * we were blind-counting raw events. This query imposes the following
+ * explicit contract on every stage:
  *
- *   requested  — the web layer always emits `ad.requested` on user
- *                intent, and the Kotlin LevelPlay bridge ALSO emits one
- *                moments later from `showRewarded`. Web-emitted events
- *                carry `has_native` in `properties`; the Kotlin path
- *                does not. Filtering on `properties ? 'has_native'`
- *                keeps exactly one row per real user intent.
+ *   attempts         — user intent. Exactly one per button tap.
+ *                      Source: `ad.requested` events carrying
+ *                      `properties.has_native` (the marker the web
+ *                      layer stamps to distinguish a real tap from
+ *                      the Android bridge's internal request echo).
  *
- *   loaded     — `ad.loaded` from the SDK listener. No dedup needed.
+ *   loaded           — how many times the SDK reported a filled
+ *                      waterfall (`ad.loaded`). Purely informational —
+ *                      the SDK emits this on auto-cache refresh too
+ *                      so loaded can exceed attempts; we keep it as
+ *                      a diagnostic, not part of the funnel maths.
  *
- *   no_fill    — we drop events that came from the SDK's **global**
- *                `onAdUnavailable` callback, because that one fires on
- *                network-wide fill-rate changes (no placement context)
- *                and was showing up as an inflated "unknown" row in
- *                admin. Keeping only `ad.no_fill` events with a real
- *                `placement` gives one row per failed user intent.
+ *   no_fill          — attempts where mediation returned nothing.
+ *                      We intentionally drop `ad.no_fill` events
+ *                      whose `placement` is NULL because those come
+ *                      from ironSource's *global* onAdUnavailable
+ *                      callback, which fires on network-wide fill
+ *                      changes without any placement context.
  *
- *   shown      — union of `ad.shown` (native ironSource impression)
- *                and `ad.fallback_shown` (mock-ad modal presented when
- *                the SDK had no fill). Admins want "did the user see
- *                something?", not "did the mediation pipeline serve?".
+ *   sdk_impressions  — real ironSource ad actually played
+ *                      (`ad.shown`, fired by LevelPlay onAdOpened).
  *
- *   rewarded   — `ad.rewarded` only. `ad.server_granted` is the
- *                server-side acknowledgement of the SAME reward and
- *                was double-counting water/fert popup payouts.
+ *   mock_impressions — our fallback mock-ad modal presented when the
+ *                      SDK had no fill (`ad.fallback_shown`). Kept
+ *                      separate so admins can see how often we're
+ *                      papering over a lack of inventory.
  *
- *   failed / closed — unchanged, one event each.
+ *   impressions      — sdk_impressions + mock_impressions.
  *
- *   unique_users — distinct `user_id` across ALL ad.* events in the
- *                bucket (good proxy for "people who touched an ad
- *                slot for this placement that day").
+ *   completions      — user finished the ad and was *reward-eligible*.
+ *                      Source: `ad.rewarded`. Note: this is still
+ *                      client-side, so a flaky network may drop the
+ *                      event even though the reward was credited —
+ *                      hence why we keep `rewards_paid` separate.
  *
- * Performance: we rely on `idx_events_name (event_name, created_at)`
- * from migration 016 plus `idx_events_placement` from 020. Up to
- * `days=90` the full scan is still bounded to the "ad.%" prefix and
- * runs in well under a second for our data volume.
+ *   rewards_paid     — authoritative, server-side acknowledgement
+ *                      that water / fertiliser was actually credited
+ *                      to the user's balance (`ad.server_granted`).
+ *                      Driven by an idempotency key on the API so
+ *                      double-credits are impossible. This is the
+ *                      only number the CFO should trust.
+ *
+ *   sdk_errors       — `ad.failed` (SDK exploded mid-show). Should
+ *                      be near-zero in steady state.
+ *
+ * Derived rates (computed on the fly by the UI, not here):
+ *
+ *     fill_rate      = (sdk_impressions + no_fill backfilled via mock
+ *                       — i.e. anything that reached a slot) / attempts
+ *     watch_through  = completions / impressions
+ *     payout_rate    = rewards_paid / completions   (should be ~100%)
+ *
+ * The `placement IN ('', 'unknown')` rows were noise — they came from
+ * old APK builds that sent events without a placement — so we drop
+ * them in HAVING to keep the table focused.
  */
 adminAdsRouter.get('/funnel', async (req, res) => {
   try {
@@ -70,37 +90,35 @@ adminAdsRouter.get('/funnel', async (req, res) => {
       `SELECT
          e.created_at::date::text AS stat_date,
          coalesce(e.platform, e.device->>'platform', 'unknown') AS platform,
-         coalesce(e.placement, 'unknown') AS placement,
+         coalesce(nullif(e.placement, ''), 'unknown') AS placement,
          'rewarded'::text AS ad_unit,
          count(*) FILTER (
            WHERE e.event_name = 'ad.requested'
              AND e.properties ? 'has_native'
-         )::int AS requested,
+         )::int AS attempts,
          count(*) FILTER (WHERE e.event_name = 'ad.loaded')::int AS loaded,
          count(*) FILTER (
            WHERE e.event_name = 'ad.no_fill'
              AND e.placement IS NOT NULL
          )::int AS no_fill,
-         count(*) FILTER (
-           WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
-         )::int AS shown,
-         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int AS rewarded,
-         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int AS failed,
-         count(*) FILTER (WHERE e.event_name = 'ad.closed')::int AS closed,
+         count(*) FILTER (WHERE e.event_name = 'ad.shown')::int          AS sdk_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.fallback_shown')::int AS mock_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int       AS completions,
+         count(*) FILTER (WHERE e.event_name = 'ad.server_granted')::int AS rewards_paid,
+         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int         AS sdk_errors,
          count(DISTINCT e.user_id)::int AS unique_users,
          (e.created_at::date = current_date) AS today
        FROM events e
        WHERE e.event_name LIKE 'ad.%'
          AND e.created_at >= (current_date - ($1 || ' days')::interval)::date
        GROUP BY 1, 2, 3, today
-       -- Drop buckets where every counting column came out zero after the
-       -- dedup rules above (e.g. an 'unknown' placement row whose only
-       -- contributions were global onAdUnavailable emits, which we now
-       -- exclude from no_fill). Such rows are noise, not signal.
-       HAVING count(*) FILTER (
-                WHERE e.event_name IN ('ad.requested','ad.loaded','ad.no_fill',
-                                        'ad.shown','ad.fallback_shown','ad.rewarded',
-                                        'ad.failed','ad.closed')
+       HAVING coalesce(nullif(e.placement, ''), 'unknown') <> 'unknown'
+          AND count(*) FILTER (
+                WHERE e.event_name IN (
+                        'ad.requested','ad.loaded','ad.no_fill',
+                        'ad.shown','ad.fallback_shown',
+                        'ad.rewarded','ad.server_granted',
+                        'ad.failed','ad.closed')
                   AND ( e.event_name <> 'ad.requested' OR e.properties ? 'has_native' )
                   AND ( e.event_name <> 'ad.no_fill'   OR e.placement IS NOT NULL )
               ) > 0
@@ -108,7 +126,14 @@ adminAdsRouter.get('/funnel', async (req, res) => {
       [days],
     );
 
-    res.json({ days, rows });
+    // Enriched rows: add impressions = sdk + mock so the UI can render
+    // a single "Impressions" bar while still showing the split.
+    const enriched = rows.map((r) => ({
+      ...r,
+      impressions: (r.sdk_impressions || 0) + (r.mock_impressions || 0),
+    }));
+
+    res.json({ days, rows: enriched });
   } catch (err) {
     console.error('[admin/ads/funnel]', err);
     res.status(500).json({ error: 'Failed to build ads funnel' });
@@ -117,30 +142,29 @@ adminAdsRouter.get('/funnel', async (req, res) => {
 
 /**
  * GET /admin/ads/placements
- * Per-placement totals over `days`. Useful for the "По слотам" tab.
+ * Per-placement totals over `days` — same stage vocabulary as /funnel so
+ * columns stay consistent across tabs.
  *
- * Revenue is joined in live from `events` (where ad.revenue impressions land
- * via the ILRD listener on Android) because `ad_funnel_daily` intentionally
- * does not carry money — keeping the rollup schema stable means we can add
- * revenue dimensions later without a migration.
+ * Revenue is joined in live from `events` (where ad.revenue impressions
+ * land via the ILRD listener on Android) because `ad_funnel_daily`
+ * intentionally does not carry money — keeping the rollup schema stable
+ * means we can add revenue dimensions later without a migration.
  */
 adminAdsRouter.get('/placements', async (req, res) => {
   try {
     const days = parseDays(req.query.days);
-    // Read directly from events to apply the same dedup rules as the
-    // Funnel endpoint (see /funnel docblock for why each filter exists).
     const funnelRows = await query<any>(
       `SELECT
-         coalesce(e.placement, 'unknown') AS placement,
+         coalesce(nullif(e.placement, ''), 'unknown') AS placement,
          count(*) FILTER (
            WHERE e.event_name = 'ad.requested'
              AND e.properties ? 'has_native'
-         )::int AS requested,
-         count(*) FILTER (
-           WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
-         )::int AS shown,
-         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int AS rewarded,
-         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int AS failed,
+         )::int AS attempts,
+         count(*) FILTER (WHERE e.event_name = 'ad.shown')::int          AS sdk_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.fallback_shown')::int AS mock_impressions,
+         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int       AS completions,
+         count(*) FILTER (WHERE e.event_name = 'ad.server_granted')::int AS rewards_paid,
+         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int         AS sdk_errors,
          count(*) FILTER (
            WHERE e.event_name = 'ad.no_fill'
              AND e.placement IS NOT NULL
@@ -149,12 +173,12 @@ adminAdsRouter.get('/placements', async (req, res) => {
        FROM events e
        WHERE e.event_name LIKE 'ad.%'
          AND e.created_at >= now() - ($1 || ' days')::interval
-       GROUP BY coalesce(e.placement, 'unknown')`,
+       GROUP BY coalesce(nullif(e.placement, ''), 'unknown')`,
       [days],
     );
     const revenueRows = await query<{ placement: string; impressions: number; revenue_cents: number }>(
       `SELECT
-         coalesce(placement, 'unknown') AS placement,
+         coalesce(nullif(placement, ''), 'unknown') AS placement,
          count(*)::int AS impressions,
          coalesce(sum(revenue_cents), 0)::bigint AS revenue_cents
        FROM events
@@ -166,28 +190,36 @@ adminAdsRouter.get('/placements', async (req, res) => {
     const revenueByPlacement = new Map(
       revenueRows.map((r) => [r.placement, { impressions: r.impressions, revenue_cents: Number(r.revenue_cents) }]),
     );
-    const placements = new Set<string>([
+    const placementsSet = new Set<string>([
       ...funnelRows.map((r) => r.placement),
       ...revenueRows.map((r) => r.placement),
     ]);
-    const rows = Array.from(placements).map((placement) => {
-      const f = funnelRows.find((r) => r.placement === placement) ?? {
-        placement,
-        requested: 0,
-        shown: 0,
-        rewarded: 0,
-        failed: 0,
-        no_fill: 0,
-        unique_users: 0,
-      };
-      const rev = revenueByPlacement.get(placement) ?? { impressions: 0, revenue_cents: 0 };
-      return {
-        ...f,
-        impressions: rev.impressions,
-        revenue_cents: rev.revenue_cents,
-      };
-    });
-    rows.sort((a, b) => (b.revenue_cents || 0) - (a.revenue_cents || 0) || (b.requested || 0) - (a.requested || 0));
+    const rows = Array.from(placementsSet)
+      .filter((p) => p && p !== 'unknown')
+      .map((placement) => {
+        const f = funnelRows.find((r) => r.placement === placement) ?? {
+          placement,
+          attempts: 0,
+          sdk_impressions: 0,
+          mock_impressions: 0,
+          completions: 0,
+          rewards_paid: 0,
+          sdk_errors: 0,
+          no_fill: 0,
+          unique_users: 0,
+        };
+        const rev = revenueByPlacement.get(placement) ?? { impressions: 0, revenue_cents: 0 };
+        return {
+          ...f,
+          impressions: (f.sdk_impressions || 0) + (f.mock_impressions || 0),
+          revenue_impressions: rev.impressions,
+          revenue_cents: rev.revenue_cents,
+        };
+      });
+    rows.sort(
+      (a, b) =>
+        (b.revenue_cents || 0) - (a.revenue_cents || 0) || (b.attempts || 0) - (a.attempts || 0),
+    );
     res.json({ days, rows });
   } catch (err) {
     console.error('[admin/ads/placements]', err);
@@ -369,10 +401,8 @@ adminAdsRouter.get('/errors', async (req, res) => {
 
 /**
  * GET /admin/ads/status
- * Lightweight heartbeat for the ops dashboard. Tells us:
- *   - when the ad pipeline last produced any event of each kind;
- *   - the last-5-minute fill rate (if any requested events in the last hour);
- *   - the current configured-flag from env for LevelPlay.
+ * Lightweight heartbeat for the ops dashboard. Uses the same stage
+ * vocabulary as /funnel so the UI can share formatting helpers.
  */
 adminAdsRouter.get('/status', async (_req, res) => {
   try {
@@ -382,30 +412,35 @@ adminAdsRouter.get('/status', async (_req, res) => {
        WHERE event_name LIKE 'ad.%'
        GROUP BY event_name`,
     );
-    // Same dedup rules as /funnel — see that endpoint's docblock.
     const hourly = await queryOne<any>(
       `SELECT
          count(*) FILTER (
            WHERE event_name = 'ad.requested'
              AND properties ? 'has_native'
-         )::int AS requested,
-         count(*) FILTER (
-           WHERE event_name IN ('ad.shown', 'ad.fallback_shown')
-         )::int AS shown,
-         count(*) FILTER (WHERE event_name = 'ad.rewarded')::int AS rewarded,
-         count(*) FILTER (WHERE event_name = 'ad.revenue')::int  AS impressions,
+         )::int AS attempts,
+         count(*) FILTER (WHERE event_name = 'ad.shown')::int          AS sdk_impressions,
+         count(*) FILTER (WHERE event_name = 'ad.fallback_shown')::int AS mock_impressions,
+         count(*) FILTER (WHERE event_name = 'ad.rewarded')::int       AS completions,
+         count(*) FILTER (WHERE event_name = 'ad.server_granted')::int AS rewards_paid,
+         count(*) FILTER (WHERE event_name = 'ad.revenue')::int        AS revenue_impressions,
          coalesce(sum(revenue_cents) FILTER (WHERE event_name = 'ad.revenue'), 0)::bigint AS revenue_cents
        FROM events
        WHERE event_name LIKE 'ad.%'
          AND created_at > now() - interval '1 hour'`,
     );
-    const requested = hourly?.requested || 0;
-    const shown = hourly?.shown || 0;
-    const rewarded = hourly?.rewarded || 0;
-    const impressions_1h = hourly?.impressions || 0;
-    const revenue_cents_1h = Number(hourly?.revenue_cents || 0);
-    const fill_rate_1h = requested > 0 ? Math.round((shown / requested) * 1000) / 10 : null;
-    const reward_rate_1h = shown > 0 ? Math.round((rewarded / shown) * 1000) / 10 : null;
+    const attempts = hourly?.attempts || 0;
+    const sdk_impressions = hourly?.sdk_impressions || 0;
+    const mock_impressions = hourly?.mock_impressions || 0;
+    const impressions = sdk_impressions + mock_impressions;
+    const completions = hourly?.completions || 0;
+    const rewards_paid = hourly?.rewards_paid || 0;
+    const revenue_impressions = hourly?.revenue_impressions || 0;
+    const revenue_cents = Number(hourly?.revenue_cents || 0);
+    // Fill rate = how often we served *something* (SDK or mock) for an attempt.
+    const fill_rate_1h = attempts > 0 ? Math.round((impressions / attempts) * 1000) / 10 : null;
+    // Payout rate = how often a completion was actually credited on the server.
+    const payout_rate_1h =
+      completions > 0 ? Math.round((rewards_paid / completions) * 1000) / 10 : null;
 
     res.json({
       levelplay_configured: ['true', '1', 'yes'].includes(
@@ -413,13 +448,16 @@ adminAdsRouter.get('/status', async (_req, res) => {
       ),
       by_event: byName,
       last_hour: {
-        requested,
-        shown,
-        rewarded,
+        attempts,
+        sdk_impressions,
+        mock_impressions,
+        impressions,
+        completions,
+        rewards_paid,
         fill_rate_1h,
-        reward_rate_1h,
-        impressions: impressions_1h,
-        revenue_cents: revenue_cents_1h,
+        payout_rate_1h,
+        revenue_impressions,
+        revenue_cents,
       },
     });
   } catch (err) {

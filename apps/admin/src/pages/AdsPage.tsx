@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 
 type Tab = 'funnel' | 'placements' | 'revenue' | 'errors' | 'status';
 
-function pct(a: number, b: number) {
+function pct(a: number, b: number): number {
   if (!b) return 0;
   return Math.round((a / b) * 1000) / 10;
 }
@@ -24,11 +24,13 @@ function Tile({
   value,
   sub,
   tone = 'neutral',
+  hint,
 }: {
   label: string;
   value: string | number;
   sub?: string;
   tone?: 'neutral' | 'good' | 'warn' | 'bad';
+  hint?: string;
 }) {
   const toneClass =
     tone === 'good'
@@ -39,10 +41,54 @@ function Tile({
       ? 'text-red-600'
       : 'text-gray-900';
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div className="rounded-xl border border-gray-200 bg-white p-4" title={hint ?? undefined}>
       <p className="text-xs font-medium text-gray-500">{label}</p>
       <p className={`mt-1 text-xl font-bold ${toneClass}`}>{value}</p>
       {sub && <p className="text-xs text-gray-400">{sub}</p>}
+    </div>
+  );
+}
+
+/**
+ * Inline stage tile with a right-pointing arrow — the visual backbone of
+ * the rewarded-video funnel. Each stage reads "absolute · % of prev".
+ */
+function StageTile({
+  label,
+  value,
+  hint,
+  prev,
+  tone = 'neutral',
+  isFirst,
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+  prev?: number;
+  tone?: 'neutral' | 'good' | 'warn' | 'bad';
+  isFirst?: boolean;
+}) {
+  const toneClass =
+    tone === 'good'
+      ? 'text-green-600'
+      : tone === 'warn'
+      ? 'text-amber-600'
+      : tone === 'bad'
+      ? 'text-red-600'
+      : 'text-gray-900';
+  const dropPct = prev && prev > 0 ? Math.round((value / prev) * 1000) / 10 : null;
+  return (
+    <div className="relative flex-1 min-w-[140px]">
+      <div className="rounded-xl border border-gray-200 bg-white p-4 h-full">
+        <p className="text-xs font-medium text-gray-500">{label}</p>
+        <p className={`mt-1 text-2xl font-bold ${toneClass}`}>{value.toLocaleString()}</p>
+        {!isFirst && dropPct !== null && (
+          <p className="text-[11px] text-gray-400">
+            {dropPct}% of previous stage
+          </p>
+        )}
+        {hint && <p className="mt-1 text-[11px] text-gray-400 leading-snug">{hint}</p>}
+      </div>
     </div>
   );
 }
@@ -53,42 +99,134 @@ function FunnelTab({ days }: { days: number }) {
     queryFn: () => api(`/ads/funnel?days=${days}`),
   });
 
-  // Aggregate totals across all rows for the top tiles.
+  // Aggregate totals across all rows for the top tiles. The query already
+  // splits SDK vs Mock impressions and reports the server-authoritative
+  // rewards_paid stream separately from the client-side completions.
   const totals = useMemo(() => {
     const rows = data?.rows ?? [];
     const sum = (k: string) => rows.reduce((s: number, r: any) => s + (r[k] || 0), 0);
+    const attempts = sum('attempts');
+    const sdk = sum('sdk_impressions');
+    const mock = sum('mock_impressions');
+    const impressions = sum('impressions') || sdk + mock;
+    const completions = sum('completions');
+    const rewards_paid = sum('rewards_paid');
+    const no_fill = sum('no_fill');
+    const sdk_errors = sum('sdk_errors');
+    const loaded = sum('loaded');
     return {
-      requested: sum('requested'),
-      shown: sum('shown'),
-      rewarded: sum('rewarded'),
-      failed: sum('failed'),
-      no_fill: sum('no_fill'),
+      attempts,
+      loaded,
+      no_fill,
+      sdk,
+      mock,
+      impressions,
+      completions,
+      rewards_paid,
+      sdk_errors,
     };
   }, [data]);
 
   if (isPending) return <div className="mt-4 text-sm text-gray-500">Loading funnel…</div>;
 
-  const fillRate = pct(totals.shown, totals.requested);
-  const rewardRate = pct(totals.rewarded, totals.shown);
+  const fillRate = pct(totals.impressions, totals.attempts);
+  const watchThrough = pct(totals.completions, totals.impressions);
+  const payoutRate = pct(totals.rewards_paid, totals.completions);
+  // Red flag: server didn't credit rewards for N completions. With the
+  // idempotent /farm/ad-reward endpoint this should be near-zero.
+  const payoutGap = totals.completions - totals.rewards_paid;
+  const hasPayoutGap = payoutGap > 2 && payoutRate < 95;
+  const sdkFillRate = pct(totals.sdk, totals.attempts);
 
   return (
     <div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Tile label="Requested" value={totals.requested.toLocaleString()} />
+      {/* 5-stage pipeline ─ user intent → real credit. */}
+      <div className="mt-4 flex gap-3 overflow-x-auto">
+        <StageTile
+          isFirst
+          label="1. Ad attempts"
+          value={totals.attempts}
+          hint="User clicked water / fert / bucket / quest to watch an ad"
+        />
+        <StageTile
+          label="2. Ads filled"
+          value={totals.impressions}
+          prev={totals.attempts}
+          tone={fillRate >= 80 ? 'good' : fillRate >= 40 ? 'warn' : 'bad'}
+          hint="Mediation served something (real SDK or our mock fallback)"
+        />
+        <StageTile
+          label="3. Impressions"
+          value={totals.impressions}
+          prev={totals.impressions}
+          hint={`SDK ${totals.sdk.toLocaleString()} · Mock ${totals.mock.toLocaleString()}`}
+        />
+        <StageTile
+          label="4. Completions"
+          value={totals.completions}
+          prev={totals.impressions}
+          tone={watchThrough >= 80 ? 'good' : watchThrough >= 50 ? 'warn' : 'bad'}
+          hint="User watched to the end (client-reported ad.rewarded)"
+        />
+        <StageTile
+          label="5. Rewards paid"
+          value={totals.rewards_paid}
+          prev={totals.completions}
+          tone={payoutRate >= 95 ? 'good' : payoutRate >= 80 ? 'warn' : 'bad'}
+          hint="Server actually credited water / fertilizer (source of truth)"
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Tile
           label="Fill rate"
           value={`${fillRate}%`}
-          sub={`${totals.shown.toLocaleString()} shown`}
-          tone={fillRate >= 60 ? 'good' : fillRate >= 30 ? 'warn' : 'bad'}
+          sub={`${totals.impressions.toLocaleString()} / ${totals.attempts.toLocaleString()}`}
+          tone={fillRate >= 80 ? 'good' : fillRate >= 40 ? 'warn' : 'bad'}
+          hint="Share of attempts that led to ANY impression (SDK + mock)."
         />
         <Tile
-          label="Reward rate"
-          value={`${rewardRate}%`}
-          sub={`${totals.rewarded.toLocaleString()} rewarded`}
-          tone={rewardRate >= 70 ? 'good' : rewardRate >= 40 ? 'warn' : 'bad'}
+          label="SDK fill rate"
+          value={`${sdkFillRate}%`}
+          sub={`${totals.sdk.toLocaleString()} real impressions`}
+          tone={sdkFillRate >= 50 ? 'good' : sdkFillRate >= 20 ? 'warn' : 'bad'}
+          hint="Share of attempts that ironSource actually filled — drives revenue."
         />
-        <Tile label="Failed" value={totals.failed.toLocaleString()} tone={totals.failed ? 'warn' : 'neutral'} />
-        <Tile label="No fill" value={totals.no_fill.toLocaleString()} tone={totals.no_fill ? 'warn' : 'neutral'} />
+        <Tile
+          label="Watch-through"
+          value={`${watchThrough}%`}
+          sub={`${totals.completions.toLocaleString()} completions`}
+          tone={watchThrough >= 80 ? 'good' : watchThrough >= 50 ? 'warn' : 'bad'}
+          hint="Of users who saw an ad, how many watched till the reward moment."
+        />
+        <Tile
+          label="Payout rate"
+          value={`${payoutRate}%`}
+          sub={`${totals.rewards_paid.toLocaleString()} paid / ${totals.completions.toLocaleString()} completed`}
+          tone={payoutRate >= 95 ? 'good' : payoutRate >= 80 ? 'warn' : 'bad'}
+          hint="Completions that the server actually credited via /farm/ad-reward."
+        />
+      </div>
+
+      {hasPayoutGap && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <strong>Payout discrepancy:</strong> {payoutGap.toLocaleString()} completion
+          {payoutGap === 1 ? '' : 's'} did not result in a server-side reward credit.
+          Investigate <code className="font-mono">/farm/ad-reward</code> errors in the Errors tab or
+          the user-level Activity log.
+        </div>
+      )}
+
+      <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">
+        <strong>How to read this funnel.</strong> Each stage counts distinct user intents.
+        <em> Ad attempts</em> = one per button tap.
+        <em> Ads filled</em> = mediation returned something (real or our mock).
+        <em> Impressions</em> = the ad actually started playing — split into{' '}
+        <strong>SDK</strong> (real ironSource inventory, earns revenue) and{' '}
+        <strong>Mock</strong> (our fallback modal when no fill, no revenue).
+        <em> Completions</em> = user watched to the reward moment.
+        <em> Rewards paid</em> = server authoritatively credited water / fertiliser (idempotent,
+        impossible to double-count).
       </div>
 
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-4 overflow-x-auto">
@@ -98,39 +236,53 @@ function FunnelTab({ days }: { days: number }) {
               <th className="text-left py-2 px-2 font-medium text-gray-500">Date</th>
               <th className="text-left py-2 px-2 font-medium text-gray-500">Platform</th>
               <th className="text-left py-2 px-2 font-medium text-gray-500">Placement</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">Req</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">Shown</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">Rew</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">No-fill</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">Fail</th>
-              <th className="text-right py-2 px-2 font-medium text-gray-500">Fill %</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="User clicks — one per button tap">Attempts</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Impressions / Attempts">Fill rate</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Real ironSource impressions (earns revenue)">SDK imp.</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Our mock-ad modal (shown when SDK had no fill, no revenue)">Mock imp.</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Completions / Impressions">Watch %</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="User watched to reward moment">Completions</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Server authoritatively credited reward">Rewards paid</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="Mediation returned no ad for this placement">No fill</th>
+              <th className="text-right py-2 px-2 font-medium text-gray-500" title="SDK errors during load/show">Errors</th>
               <th className="text-right py-2 px-2 font-medium text-gray-500">Users</th>
             </tr>
           </thead>
           <tbody>
-            {(data?.rows ?? []).map((r: any, i: number) => (
-              <tr
-                key={`${r.stat_date}-${r.platform}-${r.placement}-${i}`}
-                className={`border-b border-gray-50 ${r.today ? 'bg-blue-50/40' : ''}`}
-              >
-                <td className="py-1.5 px-2 text-gray-700">
-                  {r.stat_date}
-                  {r.today && <span className="ml-1 text-[10px] text-blue-600">·today</span>}
-                </td>
-                <td className="py-1.5 px-2 text-gray-600">{r.platform}</td>
-                <td className="py-1.5 px-2 font-medium text-gray-800">{r.placement}</td>
-                <td className="py-1.5 px-2 text-right text-gray-700">{r.requested}</td>
-                <td className="py-1.5 px-2 text-right text-gray-700">{r.shown}</td>
-                <td className="py-1.5 px-2 text-right text-gray-700">{r.rewarded}</td>
-                <td className="py-1.5 px-2 text-right text-gray-500">{r.no_fill}</td>
-                <td className="py-1.5 px-2 text-right text-gray-500">{r.failed}</td>
-                <td className="py-1.5 px-2 text-right font-medium text-gray-800">{pct(r.shown, r.requested)}%</td>
-                <td className="py-1.5 px-2 text-right text-gray-500">{r.unique_users}</td>
-              </tr>
-            ))}
+            {(data?.rows ?? []).map((r: any, i: number) => {
+              const fr = pct(r.impressions, r.attempts);
+              const wt = pct(r.completions, r.impressions);
+              const pr = pct(r.rewards_paid, r.completions);
+              const payoutOff = r.completions - r.rewards_paid > 1 && pr < 90;
+              return (
+                <tr
+                  key={`${r.stat_date}-${r.platform}-${r.placement}-${i}`}
+                  className={`border-b border-gray-50 ${r.today ? 'bg-blue-50/40' : ''} ${
+                    payoutOff ? 'bg-red-50/40' : ''
+                  }`}
+                >
+                  <td className="py-1.5 px-2 text-gray-700 whitespace-nowrap">
+                    {r.stat_date}
+                    {r.today && <span className="ml-1 text-[10px] text-blue-600">·today</span>}
+                  </td>
+                  <td className="py-1.5 px-2 text-gray-600">{r.platform}</td>
+                  <td className="py-1.5 px-2 font-medium text-gray-800">{r.placement}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-700">{r.attempts}</td>
+                  <td className="py-1.5 px-2 text-right font-medium text-gray-800">{fr}%</td>
+                  <td className="py-1.5 px-2 text-right text-gray-700">{r.sdk_impressions}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-500">{r.mock_impressions}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-700">{wt}%</td>
+                  <td className="py-1.5 px-2 text-right text-gray-700">{r.completions}</td>
+                  <td className={`py-1.5 px-2 text-right font-medium ${payoutOff ? 'text-red-600' : 'text-green-700'}`}>{r.rewards_paid}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-500">{r.no_fill}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-500">{r.sdk_errors}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-500">{r.unique_users}</td>
+                </tr>
+              );
+            })}
             {(!data?.rows || data.rows.length === 0) && (
               <tr>
-                <td colSpan={10} className="py-6 text-center text-gray-400">
+                <td colSpan={13} className="py-6 text-center text-gray-400">
                   No ad activity in this range.
                 </td>
               </tr>
@@ -155,33 +307,38 @@ function PlacementsTab({ days }: { days: number }) {
         <thead>
           <tr className="border-b border-gray-100">
             <th className="text-left py-2 px-3 font-medium text-gray-500">Placement</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Requested</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Shown</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Rewarded</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">No-fill</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Failed</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Fill %</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Reward %</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Impressions</th>
-            <th className="text-right py-2 px-3 font-medium text-gray-500">Revenue</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500" title="User button taps">Attempts</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500">Fill rate</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500" title="Real ironSource impressions">SDK imp.</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500" title="Our mock fallback modal">Mock imp.</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500">Completions</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500" title="Server-credited rewards">Rewards paid</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500">Payout rate</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500">No fill</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500">Errors</th>
+            <th className="text-right py-2 px-3 font-medium text-gray-500" title="From ILRD ad.revenue events">Revenue</th>
             <th className="text-right py-2 px-3 font-medium text-gray-500">eCPM</th>
             <th className="text-right py-2 px-3 font-medium text-gray-500">Unique users</th>
           </tr>
         </thead>
         <tbody>
           {(data?.rows ?? []).map((r: any) => {
-            const ecpm = r.impressions ? Math.round((r.revenue_cents / r.impressions) * 1000) : 0;
+            const revImpr = r.revenue_impressions ?? r.sdk_impressions ?? 0;
+            const ecpm = revImpr ? Math.round((r.revenue_cents / revImpr) * 1000) : 0;
+            const fr = pct(r.impressions, r.attempts);
+            const pr = pct(r.rewards_paid, r.completions);
             return (
               <tr key={r.placement} className="border-b border-gray-50">
                 <td className="py-2 px-3 font-medium text-gray-900">{r.placement}</td>
-                <td className="py-2 px-3 text-right">{r.requested}</td>
-                <td className="py-2 px-3 text-right">{r.shown}</td>
-                <td className="py-2 px-3 text-right">{r.rewarded}</td>
+                <td className="py-2 px-3 text-right">{r.attempts}</td>
+                <td className="py-2 px-3 text-right font-medium">{fr}%</td>
+                <td className="py-2 px-3 text-right">{r.sdk_impressions}</td>
+                <td className="py-2 px-3 text-right text-gray-500">{r.mock_impressions}</td>
+                <td className="py-2 px-3 text-right">{r.completions}</td>
+                <td className="py-2 px-3 text-right font-medium text-green-700">{r.rewards_paid}</td>
+                <td className="py-2 px-3 text-right font-medium">{pr}%</td>
                 <td className="py-2 px-3 text-right text-gray-500">{r.no_fill}</td>
-                <td className="py-2 px-3 text-right text-gray-500">{r.failed}</td>
-                <td className="py-2 px-3 text-right font-medium">{pct(r.shown, r.requested)}%</td>
-                <td className="py-2 px-3 text-right font-medium">{pct(r.rewarded, r.shown)}%</td>
-                <td className="py-2 px-3 text-right text-gray-700">{r.impressions ?? 0}</td>
+                <td className="py-2 px-3 text-right text-gray-500">{r.sdk_errors}</td>
                 <td className="py-2 px-3 text-right font-semibold text-green-700">{fmtUsd(r.revenue_cents)}</td>
                 <td className="py-2 px-3 text-right text-gray-600">{fmtEcpm(ecpm)}</td>
                 <td className="py-2 px-3 text-right text-gray-500">{r.unique_users}</td>
@@ -190,7 +347,7 @@ function PlacementsTab({ days }: { days: number }) {
           })}
           {(!data?.rows || data.rows.length === 0) && (
             <tr>
-              <td colSpan={12} className="py-6 text-center text-gray-400">
+              <td colSpan={13} className="py-6 text-center text-gray-400">
                 No data.
               </td>
             </tr>
@@ -461,6 +618,12 @@ function StatusTab() {
   if (isPending) return <div className="mt-4 text-sm text-gray-500">Loading status…</div>;
 
   const h = data?.last_hour ?? {};
+  const attempts = h.attempts ?? 0;
+  const impressions = h.impressions ?? 0;
+  const completions = h.completions ?? 0;
+  const rewards_paid = h.rewards_paid ?? 0;
+  const payoutGap = completions - rewards_paid;
+  const hasPayoutGap = payoutGap > 1 && (h.payout_rate_1h ?? 100) < 95;
 
   return (
     <div className="mt-4 space-y-4">
@@ -470,16 +633,34 @@ function StatusTab() {
           value={data?.levelplay_configured ? 'yes' : 'no'}
           tone={data?.levelplay_configured ? 'good' : 'warn'}
         />
-        <Tile label="Requested (1h)" value={h.requested ?? 0} />
-        <Tile label="Shown (1h)" value={h.shown ?? 0} />
+        <Tile label="Attempts (1h)" value={attempts} hint="User clicks on ad buttons in the last hour" />
+        <Tile
+          label="Impressions (1h)"
+          value={impressions}
+          sub={`SDK ${h.sdk_impressions ?? 0} · Mock ${h.mock_impressions ?? 0}`}
+        />
         <Tile
           label="Fill rate (1h)"
           value={h.fill_rate_1h == null ? '—' : `${h.fill_rate_1h}%`}
-          tone={h.fill_rate_1h == null ? 'neutral' : h.fill_rate_1h >= 60 ? 'good' : h.fill_rate_1h >= 30 ? 'warn' : 'bad'}
+          tone={h.fill_rate_1h == null ? 'neutral' : h.fill_rate_1h >= 80 ? 'good' : h.fill_rate_1h >= 40 ? 'warn' : 'bad'}
         />
-        <Tile label="Impressions (1h)" value={h.impressions ?? 0} />
+        <Tile
+          label="Rewards paid (1h)"
+          value={rewards_paid}
+          sub={`${completions} completions`}
+          tone={hasPayoutGap ? 'warn' : 'good'}
+        />
         <Tile label="Revenue (1h)" value={fmtUsd(h.revenue_cents ?? 0)} tone={h.revenue_cents ? 'good' : 'neutral'} />
       </div>
+
+      {hasPayoutGap && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <strong>Payout gap in the last hour:</strong> {payoutGap} completion
+          {payoutGap === 1 ? '' : 's'} did not end with a server-credited reward
+          ({h.payout_rate_1h ?? 0}% payout rate). Check <code className="font-mono">/farm/ad-reward</code>{' '}
+          errors in the Errors tab.
+        </div>
+      )}
 
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">Event last-seen</h3>
@@ -521,7 +702,7 @@ export function AdsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Ads</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Rewarded-video funnel, per-placement performance, and mediation health.
+        Rewarded-video funnel from user intent to server-credited reward.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
