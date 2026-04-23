@@ -146,6 +146,15 @@ export async function aggregateAdFunnel(): Promise<void> {
          AND stat_date <= (current_date - interval '1 day')::date`,
     );
 
+    // Counting rules mirror /admin/ads/funnel (see that endpoint's
+    // docblock for the rationale):
+    //   - `requested` is deduped to web-only via properties ? 'has_native'
+    //     because the Kotlin bridge also emits one per show_rewarded;
+    //   - `no_fill` ignores the global onAdUnavailable SDK callback
+    //     (those events have NULL placement);
+    //   - `shown` counts both native impressions and fallback modals;
+    //   - `rewarded` counts `ad.rewarded` only — `ad.server_granted` is
+    //     a downstream ack of the same payout and was double-counting.
     await execute(
       `INSERT INTO ad_funnel_daily (
          stat_date, platform, placement, ad_unit,
@@ -156,14 +165,22 @@ export async function aggregateAdFunnel(): Promise<void> {
          e.created_at::date AS stat_date,
          ${PLATFORM_EXPR}    AS platform,
          coalesce(e.placement, 'unknown') AS placement,
-         coalesce(e.properties->>'ad_unit', 'rewarded') AS ad_unit,
-         count(*) FILTER (WHERE e.event_name = 'ad.requested')::int AS requested,
-         count(*) FILTER (WHERE e.event_name = 'ad.loaded')::int    AS loaded,
-         count(*) FILTER (WHERE e.event_name = 'ad.no_fill')::int   AS no_fill,
-         count(*) FILTER (WHERE e.event_name = 'ad.shown')::int     AS shown,
-         count(*) FILTER (WHERE e.event_name IN ('ad.rewarded','ad.server_granted'))::int AS rewarded,
-         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int    AS failed,
-         count(*) FILTER (WHERE e.event_name = 'ad.closed')::int    AS closed,
+         'rewarded' AS ad_unit,
+         count(*) FILTER (
+           WHERE e.event_name = 'ad.requested'
+             AND e.properties ? 'has_native'
+         )::int AS requested,
+         count(*) FILTER (WHERE e.event_name = 'ad.loaded')::int AS loaded,
+         count(*) FILTER (
+           WHERE e.event_name = 'ad.no_fill'
+             AND e.placement IS NOT NULL
+         )::int AS no_fill,
+         count(*) FILTER (
+           WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
+         )::int AS shown,
+         count(*) FILTER (WHERE e.event_name = 'ad.rewarded')::int AS rewarded,
+         count(*) FILTER (WHERE e.event_name = 'ad.failed')::int AS failed,
+         count(*) FILTER (WHERE e.event_name = 'ad.closed')::int AS closed,
          count(DISTINCT e.user_id)::int AS unique_users,
          now() AS updated_at
        FROM events e
