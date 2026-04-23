@@ -31,6 +31,12 @@ export function UserDetailPage() {
     enabled: !!id,
   });
 
+  const { data: offersData } = useQuery<any>({
+    queryKey: ['admin', 'user', id, 'offers'],
+    queryFn: () => api(`/users/${id}/offers`),
+    enabled: !!id,
+  });
+
   const grant = useMutation({
     mutationFn: () => api(`/users/${id}/grant`, { method: 'POST', body: { type: grantType, amount: Number(grantAmount) } }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'user', id] }); },
@@ -163,6 +169,152 @@ export function UserDetailPage() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Ads & Offers activity — debug view for missing rewards and
+          which games / offers the user engaged with. */}
+      <div id="offers" className="rounded-xl border border-gray-200 bg-white p-5 mb-6 scroll-mt-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">Ads &amp; Offers activity</h3>
+          <div className="flex gap-4 text-xs">
+            <span>
+              <span className="text-gray-400">Ad views total:</span>{' '}
+              <span className="font-semibold text-purple-700">
+                {(offersData?.adsByPhase ?? []).reduce((s: number, r: any) => s + (r.total || 0), 0)}
+              </span>
+            </span>
+            <span>
+              <span className="text-gray-400">Offers completed:</span>{' '}
+              <span className="font-semibold text-emerald-700">{offersData?.completions?.length ?? 0}</span>
+            </span>
+            <span>
+              <span className="text-gray-400">Postbacks logged:</span>{' '}
+              <span className="font-semibold text-blue-700">{offersData?.postbacks?.length ?? 0}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Ads by phase */}
+        <div className="mb-5">
+          <p className="text-xs font-medium text-gray-500 mb-1">Ad views breakdown</p>
+          {(!offersData?.adsByPhase || offersData.adsByPhase.length === 0) ? (
+            <p className="text-xs text-gray-400">No ad views recorded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Type</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Phase</th>
+                    <th className="text-right py-1.5 px-2 font-medium text-gray-500">Total</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Last date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {offersData.adsByPhase.map((r: any, i: number) => (
+                    <tr key={i} className="border-b border-gray-50">
+                      <td className="py-1.5 px-2 font-mono">{r.ad_type}</td>
+                      <td className="py-1.5 px-2 text-gray-700">{r.phase}</td>
+                      <td className="py-1.5 px-2 text-right font-medium">{r.total}</td>
+                      <td className="py-1.5 px-2 text-gray-500">
+                        {r.last_date ? new Date(r.last_date).toLocaleDateString() : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Offer completions */}
+        <div className="mb-5">
+          <p className="text-xs font-medium text-gray-500 mb-1">Offer completions</p>
+          {(!offersData?.completions || offersData.completions.length === 0) ? (
+            <p className="text-xs text-gray-400">User hasn't completed any offer milestones yet.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Offer</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Milestone</th>
+                    <th className="text-right py-1.5 px-2 font-medium text-gray-500">Reward</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Transaction</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Credited</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {offersData.completions.map((c: any) => (
+                    <tr key={c.id} className="border-b border-gray-50">
+                      <td className="py-1.5 px-2">
+                        <Link to={`/offers/${c.offer_id}`} className="font-medium text-blue-600 hover:underline">
+                          {c.offer_name}
+                        </Link>
+                        <span className="ml-1 text-gray-400">({c.reward_type})</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-700 font-mono">{c.milestone_event}</td>
+                      <td className="py-1.5 px-2 text-right font-medium text-emerald-700">{c.reward_amount}</td>
+                      <td className="py-1.5 px-2 text-gray-500 font-mono truncate max-w-[10rem]" title={c.everflow_transaction_id}>
+                        {c.everflow_transaction_id || '-'}
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-500">{new Date(c.credited_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Postback log for this user */}
+        <div>
+          <p className="text-xs font-medium text-gray-500 mb-1">Postback log (this user)</p>
+          {(!offersData?.postbacks || offersData.postbacks.length === 0) ? (
+            <p className="text-xs text-gray-400">No postbacks were matched to this user.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Offer</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Event</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Status</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Error</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Transaction</th>
+                    <th className="text-left py-1.5 px-2 font-medium text-gray-500">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {offersData.postbacks.map((p: any) => (
+                    <tr key={p.id} className="border-b border-gray-50">
+                      <td className="py-1.5 px-2">{p.offer_name || <span className="text-gray-400">#{p.everflow_offer_id}</span>}</td>
+                      <td className="py-1.5 px-2 font-mono text-gray-700">{p.everflow_event_id || '-'}</td>
+                      <td className="py-1.5 px-2">
+                        <span className={`rounded px-1.5 py-0.5 font-mono ${
+                          p.status === 'success'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : p.status === 'received'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-red-100 text-red-700'
+                        }`}>
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2 text-red-600 truncate max-w-[14rem]" title={p.error_message || ''}>
+                        {p.error_message || '-'}
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-500 font-mono truncate max-w-[10rem]" title={p.transaction_id}>
+                        {p.transaction_id || '-'}
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-500">{new Date(p.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Full event log */}

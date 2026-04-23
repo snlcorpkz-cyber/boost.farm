@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { api, apiUpload } from '@/lib/api';
 
@@ -10,11 +10,14 @@ interface Milestone {
   sort_order: number;
 }
 
+type OfferTab = 'form' | 'analytics';
+
 export function OfferEditPage() {
   const { id } = useParams<{ id: string }>();
   const isNew = !id;
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [tab, setTab] = useState<OfferTab>('form');
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -103,7 +106,40 @@ export function OfferEditPage() {
     <div className="max-w-4xl">
       <button onClick={() => navigate('/offers')} className="text-sm text-blue-600 hover:underline mb-4">&larr; Back to Offers</button>
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">{isNew ? 'New Offer' : 'Edit Offer'}</h1>
+      <h1 className="text-2xl font-bold text-gray-900 mb-4">{isNew ? 'New Offer' : 'Edit Offer'}</h1>
+
+      {/* Tab bar — Analytics is disabled for brand-new offers since there is
+          nothing to analyze until the offer has been saved at least once. */}
+      <div className="mb-6 border-b border-gray-200 flex gap-1">
+        <button
+          onClick={() => setTab('form')}
+          className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 ${
+            tab === 'form'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Form
+        </button>
+        <button
+          onClick={() => !isNew && setTab('analytics')}
+          disabled={isNew}
+          title={isNew ? 'Save the offer first' : ''}
+          className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 ${
+            tab === 'analytics'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed'
+          }`}
+        >
+          Analytics
+        </button>
+      </div>
+
+      {tab === 'analytics' && id && <OfferAnalyticsTab offerId={id} />}
+      {tab === 'analytics' && !id && (
+        <p className="text-sm text-gray-500">Save the offer first to see analytics.</p>
+      )}
+      {tab === 'form' && (<>
 
       {error && <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600">{error}</div>}
 
@@ -246,6 +282,269 @@ export function OfferEditPage() {
           )}
         </div>
       </div>
+
+      </>)}
+    </div>
+  );
+}
+
+/**
+ * Analytics tab for a single offer. Shows the raw completion funnel,
+ * postback status distribution, and the two most useful debug lists
+ * (recent completions + recent postbacks with error_message) plus a
+ * top-users leaderboard.
+ */
+function OfferAnalyticsTab({ offerId }: { offerId: string }) {
+  const [days, setDays] = useState(30);
+  const { data, isPending } = useQuery<any>({
+    queryKey: ['admin', 'offer', offerId, 'analytics', days],
+    queryFn: () => api(`/offers/${offerId}/analytics?days=${days}`),
+  });
+
+  if (isPending) return <div className="text-sm text-gray-500">Loading analytics…</div>;
+  if (!data) return <div className="text-sm text-red-600">Failed to load analytics.</div>;
+
+  const s = data.summary || {};
+
+  return (
+    <div className="space-y-6">
+      {/* Window switch */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-gray-500">
+          Window:&nbsp;
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={`ml-1 rounded px-2 py-0.5 ${
+                days === d ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+        <div className="text-xs text-gray-400">
+          Everflow ID: <span className="font-mono">{data.offer?.everflow_offer_id || '—'}</span>
+        </div>
+      </div>
+
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Tile label="Completions total" value={s.completions_total} />
+        <Tile label={`Completions (${days}d)`} value={s.completions_in_window} accent="blue" />
+        <Tile label={`Unique users (${days}d)`} value={s.unique_users} accent="emerald" />
+        <Tile label={`Postbacks OK (${days}d)`} value={s.postbacks_ok} accent="emerald" />
+        <Tile label={`Postbacks errors (${days}d)`} value={s.postbacks_errors} accent="red" />
+        <Tile
+          label="Payout total"
+          value={`$${((s.payout_total_cents || 0) / 100).toFixed(2)}`}
+          sub={`$${((s.payout_window_cents || 0) / 100).toFixed(2)} in window`}
+        />
+      </div>
+
+      {/* Milestones funnel */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Milestones funnel</h3>
+        {(!data.milestones || data.milestones.length === 0) ? (
+          <p className="text-xs text-gray-400">No milestones configured.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-gray-500">
+                  <th className="py-1.5 px-2">Event</th>
+                  <th className="py-1.5 px-2">EF ID</th>
+                  <th className="py-1.5 px-2 text-right">Reward</th>
+                  <th className="py-1.5 px-2 text-right">Completions (all)</th>
+                  <th className="py-1.5 px-2 text-right">Completions ({days}d)</th>
+                  <th className="py-1.5 px-2 text-right">Unique users ({days}d)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.milestones.map((m: any) => (
+                  <tr key={m.id} className="border-b border-gray-50">
+                    <td className="py-1.5 px-2 font-medium text-gray-800">{m.event_name}</td>
+                    <td className="py-1.5 px-2 font-mono text-gray-500">{m.everflow_event_id}</td>
+                    <td className="py-1.5 px-2 text-right font-medium text-emerald-700">{m.reward_amount}</td>
+                    <td className="py-1.5 px-2 text-right">{m.completions_total}</td>
+                    <td className="py-1.5 px-2 text-right font-medium text-blue-700">{m.completions_window}</td>
+                    <td className="py-1.5 px-2 text-right">{m.unique_users_window}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Postback status breakdown */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Postback status ({days}d)</h3>
+        {(!data.postback_status || data.postback_status.length === 0) ? (
+          <p className="text-xs text-gray-400">No postbacks received for this offer in the window.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {data.postback_status.map((s: any) => (
+              <span
+                key={s.status}
+                className={`text-xs rounded-full px-3 py-1 font-medium ${
+                  s.status === 'success'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : s.status === 'received'
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-red-100 text-red-700'
+                }`}
+              >
+                {s.status}: {s.c}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Two-column: recent completions + recent postbacks */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent completions</h3>
+          {(!data.recent_completions || data.recent_completions.length === 0) ? (
+            <p className="text-xs text-gray-400">No completions yet.</p>
+          ) : (
+            <div className="max-h-80 overflow-y-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr className="text-left text-gray-500">
+                    <th className="py-1.5 px-2">User</th>
+                    <th className="py-1.5 px-2">Milestone</th>
+                    <th className="py-1.5 px-2 text-right">Reward</th>
+                    <th className="py-1.5 px-2">Credited</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.recent_completions.map((c: any) => (
+                    <tr key={c.id} className="border-b border-gray-50">
+                      <td className="py-1.5 px-2">
+                        <Link to={`/users/${c.user_id}`} className="text-blue-600 hover:underline font-medium">
+                          {c.nickname || c.email || c.user_id.slice(0, 8)}
+                        </Link>
+                      </td>
+                      <td className="py-1.5 px-2 font-mono text-gray-700">{c.milestone_event}</td>
+                      <td className="py-1.5 px-2 text-right font-medium text-emerald-700">{c.reward_amount}</td>
+                      <td className="py-1.5 px-2 text-gray-500">{new Date(c.credited_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Recent postbacks</h3>
+          {(!data.recent_postbacks || data.recent_postbacks.length === 0) ? (
+            <p className="text-xs text-gray-400">No postbacks logged.</p>
+          ) : (
+            <div className="max-h-80 overflow-y-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr className="text-left text-gray-500">
+                    <th className="py-1.5 px-2">Status</th>
+                    <th className="py-1.5 px-2">Event</th>
+                    <th className="py-1.5 px-2">Transaction</th>
+                    <th className="py-1.5 px-2">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.recent_postbacks.map((p: any) => (
+                    <tr key={p.id} className="border-b border-gray-50">
+                      <td className="py-1.5 px-2">
+                        <span
+                          className={`rounded px-1.5 py-0.5 font-mono ${
+                            p.status === 'success'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : p.status === 'received'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-red-100 text-red-700'
+                          }`}
+                          title={p.error_message || ''}
+                        >
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="py-1.5 px-2 font-mono text-gray-700">{p.everflow_event_id || '-'}</td>
+                      <td className="py-1.5 px-2 font-mono text-gray-500 truncate max-w-[10rem]" title={p.transaction_id}>
+                        {p.transaction_id || '-'}
+                      </td>
+                      <td className="py-1.5 px-2 text-gray-500">{new Date(p.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Top users */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-3">Top users (all time)</h3>
+        {(!data.top_users || data.top_users.length === 0) ? (
+          <p className="text-xs text-gray-400">Nobody has completed this offer yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-gray-500">
+                  <th className="py-1.5 px-2">User</th>
+                  <th className="py-1.5 px-2 text-right">Completions</th>
+                  <th className="py-1.5 px-2 text-right">Reward total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.top_users.map((u: any) => (
+                  <tr key={u.user_id} className="border-b border-gray-50">
+                    <td className="py-1.5 px-2">
+                      <Link to={`/users/${u.user_id}`} className="text-blue-600 hover:underline font-medium">
+                        {u.nickname || u.email || u.user_id.slice(0, 8)}
+                      </Link>
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-medium">{u.completions}</td>
+                    <td className="py-1.5 px-2 text-right text-emerald-700">{u.reward_total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent?: 'blue' | 'emerald' | 'red';
+}) {
+  const cls =
+    accent === 'blue'
+      ? 'text-blue-700'
+      : accent === 'emerald'
+        ? 'text-emerald-700'
+        : accent === 'red'
+          ? 'text-red-700'
+          : 'text-gray-900';
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+      <p className="text-[11px] font-medium text-gray-500">{label}</p>
+      <p className={`text-lg font-bold mt-0.5 ${cls}`}>{value ?? '—'}</p>
+      {sub && <p className="text-[10px] text-gray-400 mt-0.5">{sub}</p>}
     </div>
   );
 }

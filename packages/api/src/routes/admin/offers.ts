@@ -75,6 +75,144 @@ adminOffersRouter.get('/:id', async (req, res) => {
   }
 });
 
+/**
+ * Per-offer analytics — powering the "Analytics" tab in OfferEditPage.
+ * Everything is filtered to the requested window (default 30 days) unless
+ * otherwise noted. All rows are capped to keep the response small.
+ */
+adminOffersRouter.get('/:id/analytics', async (req, res) => {
+  try {
+    const offerId = req.params.id;
+    const days = Math.max(1, Math.min(365, parseInt(req.query.days as string) || 30));
+
+    const offer = await queryOne<any>(
+      `SELECT id, name, everflow_offer_id, payout_cents FROM offers WHERE id = $1`,
+      [offerId],
+    );
+    if (!offer) {
+      res.status(404).json({ error: 'Offer not found' });
+      return;
+    }
+
+    const [summaryRow, milestones, postbackStatus, recentCompletions, recentPostbacks, topUsers] =
+      await Promise.all([
+        queryOne<any>(
+          `SELECT
+             (SELECT count(*)::int FROM offer_completions WHERE offer_id = $1) AS completions_total,
+             (SELECT count(*)::int FROM offer_completions
+                WHERE offer_id = $1
+                  AND credited_at >= now() - ($2 || ' days')::interval) AS completions_in_window,
+             (SELECT count(DISTINCT user_id)::int FROM offer_completions
+                WHERE offer_id = $1
+                  AND credited_at >= now() - ($2 || ' days')::interval) AS unique_users`,
+          [offerId, String(days)],
+        ),
+        query<any>(
+          `SELECT m.id, m.event_name, m.everflow_event_id, m.reward_amount, m.sort_order,
+                  (SELECT count(*)::int FROM offer_completions oc
+                     WHERE oc.milestone_id = m.id) AS completions_total,
+                  (SELECT count(*)::int FROM offer_completions oc
+                     WHERE oc.milestone_id = m.id
+                       AND oc.credited_at >= now() - ($2 || ' days')::interval) AS completions_window,
+                  (SELECT count(DISTINCT oc.user_id)::int FROM offer_completions oc
+                     WHERE oc.milestone_id = m.id
+                       AND oc.credited_at >= now() - ($2 || ' days')::interval) AS unique_users_window
+             FROM offer_milestones m
+            WHERE m.offer_id = $1
+            ORDER BY m.sort_order, m.event_name`,
+          [offerId, String(days)],
+        ),
+        offer.everflow_offer_id
+          ? query<any>(
+              `SELECT status, count(*)::int AS c
+                 FROM offer_postback_log
+                WHERE everflow_offer_id = $1
+                  AND created_at >= now() - ($2 || ' days')::interval
+                GROUP BY status
+                ORDER BY c DESC`,
+              [offer.everflow_offer_id, String(days)],
+            )
+          : Promise.resolve([] as any[]),
+        query<any>(
+          `SELECT oc.id, oc.user_id, oc.everflow_transaction_id, oc.credited_at,
+                  oc.milestone_id, m.event_name AS milestone_event, m.reward_amount,
+                  u.nickname, u.email
+             FROM offer_completions oc
+             JOIN users u ON u.id = oc.user_id
+             JOIN offer_milestones m ON m.id = oc.milestone_id
+            WHERE oc.offer_id = $1
+            ORDER BY oc.credited_at DESC
+            LIMIT 50`,
+          [offerId],
+        ),
+        offer.everflow_offer_id
+          ? query<any>(
+              `SELECT id, user_id, transaction_id, status, error_message,
+                      everflow_event_id, created_at, raw_query
+                 FROM offer_postback_log
+                WHERE everflow_offer_id = $1
+                ORDER BY created_at DESC
+                LIMIT 50`,
+              [offer.everflow_offer_id],
+            )
+          : Promise.resolve([] as any[]),
+        query<any>(
+          `SELECT oc.user_id, u.nickname, u.email,
+                  count(*)::int AS completions,
+                  coalesce(sum(m.reward_amount), 0)::float AS reward_total
+             FROM offer_completions oc
+             JOIN users u ON u.id = oc.user_id
+             JOIN offer_milestones m ON m.id = oc.milestone_id
+            WHERE oc.offer_id = $1
+            GROUP BY oc.user_id, u.nickname, u.email
+            ORDER BY completions DESC, reward_total DESC
+            LIMIT 20`,
+          [offerId],
+        ),
+      ]);
+
+    // Payout estimate — pay-per-completion model using offers.payout_cents.
+    // If the offer uses a per-milestone reward model instead, we still surface
+    // the raw count so the admin can compute payout themselves.
+    const payoutCents = offer.payout_cents || 0;
+    const payout_total_cents = (summaryRow?.completions_total || 0) * payoutCents;
+    const payout_window_cents = (summaryRow?.completions_in_window || 0) * payoutCents;
+
+    const postbacks_ok =
+      postbackStatus.find((r: any) => r.status === 'success')?.c || 0;
+    const postbacks_errors = postbackStatus
+      .filter((r: any) => r.status !== 'success')
+      .reduce((s: number, r: any) => s + (r.c || 0), 0);
+
+    res.json({
+      days,
+      offer: {
+        id: offer.id,
+        name: offer.name,
+        everflow_offer_id: offer.everflow_offer_id,
+        payout_cents: payoutCents,
+      },
+      summary: {
+        completions_total: summaryRow?.completions_total || 0,
+        completions_in_window: summaryRow?.completions_in_window || 0,
+        unique_users: summaryRow?.unique_users || 0,
+        postbacks_ok,
+        postbacks_errors,
+        payout_total_cents,
+        payout_window_cents,
+      },
+      milestones,
+      postback_status: postbackStatus,
+      recent_completions: recentCompletions,
+      recent_postbacks: recentPostbacks,
+      top_users: topUsers,
+    });
+  } catch (err) {
+    console.error('[admin/offers/:id/analytics]', err);
+    res.status(500).json({ error: 'Failed to load offer analytics' });
+  }
+});
+
 adminOffersRouter.post('/', async (req, res) => {
   try {
     const { name, description, reward_type, everflow_offer_id, tracking_link_template, sort_order, store_url, payout_cents, milestones } = req.body;

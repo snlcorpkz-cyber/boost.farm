@@ -3,6 +3,23 @@ import { query, queryOne, execute } from '../../lib/db.js';
 
 export const adminUsersRouter = Router();
 
+/**
+ * Sortable columns whitelist. We build the ORDER BY clause from the client
+ * value, so hardcoding the allowed expressions is required to prevent
+ * SQL injection. The values are the actual SQL expressions used in SELECT.
+ */
+const USERS_SORT_COLUMNS: Record<string, string> = {
+  created_at: 'u.created_at',
+  last_login_at: 'u.last_login_at',
+  last_active_at: 'u.last_active_at',
+  total_ad_views: 'total_ad_views',
+  offers_completed: 'offers_completed',
+  friends_count: 'friends_count',
+  growth_percent: 'f.growth_percent',
+  current_stage: 'f.current_stage',
+  total_water_this_month: 'f.total_water_this_month',
+};
+
 adminUsersRouter.get('/', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -12,6 +29,13 @@ adminUsersRouter.get('/', async (req, res) => {
     const rank = req.query.rank as string || '';
     const platform = req.query.platform as string || '';
     const country = req.query.country as string || '';
+    const activeWithin = parseInt(req.query.activeWithin as string) || 0;
+    const hasAds = req.query.hasAds === '1' || req.query.hasAds === 'true';
+    const hasOffers = req.query.hasOffers === '1' || req.query.hasOffers === 'true';
+
+    const sortByRaw = (req.query.sortBy as string) || 'created_at';
+    const sortColumn = USERS_SORT_COLUMNS[sortByRaw] ?? USERS_SORT_COLUMNS.created_at;
+    const sortDir = (req.query.sortDir as string) === 'asc' ? 'ASC' : 'DESC';
 
     let where = 'WHERE 1=1';
     const params: any[] = [];
@@ -37,12 +61,27 @@ adminUsersRouter.get('/', async (req, res) => {
       where += ` AND u.country = $${pi}`;
       params.push(country);
     }
+    if (activeWithin > 0 && activeWithin <= 365) {
+      pi++;
+      where += ` AND u.last_active_at >= now() - ($${pi} || ' days')::interval`;
+      params.push(String(activeWithin));
+    }
+    if (hasAds) {
+      where += ` AND EXISTS (SELECT 1 FROM ad_views av2 WHERE av2.user_id = u.id)`;
+    }
+    if (hasOffers) {
+      where += ` AND EXISTS (SELECT 1 FROM offer_completions oc2 WHERE oc2.user_id = u.id)`;
+    }
 
     const countRow = await queryOne(
       `SELECT count(*)::int AS c FROM users u LEFT JOIN farms f ON f.user_id = u.id AND f.harvested = false ${where}`,
       params
     );
 
+    // Aliases used in SELECT are visible to ORDER BY in Postgres, which lets
+    // us sort by computed columns like `total_ad_views` without wrapping in
+    // a subquery. `NULLS LAST` keeps users with no activity at the bottom on
+    // DESC sorts, which matches what admins expect.
     const rows = await query(
       `SELECT
         u.id, u.nickname, u.email, u.avatar_id, u.is_admin,
@@ -52,11 +91,13 @@ adminUsersRouter.get('/', async (req, res) => {
         f.rank_id, f.current_stage, f.growth_percent, f.water_in_can,
         f.nutrition, f.total_water_this_month,
         (SELECT count(*)::int FROM friends fr WHERE fr.user_id = u.id) AS friends_count,
-        (SELECT coalesce(sum(count), 0)::int FROM ad_views av WHERE av.user_id = u.id) AS total_ad_views
+        (SELECT coalesce(sum(count), 0)::int FROM ad_views av WHERE av.user_id = u.id) AS total_ad_views,
+        (SELECT count(*)::int FROM offer_completions oc WHERE oc.user_id = u.id) AS offers_completed,
+        (SELECT max(started_at) FROM sessions s WHERE s.user_id = u.id) AS last_session_at
        FROM users u
        LEFT JOIN farms f ON f.user_id = u.id AND f.harvested = false
        ${where}
-       ORDER BY u.created_at DESC
+       ORDER BY ${sortColumn} ${sortDir} NULLS LAST, u.id ${sortDir}
        LIMIT $${pi + 1} OFFSET $${pi + 2}`,
       [...params, limit, offset]
     );
@@ -66,6 +107,8 @@ adminUsersRouter.get('/', async (req, res) => {
       total: countRow?.c || 0,
       page,
       limit,
+      sortBy: sortByRaw in USERS_SORT_COLUMNS ? sortByRaw : 'created_at',
+      sortDir: sortDir.toLowerCase(),
     });
   } catch (err) {
     console.error('[admin/users]', err);
@@ -219,6 +262,75 @@ adminUsersRouter.get('/:id/sessions', async (req, res) => {
   } catch (err) {
     console.error('[admin/users/sessions]', err);
     res.status(500).json({ error: 'Failed to load sessions' });
+  }
+});
+
+/**
+ * Ad-views and offer activity for a single user. This is the debug view
+ * admins use to diagnose "why didn't this user get a reward" or "which
+ * offers did they play". Pulls from three tables in parallel:
+ *   - ad_views            (daily per-phase counters)
+ *   - offer_completions   (credited milestones)
+ *   - offer_postback_log  (raw Everflow callbacks)
+ */
+adminUsersRouter.get('/:id/offers', async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const [completions, postbacks, adDaily, adByPhase] = await Promise.all([
+      query(
+        `SELECT oc.id, oc.offer_id, oc.milestone_id, oc.everflow_transaction_id,
+                oc.credited_at,
+                o.name AS offer_name, o.reward_type,
+                m.event_name AS milestone_event, m.reward_amount
+           FROM offer_completions oc
+           JOIN offers o ON o.id = oc.offer_id
+           JOIN offer_milestones m ON m.id = oc.milestone_id
+          WHERE oc.user_id = $1
+          ORDER BY oc.credited_at DESC
+          LIMIT 100`,
+        [userId]
+      ),
+      query(
+        `SELECT pl.id, pl.everflow_offer_id, pl.everflow_event_id,
+                pl.transaction_id, pl.status, pl.error_message, pl.created_at,
+                pl.raw_query,
+                o.name AS offer_name
+           FROM offer_postback_log pl
+           LEFT JOIN offers o ON o.everflow_offer_id = pl.everflow_offer_id
+          WHERE pl.user_id = $1
+          ORDER BY pl.created_at DESC
+          LIMIT 100`,
+        [userId]
+      ),
+      query(
+        `SELECT ad_type, phase, view_date, count
+           FROM ad_views
+          WHERE user_id = $1
+          ORDER BY view_date DESC, ad_type, phase
+          LIMIT 120`,
+        [userId]
+      ),
+      query(
+        `SELECT ad_type, phase, sum(count)::int AS total,
+                max(view_date) AS last_date
+           FROM ad_views
+          WHERE user_id = $1
+          GROUP BY ad_type, phase
+          ORDER BY total DESC`,
+        [userId]
+      ),
+    ]);
+
+    res.json({
+      completions,
+      postbacks,
+      adsByDay: adDaily,
+      adsByPhase: adByPhase,
+    });
+  } catch (err) {
+    console.error('[admin/users/:id/offers]', err);
+    res.status(500).json({ error: 'Failed to load user offers/ads activity' });
   }
 });
 
