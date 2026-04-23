@@ -63,10 +63,15 @@ const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const KEY_LEN = 32;
 const SALT_LEN = 16;
+// Must match packages/api/src/lib/partner-password.ts — 64 MiB covers
+// OpenSSL's bookkeeping on top of the 32 MiB hash grid.
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 
 function hashPassword(plain) {
   const salt = crypto.randomBytes(SALT_LEN);
-  const hash = crypto.scryptSync(plain, salt, KEY_LEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  const hash = crypto.scryptSync(plain, salt, KEY_LEN, {
+    N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM,
+  });
   return ['scrypt', SCRYPT_N, SCRYPT_R, SCRYPT_P, salt.toString('base64'), hash.toString('base64')].join('$');
 }
 

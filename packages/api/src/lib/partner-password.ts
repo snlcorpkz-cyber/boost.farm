@@ -19,12 +19,19 @@ const SCRYPT_P = 1;
 const KEY_LEN  = 32;
 const SALT_LEN = 16;
 
+// N=32768, r=8 needs exactly 128 * r * N = 32 MiB of memory, which is
+// also Node's default `maxmem`. Depending on libssl build (Alpine/OpenSSL
+// adds internal bookkeeping) scryptSync trips "memory limit exceeded".
+// Raise the cap to 64 MiB so the allocation always fits.
+const SCRYPT_MAXMEM = 64 * 1024 * 1024;
+
 export function hashPartnerPassword(plain: string): string {
   const salt = crypto.randomBytes(SALT_LEN);
   const hash = crypto.scryptSync(plain, salt, KEY_LEN, {
     N: SCRYPT_N,
     r: SCRYPT_R,
     p: SCRYPT_P,
+    maxmem: SCRYPT_MAXMEM,
   });
   return [
     'scrypt',
@@ -45,7 +52,10 @@ export function verifyPartnerPassword(plain: string, stored: string): boolean {
     const p = parseInt(parts[3], 10);
     const salt = Buffer.from(parts[4], 'base64');
     const expected = Buffer.from(parts[5], 'base64');
-    const actual = crypto.scryptSync(plain, salt, expected.length, { N, r, p });
+    const actual = crypto.scryptSync(plain, salt, expected.length, {
+      N, r, p,
+      maxmem: SCRYPT_MAXMEM,
+    });
     return crypto.timingSafeEqual(actual, expected);
   } catch {
     return false;
