@@ -33,11 +33,17 @@ class LevelPlayRewardedAds(
     private var currentCallback: ((Boolean, String?) -> Unit)? = null
     private var rewardedThisSession = false
     private var currentPlacement: String? = null
+    // Sticks around between showRewarded() and onAdClosed() so every
+    // SDK callback (shown / rewarded / closed / failed) gets stamped
+    // with the same attempt_id the web layer generated on click. The
+    // admin funnel dedups stages by this id (see /admin/ads/funnel).
+    private var currentAttemptId: String? = null
     // ILRD can arrive after onAdClosed (which clears currentPlacement via
     // deliver()), so we keep a separate "last shown" pointer that lives
     // until the next successful show. This is what gets tagged onto the
     // revenue event so it attributes to the right placement.
     @Volatile private var lastShownPlacement: String? = null
+    @Volatile private var lastAttemptId: String? = null
 
     init {
         IronSource.setLevelPlayRewardedVideoListener(object : LevelPlayRewardedVideoListener {
@@ -48,6 +54,7 @@ class LevelPlayRewardedAds(
                     "shown",
                     mapOf(
                         "placement" to currentPlacement,
+                        "attempt_id" to currentAttemptId,
                         "network" to adInfo?.adNetwork,
                         "ad_unit" to "rewarded",
                     ),
@@ -60,6 +67,7 @@ class LevelPlayRewardedAds(
                     "closed",
                     mapOf(
                         "placement" to currentPlacement,
+                        "attempt_id" to currentAttemptId,
                         "rewarded" to rewardedThisSession,
                         "network" to adInfo?.adNetwork,
                     ),
@@ -76,6 +84,7 @@ class LevelPlayRewardedAds(
                     "rewarded",
                     mapOf(
                         "placement" to (currentPlacement ?: placement?.placementName),
+                        "attempt_id" to currentAttemptId,
                         "reward_name" to placement?.rewardName,
                         "reward_amount" to placement?.rewardAmount,
                         "network" to adInfo?.adNetwork,
@@ -89,6 +98,7 @@ class LevelPlayRewardedAds(
                     "failed",
                     mapOf(
                         "placement" to currentPlacement,
+                        "attempt_id" to currentAttemptId,
                         "error_code" to error?.errorCode,
                         "error_message" to error?.errorMessage,
                         "network" to adInfo?.adNetwork,
@@ -105,6 +115,9 @@ class LevelPlayRewardedAds(
 
             override fun onAdAvailable(adInfo: AdInfo?) {
                 Log.d(TAG, "onAdAvailable")
+                // `loaded` fires on SDK auto-cache and isn't tied to a user
+                // intent, so we deliberately omit attempt_id here — it's a
+                // mediation-health signal, not a funnel stage.
                 adEventSink.emit(
                     "loaded",
                     mapOf(
@@ -116,6 +129,7 @@ class LevelPlayRewardedAds(
 
             override fun onAdUnavailable() {
                 Log.d(TAG, "onAdUnavailable")
+                // Global (no placement, no user intent) — backend drops it.
                 adEventSink.emit(
                     "no_fill",
                     mapOf(
@@ -145,6 +159,7 @@ class LevelPlayRewardedAds(
                     "revenue",
                     mapOf(
                         "placement" to (currentPlacement ?: lastShownPlacement),
+                        "attempt_id" to (currentAttemptId ?: lastAttemptId),
                         "network" to data.adNetwork,
                         "ad_unit" to data.adUnit,
                         "revenue" to data.revenue,
@@ -161,12 +176,24 @@ class LevelPlayRewardedAds(
         })
     }
 
-    override fun showRewarded(placement: String, onFinished: (Boolean, String?) -> Unit) {
+    override fun showRewarded(
+        placement: String,
+        attemptId: String?,
+        onFinished: (Boolean, String?) -> Unit,
+    ) {
         activity.runOnUiThread {
+            // The web layer already emitted its own `ad.requested` with
+            // `has_native: true` for this click. Re-emitting here without
+            // the marker gives the backend a way to distinguish "real user
+            // intent" (web) from "bridge echo" (Android) and keeps the
+            // admin funnel honest. We still attach attempt_id so a later
+            // `ad.shown` / `ad.rewarded` can correlate even if the web
+            // emission was lost to a flaky connection.
             adEventSink.emit(
                 "requested",
                 mapOf(
                     "placement" to placement,
+                    "attempt_id" to attemptId,
                     "ad_unit" to "rewarded",
                     "platform" to "android",
                 ),
@@ -177,6 +204,7 @@ class LevelPlayRewardedAds(
                     "failed",
                     mapOf(
                         "placement" to placement,
+                        "attempt_id" to attemptId,
                         "error_message" to "concurrent_show",
                     ),
                 )
@@ -189,6 +217,7 @@ class LevelPlayRewardedAds(
                     "no_fill",
                     mapOf(
                         "placement" to placement,
+                        "attempt_id" to attemptId,
                         "reason" to "isRewardedVideoAvailable_false",
                     ),
                 )
@@ -200,7 +229,9 @@ class LevelPlayRewardedAds(
             }
             currentCallback = onFinished
             currentPlacement = placement
+            currentAttemptId = attemptId
             lastShownPlacement = placement
+            lastAttemptId = attemptId
             rewardedThisSession = false
             IronSource.showRewardedVideo(activity, placement)
         }
@@ -210,6 +241,7 @@ class LevelPlayRewardedAds(
         val cb = currentCallback
         currentCallback = null
         currentPlacement = null
+        currentAttemptId = null
         if (cb != null) {
             activity.runOnUiThread { cb(ok, reason) }
         }

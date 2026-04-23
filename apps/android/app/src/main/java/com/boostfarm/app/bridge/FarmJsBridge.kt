@@ -127,8 +127,9 @@ class FarmJsBridge(
     fun requestRewardedAd(json: String) {
         val placement = parsePlacement(json)
         val requestId = parseRequestId(json)
+        val attemptId = parseAttemptId(json)
         webView.post {
-            rewardedAds.showRewarded(placement) { ok, reason ->
+            rewardedAds.showRewarded(placement, attemptId) { ok, reason ->
                 emit("onRewardedFinished", placement, ok, requestId, reason)
             }
         }
@@ -198,6 +199,19 @@ class FarmJsBridge(
             id.ifBlank { null }
         }.getOrNull()
 
+    /**
+     * Caller-generated attempt_id — one per user click, stamped by the
+     * web layer onto every ad.* event. Passed through into the native
+     * LevelPlay adapter so every SDK callback (shown / rewarded /
+     * closed / failed) carries the same id, letting the admin funnel
+     * dedup stages by `count(DISTINCT attempt_id)` instead of raw events.
+     */
+    private fun parseAttemptId(json: String): String? =
+        runCatching {
+            val id = JSONObject(json).optString("attemptId", "")
+            id.ifBlank { null }
+        }.getOrNull()
+
     companion object {
         /**
          * Bump this when you add/change bridge methods so the web client can
@@ -216,8 +230,14 @@ class FarmJsBridge(
          *      closed_unrewarded / concurrent). Web layer uses this to decide
          *      whether to offer a fallback reward flow (unavailable) or to
          *      silently skip (closed_unrewarded).
+         * v7: requestRewardedAd accepts an optional `attemptId` in the JSON
+         *      payload — the web-side per-click correlation id that the
+         *      admin Ads funnel uses to count distinct user intents via
+         *      `count(DISTINCT properties->>'attempt_id')`. Safe to omit:
+         *      native simply doesn't stamp attempt_id onto its own events
+         *      when the web bundle predates v7.
          */
-        const val BRIDGE_API_VERSION = 6
+        const val BRIDGE_API_VERSION = 7
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?, reason: String?) {

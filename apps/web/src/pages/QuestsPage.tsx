@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ import { UI } from '../lib/assets';
 import BottomNav from '../components/farm/BottomNav';
 import MockAdModal from '../components/MockAdModal';
 import { trackClient } from '../lib/track';
+import { isAndroid } from '../lib/native';
 
 const QUEST_ICONS: Record<string, string> = {
   checkin: '📋',
@@ -60,7 +61,7 @@ export default function QuestsPage() {
   // rank-based amount). That endpoint also auto-increments the watch_ad quest
   // counter via incrementActivityQuest — single source of truth.
   const creditAdReward = useMutation({
-    mutationFn: (vars: { type: 'water' | 'nutrition' }) =>
+    mutationFn: (vars: { type: 'water' | 'nutrition'; attemptId: string | null }) =>
       api('/farm/ad-reward', {
         method: 'POST',
         body: JSON.stringify({ type: vars.type, placement: 'quest', idempotencyKey: crypto.randomUUID() }),
@@ -68,7 +69,12 @@ export default function QuestsPage() {
     onSuccess: (res: any, vars) => {
       trackClient(
         'ad.server_granted',
-        { type: vars.type, amount: res?.amount ?? 0, source: 'quest' },
+        {
+          type: vars.type,
+          amount: res?.amount ?? 0,
+          source: 'quest',
+          attempt_id: vars.attemptId,
+        },
         { placement: 'quest' },
       );
       qc.invalidateQueries({ queryKey: ['quests'] });
@@ -84,6 +90,13 @@ export default function QuestsPage() {
 
   const [adOpen, setAdOpen] = useState(false);
   const [adQuest, setAdQuest] = useState<any | null>(null);
+  // Per-click correlation so the admin funnel can count distinct user
+  // intents for the `quest` placement via attempt_id instead of raw
+  // emissions (see packages/api/src/routes/admin/ads.ts /funnel docs).
+  const questAttemptIdRef = useRef<string | null>(null);
+  // Guard: one ad.rewarded per attempt even if the modal's onComplete
+  // re-fires due to double-tap / re-render race.
+  const questRewardedFiredRef = useRef<string | null>(null);
 
   const quests = data?.quests || [];
   const waterQuests = quests.filter((q: any) => q.reward_type === 'water');
@@ -92,9 +105,33 @@ export default function QuestsPage() {
   const handleQuestAction = (quest: any) => {
     const key = quest.quest_key;
     if (key === 'watch_ad') {
+      const attemptId =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      questAttemptIdRef.current = attemptId;
+      questRewardedFiredRef.current = null;
+      // `has_native` tells the admin funnel this is a real user intent
+      // (see /admin/ads/funnel — events without it are dropped to avoid
+      // double counting the Android bridge's internal request echo).
       trackClient(
         'ad.requested',
-        { ad_unit: 'rewarded', type: quest.reward_type, source: 'quest', quest_id: quest.id },
+        {
+          ad_unit: 'rewarded',
+          type: quest.reward_type,
+          source: 'quest',
+          quest_id: quest.id,
+          has_native: isAndroid(),
+          attempt_id: attemptId,
+        },
+        { placement: 'quest' },
+      );
+      // The quest flow never calls the native bridge — it always shows
+      // the mock modal — so the `fallback_shown` step is part of the
+      // canonical funnel here.
+      trackClient(
+        'ad.fallback_shown',
+        { trigger: 'quest', reason: 'web_only', attempt_id: attemptId },
         { placement: 'quest' },
       );
       setAdQuest(quest);
@@ -116,9 +153,20 @@ export default function QuestsPage() {
   const handleAdComplete = () => {
     if (adQuest) {
       const type: 'water' | 'nutrition' = adQuest.reward_type === 'nutrition' ? 'nutrition' : 'water';
-      trackClient('ad.rewarded', { fallback: true, source: 'quest', type }, { placement: 'quest' });
-      trackClient('quest.ad_watched', { quest_key: adQuest.quest_key, quest_id: adQuest.id });
-      creditAdReward.mutate({ type });
+      const attemptId = questAttemptIdRef.current;
+      // Debounce: if the modal invokes onComplete twice for the same
+      // attempt (fast double-tap) we skip the second fire so the funnel
+      // stays honest.
+      if (!attemptId || questRewardedFiredRef.current !== attemptId) {
+        if (attemptId) questRewardedFiredRef.current = attemptId;
+        trackClient(
+          'ad.rewarded',
+          { fallback: true, source: 'quest', type, attempt_id: attemptId },
+          { placement: 'quest' },
+        );
+        trackClient('quest.ad_watched', { quest_key: adQuest.quest_key, quest_id: adQuest.id });
+        creditAdReward.mutate({ type, attemptId });
+      }
       setAdQuest(null);
     }
     setAdOpen(false);

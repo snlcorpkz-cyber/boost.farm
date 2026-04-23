@@ -197,6 +197,14 @@ export default function FarmPage() {
   const [showBucketAd, setShowBucketAd] = useState(false);
   const bucketAdPendingRef = useRef(false);
   const [bucketAdPending, setBucketAdPending] = useState(false);
+  // Per-click correlation id stamped onto every ad.* event for this
+  // placement, so the admin funnel can count distinct user intents via
+  // `count(DISTINCT properties->>'attempt_id')` instead of raw events.
+  const bucketAttemptIdRef = useRef<string | null>(null);
+  // Guard: the mock modal may re-invoke onComplete if the user double
+  // taps the collect button before it unmounts. One ad.rewarded per
+  // attempt, period.
+  const bucketRewardedFiredRef = useRef<string | null>(null);
 
   const handleCollect = useCallback((adWatched?: boolean) => {
     collectBucket.mutate(adWatched ? { adWatched: true } : undefined);
@@ -206,9 +214,15 @@ export default function FarmPage() {
     if (bucketAdPendingRef.current) return;
     bucketAdPendingRef.current = true;
     setBucketAdPending(true);
+    const attemptId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    bucketAttemptIdRef.current = attemptId;
+    bucketRewardedFiredRef.current = null;
     trackClient(
       'ad.requested',
-      { ad_unit: 'rewarded', type: 'bucket', has_native: isAndroid() },
+      { ad_unit: 'rewarded', type: 'bucket', has_native: isAndroid(), attempt_id: attemptId },
       { placement: 'bucket_collect' },
     );
 
@@ -224,7 +238,7 @@ export default function FarmPage() {
       }
       trackClient(
         'ad.closed',
-        { rewarded: false, reason: result.reason ?? null },
+        { rewarded: false, reason: result.reason ?? null, attempt_id: attemptId },
         { placement: 'bucket_collect' },
       );
       if (isRewardFallbackEligible(result.reason)) {
@@ -233,18 +247,31 @@ export default function FarmPage() {
         // show the mock-ad fallback so they can still collect.
         trackClient(
           'ad.fallback_shown',
-          { reason: result.reason ?? 'unavailable', trigger: 'native_unavailable' },
+          {
+            reason: result.reason ?? 'unavailable',
+            trigger: 'native_unavailable',
+            attempt_id: attemptId,
+          },
           { placement: 'bucket_collect' },
         );
         setShowBucketAd(true);
       }
       // `closed_unrewarded` / `concurrent` → silent no-op, user can retry.
-    });
+    }, { attemptId });
 
     if (reqId === null) {
       bucketAdPendingRef.current = false;
       setBucketAdPending(false);
-      trackClient('ad.no_fill', { reason: 'no_native_bridge' }, { placement: 'bucket_collect' });
+      trackClient(
+        'ad.no_fill',
+        { reason: 'no_native_bridge', attempt_id: attemptId },
+        { placement: 'bucket_collect' },
+      );
+      trackClient(
+        'ad.fallback_shown',
+        { reason: 'no_native_bridge', trigger: 'web_only', attempt_id: attemptId },
+        { placement: 'bucket_collect' },
+      );
       setShowBucketAd(true);
     }
   }, [handleCollect]);
@@ -253,12 +280,23 @@ export default function FarmPage() {
     setShowBucketAd(false);
     bucketAdPendingRef.current = false;
     setBucketAdPending(false);
+    const attemptId = bucketAttemptIdRef.current;
     if (r.amount) {
-      trackClient('ad.rewarded', { fallback: true, reward_amount: r.amount }, { placement: 'bucket_collect' });
+      if (attemptId && bucketRewardedFiredRef.current === attemptId) return;
+      if (attemptId) bucketRewardedFiredRef.current = attemptId;
+      trackClient(
+        'ad.rewarded',
+        { fallback: true, reward_amount: r.amount, attempt_id: attemptId },
+        { placement: 'bucket_collect' },
+      );
       sounds.bucketCollectToCan();
       handleCollect(true);
     } else {
-      trackClient('ad.closed', { fallback: true, rewarded: false }, { placement: 'bucket_collect' });
+      trackClient(
+        'ad.closed',
+        { fallback: true, rewarded: false, attempt_id: attemptId },
+        { placement: 'bucket_collect' },
+      );
     }
   }, [handleCollect]);
 

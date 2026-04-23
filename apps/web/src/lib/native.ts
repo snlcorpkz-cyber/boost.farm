@@ -293,11 +293,18 @@ function installDispatcher(): void {
  * Returns the requestId used (also cleaned up on timeout).
  *
  * On web (no bridge) returns null — caller should show a fallback popup.
+ *
+ * `attemptId` is the user-intent correlation id the web layer stamps
+ * into every ad.* event (see useRewardedAd / FarmPage.handleBucketAd).
+ * Passing it through to the native side lets the Kotlin LevelPlay
+ * adapter tag every downstream `ad.shown` / `ad.rewarded` / `ad.closed`
+ * with the same id, so the admin funnel can count distinct intents
+ * instead of raw emissions.
  */
 export function requestRewardedAdNative(
   placement: string,
   onFinished: RewardedCallback,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; attemptId?: string },
 ): string | null {
   const b = bridge();
   if (!b?.requestRewardedAd) return null;
@@ -324,7 +331,13 @@ export function requestRewardedAdNative(
   }, timeoutMs);
 
   try {
-    b.requestRewardedAd(JSON.stringify({ placement, requestId }));
+    b.requestRewardedAd(
+      JSON.stringify({
+        placement,
+        requestId,
+        ...(opts?.attemptId ? { attemptId: opts.attemptId } : {}),
+      }),
+    );
   } catch {
     window.clearTimeout(timer);
     reg.__rewardedHandlers?.delete(requestId);
