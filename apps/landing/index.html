@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#8BC34A" />
+    <title>Boost Farm — Play. Grow. Eat real vegetables.</title>
+    <meta
+      name="description"
+      content="The first and only game in the USA where you grow real vegetables just by playing. Free on Google Play."
+    />
+
+    <meta property="og:title" content="Boost Farm — Grow real vegetables by playing" />
+    <meta
+      property="og:description"
+      content="The first and only game in the USA where playing rewards you with fresh, real vegetables."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://boostfarm.io/" />
+    <meta property="og:image" content="https://boostfarm.io/landing/img/logo.png" />
+
+    <link rel="icon" type="image/png" href="/landing/img/logo.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        --green-50: #f1fae1;
+        --green-100: #d9f0a6;
+        --green-500: #7fbf2b;
+        --green-600: #5ea320;
+        --green-700: #3f7816;
+        --amber-400: #f6b23a;
+        --amber-500: #e68f1a;
+        --ink-900: #1e2d17;
+        --ink-700: #2f4527;
+        --ink-500: #5a6f4f;
+        --cream: #fff9ec;
+        --sky: #e9f5ff;
+        --shadow: 0 12px 30px rgba(50, 80, 30, 0.18);
+        --radius-lg: 28px;
+        --radius-md: 20px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", -apple-system, Segoe UI, Roboto, sans-serif;
+        color: var(--ink-900);
+        background: var(--cream);
+        line-height: 1.55;
+        overflow-x: hidden;
+      }
+
+      h1,
+      h2,
+      h3 {
+        font-family: "Fredoka", "Inter", sans-serif;
+        color: var(--ink-900);
+        margin: 0 0 0.4em;
+        letter-spacing: -0.01em;
+      }
+
+      h1 {
+        font-size: clamp(2.2rem, 5.2vw, 4rem);
+        line-height: 1.05;
+        font-weight: 700;
+      }
+
+      h2 {
+        font-size: clamp(1.75rem, 3.4vw, 2.6rem);
+        line-height: 1.15;
+        font-weight: 700;
+      }
+
+      h3 {
+        font-size: clamp(1.15rem, 1.6vw, 1.4rem);
+        font-weight: 600;
+      }
+
+      p {
+        margin: 0 0 1em;
+      }
+
+      a {
+        color: var(--green-700);
+      }
+
+      .container {
+        width: 100%;
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      /* ---------- Top bar ---------- */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: rgba(255, 249, 236, 0.85);
+        backdrop-filter: saturate(160%) blur(12px);
+        -webkit-backdrop-filter: saturate(160%) blur(12px);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 24px;
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+
+      .topbar-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+      }
+
+      .topbar-logo img {
+        height: 42px;
+        width: auto;
+      }
+
+      /* ---------- Hero ---------- */
+      .hero {
+        position: relative;
+        padding: 48px 0 32px;
+        background:
+          radial-gradient(900px 500px at 85% 15%, rgba(143, 204, 44, 0.22), transparent 70%),
+          radial-gradient(700px 500px at 10% 85%, rgba(246, 178, 58, 0.18), transparent 70%),
+          linear-gradient(180deg, var(--cream) 0%, #f5efdd 100%);
+        overflow: hidden;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr;
+        gap: 40px;
+        align-items: center;
+      }
+
+      .hero-logo {
+        max-width: 220px;
+        width: 38%;
+        height: auto;
+        margin-bottom: 18px;
+        filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.12));
+      }
+
+      .hero-kicker {
+        display: inline-block;
+        background: #fff;
+        border: 2px solid var(--green-500);
+        color: var(--green-700);
+        font-weight: 700;
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 6px 14px;
+        border-radius: 999px;
+        margin-bottom: 14px;
+      }
+
+      .hero h1 .accent {
+        color: var(--green-600);
+      }
+
+      .hero-sub {
+        font-size: clamp(1.05rem, 1.5vw, 1.25rem);
+        color: var(--ink-700);
+        max-width: 560px;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .playstore-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        background: #111;
+        color: #fff;
+        text-decoration: none;
+        padding: 12px 22px;
+        border-radius: 14px;
+        font-weight: 600;
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .playstore-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 28px rgba(0, 0, 0, 0.22);
+      }
+
+      .playstore-btn svg {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 28px;
+      }
+
+      .playstore-btn small {
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 500;
+        opacity: 0.75;
+        line-height: 1;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .playstore-btn strong {
+        display: block;
+        font-size: 1.15rem;
+        line-height: 1.1;
+        margin-top: 2px;
+      }
+
+      .rating {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--ink-700);
+        font-weight: 500;
+      }
+
+      .rating .stars {
+        color: var(--amber-500);
+        letter-spacing: 2px;
+      }
+
+      /* Hero art collage */
+      .hero-art {
+        position: relative;
+        min-height: 420px;
+      }
+
+      .hero-art .bubble {
+        position: absolute;
+        background: #fff;
+        border-radius: 50%;
+        box-shadow: var(--shadow);
+      }
+
+      .hero-art .bubble img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        padding: 14%;
+      }
+
+      .hero-art .b1 {
+        width: 56%;
+        aspect-ratio: 1 / 1;
+        right: 2%;
+        top: 2%;
+        background: linear-gradient(160deg, #ffffff 0%, #e8f5c9 100%);
+      }
+      .hero-art .b1 img {
+        padding: 6%;
+      }
+
+      .hero-art .b2 {
+        width: 40%;
+        aspect-ratio: 1 / 1;
+        left: 0;
+        top: 28%;
+        background: linear-gradient(160deg, #ffffff 0%, #fff0cf 100%);
+      }
+
+      .hero-art .b3 {
+        width: 44%;
+        aspect-ratio: 1 / 1;
+        right: 14%;
+        bottom: 0;
+        background: linear-gradient(160deg, #ffffff 0%, #e4f4ff 100%);
+      }
+
+      /* ---------- Section shell ---------- */
+      section {
+        padding: 72px 0;
+      }
+
+      section.alt {
+        background: #fff;
+      }
+
+      section.green {
+        background: linear-gradient(180deg, #eaf6cf 0%, #d8eea6 100%);
+      }
+
+      .section-head {
+        text-align: center;
+        max-width: 720px;
+        margin: 0 auto 44px;
+      }
+
+      .section-head p {
+        color: var(--ink-700);
+        font-size: 1.1rem;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        background: var(--green-600);
+        color: #fff;
+        font-weight: 700;
+        font-size: 0.72rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 5px 12px;
+        border-radius: 999px;
+        margin-bottom: 14px;
+      }
+
+      /* ---------- Crates ---------- */
+      .crates {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 22px;
+      }
+
+      .crate {
+        background: #fff;
+        border-radius: var(--radius-md);
+        padding: 20px 18px 22px;
+        text-align: center;
+        box-shadow: var(--shadow);
+        transition: transform 0.25s ease;
+      }
+
+      .crate:hover {
+        transform: translateY(-4px);
+      }
+
+      .crate img {
+        width: 100%;
+        max-width: 170px;
+        height: auto;
+        margin: 0 auto 10px;
+        display: block;
+      }
+
+      .crate-name {
+        font-family: "Fredoka", sans-serif;
+        font-weight: 600;
+        font-size: 1.15rem;
+        color: var(--ink-900);
+      }
+
+      /* ---------- How it works ---------- */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 22px;
+      }
+
+      .step {
+        background: #fff;
+        border: 2px solid transparent;
+        border-radius: var(--radius-md);
+        padding: 22px;
+        text-align: center;
+        position: relative;
+        box-shadow: 0 8px 20px rgba(50, 80, 30, 0.1);
+      }
+
+      .step-num {
+        position: absolute;
+        top: -16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--green-600);
+        color: #fff;
+        font-family: "Fredoka", sans-serif;
+        font-weight: 700;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.05rem;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .step img {
+        height: 120px;
+        width: auto;
+        margin: 8px auto 10px;
+        display: block;
+        object-fit: contain;
+      }
+
+      .step h3 {
+        margin-bottom: 6px;
+      }
+
+      .step p {
+        color: var(--ink-700);
+        font-size: 0.95rem;
+        margin: 0;
+      }
+
+      /* ---------- Stages row ---------- */
+      .stages {
+        margin-top: 40px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        align-items: end;
+      }
+
+      .stage-card {
+        text-align: center;
+      }
+
+      .stage-card img {
+        width: 100%;
+        max-width: 160px;
+        height: auto;
+        margin: 0 auto;
+        display: block;
+        filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.12));
+      }
+
+      .stage-label {
+        margin-top: 6px;
+        font-weight: 600;
+        color: var(--ink-700);
+        font-size: 0.9rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      /* ---------- Pets ---------- */
+      .pets {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 24px;
+      }
+
+      .pet {
+        background: #fff;
+        border-radius: var(--radius-md);
+        padding: 26px 20px;
+        text-align: center;
+        box-shadow: var(--shadow);
+      }
+
+      .pet img {
+        height: 150px;
+        width: auto;
+        margin: 0 auto 12px;
+        display: block;
+      }
+
+      /* ---------- Final CTA ---------- */
+      .final-cta {
+        text-align: center;
+        background:
+          radial-gradient(800px 400px at 50% 10%, rgba(255, 255, 255, 0.6), transparent 70%),
+          linear-gradient(180deg, var(--green-500) 0%, var(--green-700) 100%);
+        color: #fff;
+        padding: 80px 0 88px;
+      }
+
+      .final-cta h2 {
+        color: #fff;
+      }
+
+      .final-cta p {
+        color: rgba(255, 255, 255, 0.92);
+        max-width: 620px;
+        margin: 0 auto 22px;
+        font-size: 1.1rem;
+      }
+
+      .final-cta .playstore-btn {
+        background: #fff;
+        color: #111;
+      }
+
+      /* ---------- Footer ---------- */
+      footer {
+        background: var(--ink-900);
+        color: rgba(255, 255, 255, 0.72);
+        padding: 28px 0;
+        font-size: 0.9rem;
+        text-align: center;
+      }
+
+      footer a {
+        color: rgba(255, 255, 255, 0.88);
+        text-decoration: none;
+        margin: 0 10px;
+      }
+
+      footer a:hover {
+        text-decoration: underline;
+      }
+
+      /* ---------- Responsive ---------- */
+      @media (max-width: 860px) {
+        .hero {
+          padding-top: 28px;
+        }
+        .hero-grid {
+          grid-template-columns: 1fr;
+          gap: 24px;
+        }
+        .hero-art {
+          min-height: 320px;
+          order: -1;
+        }
+        .hero-logo {
+          max-width: 160px;
+        }
+        .stages {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      @media (max-width: 500px) {
+        section {
+          padding: 56px 0;
+        }
+        .cta-row {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .playstore-btn {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="topbar-logo" href="/">
+          <img src="/landing/img/logo.png" alt="Boost Farm" />
+        </a>
+        <a
+          class="playstore-btn"
+          href="https://play.google.com/store/apps/details?id=io.boostfarm.app"
+          target="_blank"
+          rel="noopener"
+          style="padding: 8px 14px"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M3.6 1.5c-.3.2-.5.6-.5 1v19c0 .4.2.8.5 1l10.6-10.5L3.6 1.5zm13 8.8l-2.6 2.6 2.6 2.6 3.7-2.1c.8-.5.8-1.6 0-2.1l-3.7-2.1zM5 22l9.9-9.9 2.3 2.3L6.6 23c-.5.3-1.2.2-1.6-1zM5 2l12 6.8-2.3 2.3L5.4 1.3C5.6 1.5 5 2 5 2z"
+            />
+          </svg>
+          <span>
+            <small>Get it on</small>
+            <strong>Google Play</strong>
+          </span>
+        </a>
+      </div>
+    </header>
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <img class="hero-logo" src="/landing/img/logo.png" alt="Boost Farm logo" />
+          <span class="hero-kicker">🌱 USA exclusive · Free to play</span>
+          <h1>
+            Grow <span class="accent">real vegetables</span><br />
+            just by playing.
+          </h1>
+          <p class="hero-sub">
+            Boost Farm is the <strong>first and only game in the USA</strong> where every
+            vegetable you grow in the app is grown for real — and harvested by our partner
+            farms. Plant. Water. Harvest. Eat.
+          </p>
+          <div class="cta-row">
+            <a
+              class="playstore-btn"
+              href="https://play.google.com/store/apps/details?id=io.boostfarm.app"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M3.6 1.5c-.3.2-.5.6-.5 1v19c0 .4.2.8.5 1l10.6-10.5L3.6 1.5zm13 8.8l-2.6 2.6 2.6 2.6 3.7-2.1c.8-.5.8-1.6 0-2.1l-3.7-2.1zM5 22l9.9-9.9 2.3 2.3L6.6 23c-.5.3-1.2.2-1.6-1zM5 2l12 6.8-2.3 2.3L5.4 1.3C5.6 1.5 5 2 5 2z"
+                />
+              </svg>
+              <span>
+                <small>Get it on</small>
+                <strong>Google Play</strong>
+              </span>
+            </a>
+            <span class="rating">
+              <span class="stars">★★★★★</span>
+              <span>Free · Android</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="bubble b1"><img src="/landing/img/stage-5.png" alt="" /></div>
+          <div class="bubble b2"><img src="/landing/img/crate-tomato.png" alt="" /></div>
+          <div class="bubble b3"><img src="/landing/img/watering-can.png" alt="" /></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REAL VEGGIES -->
+    <section class="alt">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Real food · Real delivery</span>
+          <h2>Harvest in the app. Eat in real life.</h2>
+          <p>
+            Every vegetable you grow inside Boost Farm is matched with a real, freshly
+            harvested one from our partner farms in the United States.
+          </p>
+        </div>
+        <div class="crates">
+          <div class="crate">
+            <img src="/landing/img/crate-potato.png" alt="Crate of potatoes" />
+            <div class="crate-name">Potatoes</div>
+          </div>
+          <div class="crate">
+            <img src="/landing/img/crate-tomato.png" alt="Crate of tomatoes" />
+            <div class="crate-name">Tomatoes</div>
+          </div>
+          <div class="crate">
+            <img src="/landing/img/crate-cucumber.png" alt="Crate of cucumbers" />
+            <div class="crate-name">Cucumbers</div>
+          </div>
+          <div class="crate">
+            <img src="/landing/img/crate-carrot.png" alt="Crate of carrots" />
+            <div class="crate-name">Carrots</div>
+          </div>
+          <div class="crate">
+            <img src="/landing/img/crate-onion.png" alt="Crate of onions" />
+            <div class="crate-name">Onions</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="green">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">How it works</span>
+          <h2>Three simple things. One real vegetable.</h2>
+          <p>No weeds. No bugs. Just tap, water, and watch it grow — while a real one grows for you.</p>
+        </div>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <img src="/landing/img/stage-1.png" alt="Plant the seed" />
+            <h3>Plant</h3>
+            <p>Pick your vegetable and plant the seed in your virtual garden.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <img src="/landing/img/well.png" alt="Fill the bucket" />
+            <h3>Fill the bucket</h3>
+            <p>Collect water from the well — watch ads to speed things up.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <img src="/landing/img/watering-can.png" alt="Water your plant" />
+            <h3>Water & care</h3>
+            <p>Pour water with the watering can. Add fertilizer. Grow every day.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <img src="/landing/img/crate-carrot.png" alt="Harvest" />
+            <h3>Harvest</h3>
+            <p>Finish the last stage and we’ll deliver a real crate — straight to your door.</p>
+          </div>
+        </div>
+
+        <div class="stages">
+          <div class="stage-card">
+            <img src="/landing/img/stage-1.png" alt="Sprout" />
+            <div class="stage-label">Stage 1 · Sprout</div>
+          </div>
+          <div class="stage-card">
+            <img src="/landing/img/stage-2.png" alt="Growing" />
+            <div class="stage-label">Stage 2 · Growing</div>
+          </div>
+          <div class="stage-card">
+            <img src="/landing/img/stage-3.png" alt="Almost ready" />
+            <div class="stage-label">Stage 3 · Almost ready</div>
+          </div>
+          <div class="stage-card">
+            <img src="/landing/img/stage-5.png" alt="Harvested" />
+            <div class="stage-label">Stage 5 · Harvested</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PETS -->
+    <section class="alt">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Your farm friends</span>
+          <h2>Cute pets that help your plants grow faster.</h2>
+          <p>Adopt a pet, boost your harvest speed, and make farming a lot more fun.</p>
+        </div>
+        <div class="pets">
+          <div class="pet">
+            <img src="/landing/img/pet-rabbit.png" alt="Bunny pet" />
+            <h3>Bunny</h3>
+            <p>Hops around the garden, speeds up seedlings.</p>
+          </div>
+          <div class="pet">
+            <img src="/landing/img/pet-hamster.png" alt="Hamster pet" />
+            <h3>Hamster</h3>
+            <p>Nibbles on fertilizer and gives you bonus water.</p>
+          </div>
+          <div class="pet">
+            <img src="/landing/img/pet-monkey.png" alt="Monkey pet" />
+            <h3>Monkey</h3>
+            <p>Never stops playing — and your veggies love the energy.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FINAL CTA -->
+    <section class="final-cta">
+      <div class="container">
+        <h2>Free to play. Real food. Real fun.</h2>
+        <p>Download Boost Farm on Google Play and grow your first vegetable this week.</p>
+        <a
+          class="playstore-btn"
+          href="https://play.google.com/store/apps/details?id=io.boostfarm.app"
+          target="_blank"
+          rel="noopener"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path
+              d="M3.6 1.5c-.3.2-.5.6-.5 1v19c0 .4.2.8.5 1l10.6-10.5L3.6 1.5zm13 8.8l-2.6 2.6 2.6 2.6 3.7-2.1c.8-.5.8-1.6 0-2.1l-3.7-2.1zM5 22l9.9-9.9 2.3 2.3L6.6 23c-.5.3-1.2.2-1.6-1zM5 2l12 6.8-2.3 2.3L5.4 1.3C5.6 1.5 5 2 5 2z"
+            />
+          </svg>
+          <span>
+            <small>Get it on</small>
+            <strong>Google Play</strong>
+          </span>
+        </a>
+      </div>
+    </section>
+
+    <footer>
+      <div class="container">
+        <p>
+          © 2026 Boost Farm. All rights reserved. ·
+          <a href="mailto:hello@boostfarm.io">hello@boostfarm.io</a>
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

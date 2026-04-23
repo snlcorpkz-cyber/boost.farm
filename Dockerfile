@@ -32,6 +32,10 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
 COPY --from=builder /app/apps/admin/dist /usr/share/nginx/html/admin
 COPY --from=builder /app/apps/partner/dist /usr/share/nginx/html/partner
+# Static marketing landing served to regular browsers at `/`. Android WebView
+# bypasses this via the User-Agent rule in nginx.conf and keeps loading the
+# game SPA at the same URL — see `map $http_user_agent $entry_html` there.
+COPY apps/landing /usr/share/nginx/html/landing
 
 EXPOSE 80
 
