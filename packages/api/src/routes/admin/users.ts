@@ -223,41 +223,116 @@ adminUsersRouter.get('/:id/events', async (req, res) => {
 });
 
 /**
- * List sessions for a user with accurate duration. Sessions still open (user
- * hasn't logged out and the inactivity cron hasn't closed them yet) return
- * duration_sec = null — the UI should show them as "active".
+ * List *usage* sessions for a user.
+ *
+ * IMPORTANT — we intentionally do NOT read from the `sessions` table here.
+ * That table only gets a row on explicit login (see `createSession` in
+ * auth.ts) and refresh-token flow reuses the same session id, so a mobile
+ * user who logs in once and uses the app for weeks would show up as a
+ * single, eternally "active" session — which is useless for admins trying
+ * to understand engagement.
+ *
+ * Instead we derive behavioral sessions from the `events` table by
+ * clustering consecutive events with a gap ≥ `SESSION_GAP_MINUTES` (30).
+ * That matches the standard product-analytics definition of a session
+ * (Google Analytics, Mixpanel, Amplitude all use the same 30-minute rule).
+ *
+ * Scope: last 90 days of events per user — avoids window-function scans
+ * over full history on heavy users while still covering all admin use
+ * cases.
  */
 adminUsersRouter.get('/:id/sessions', async (req, res) => {
   try {
     const limit = Math.min(200, Math.max(5, parseInt(req.query.limit as string) || 50));
+    const SESSION_GAP_MINUTES = 30;
+    const LOOKBACK_DAYS = 90;
+
+    // Single CTE — PostgreSQL window functions mark "new session" where the
+    // gap from the previous event is > 30 min, then a running sum turns
+    // those markers into stable session numbers. We join the first event's
+    // device / geo / ip to each session via DISTINCT ON.
     const rows = await query(
-      `SELECT id, started_at, ended_at, events_count,
-              COALESCE(duration_sec,
-                       GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int)
-              ) AS duration_sec,
-              device, geo, ip::text AS ip,
-              duration_sec IS NULL AS is_active
-       FROM sessions
-       WHERE user_id = $1
-       ORDER BY started_at DESC
+      `WITH gapped AS (
+         SELECT
+           id, user_id, device, geo, ip, created_at,
+           CASE
+             WHEN lag(created_at) OVER w IS NULL
+               OR created_at - lag(created_at) OVER w > interval '${SESSION_GAP_MINUTES} minutes'
+             THEN 1 ELSE 0
+           END AS is_new
+         FROM events
+         WHERE user_id = $1
+           AND created_at >= now() - interval '${LOOKBACK_DAYS} days'
+         WINDOW w AS (ORDER BY created_at)
+       ),
+       sessionized AS (
+         SELECT g.*,
+           sum(is_new) OVER (ORDER BY created_at) AS session_num
+         FROM gapped g
+       ),
+       agg AS (
+         SELECT
+           session_num,
+           min(created_at) AS started_at,
+           max(created_at) AS ended_at,
+           count(*)::int   AS events_count,
+           GREATEST(0, EXTRACT(EPOCH FROM (max(created_at) - min(created_at)))::int) AS duration_sec
+         FROM sessionized
+         GROUP BY session_num
+       ),
+       first_event AS (
+         SELECT DISTINCT ON (session_num)
+           session_num, device, geo, ip::text AS ip
+         FROM sessionized
+         ORDER BY session_num, created_at ASC
+       )
+       SELECT
+         ('s-' || a.session_num::text)                         AS id,
+         a.started_at, a.ended_at,
+         a.events_count,
+         a.duration_sec,
+         f.device, f.geo, f.ip,
+         (a.ended_at > now() - interval '${SESSION_GAP_MINUTES} minutes') AS is_active
+       FROM agg a
+       LEFT JOIN first_event f USING (session_num)
+       ORDER BY a.started_at DESC
        LIMIT $2`,
       [req.params.id, limit]
     );
-    // Aggregate totals for quick admin view.
+
+    // Totals computed across ALL (not just first N) sessions in the lookback
+    // window so the header stays accurate even when the list is truncated.
     const agg = await queryOne(
-      `SELECT
-         count(*)::int AS total_sessions,
-         COALESCE(SUM(
-           COALESCE(duration_sec,
-                    GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int))
-         ), 0)::int AS total_seconds,
-         COALESCE(AVG(
-           COALESCE(duration_sec,
-                    GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at))::int))
-         ), 0)::int AS avg_seconds
-       FROM sessions WHERE user_id = $1`,
+      `WITH gapped AS (
+         SELECT created_at,
+           CASE
+             WHEN lag(created_at) OVER (ORDER BY created_at) IS NULL
+               OR created_at - lag(created_at) OVER (ORDER BY created_at) > interval '${SESSION_GAP_MINUTES} minutes'
+             THEN 1 ELSE 0
+           END AS is_new
+         FROM events
+         WHERE user_id = $1
+           AND created_at >= now() - interval '${LOOKBACK_DAYS} days'
+       ),
+       sessionized AS (
+         SELECT created_at,
+           sum(is_new) OVER (ORDER BY created_at) AS session_num
+         FROM gapped
+       ),
+       agg AS (
+         SELECT session_num,
+           GREATEST(0, EXTRACT(EPOCH FROM (max(created_at) - min(created_at)))::int) AS duration_sec
+         FROM sessionized
+         GROUP BY session_num
+       )
+       SELECT
+         count(*)::int                        AS total_sessions,
+         COALESCE(sum(duration_sec), 0)::int  AS total_seconds,
+         COALESCE(avg(duration_sec), 0)::int  AS avg_seconds
+       FROM agg`,
       [req.params.id]
     );
+
     res.json({ sessions: rows, totals: agg });
   } catch (err) {
     console.error('[admin/users/sessions]', err);

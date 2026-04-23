@@ -70,7 +70,10 @@ export function UserDetailPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-6">
         <InfoCard label="Rank" value={user.rank_id || 'novice'} />
         <InfoCard label="Stage" value={user.current_stage || '-'} />
-        <InfoCard label="Growth" value={user.growth_percent != null ? `${Math.round(user.growth_percent)}%` : '-'} />
+        <InfoCard
+          label="Growth"
+          value={user.growth_percent != null ? `${Number(user.growth_percent).toFixed(2)}%` : '-'}
+        />
         <InfoCard label="Water in Can" value={user.water_in_can != null ? `${Math.round(user.water_in_can)}g` : '-'} />
         <InfoCard label="Nutrition" value={user.nutrition ?? '-'} />
         <InfoCard label="Water This Month" value={user.total_water_this_month != null ? `${Math.round(user.total_water_this_month)}g` : '-'} />

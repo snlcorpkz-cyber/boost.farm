@@ -26,27 +26,44 @@ adminAdsRouter.get('/funnel', async (req, res) => {
   try {
     const days = parseDays(req.query.days);
 
+    // DEDUPLICATION NOTE: we intentionally aggregate across `ad_unit` here.
+    // The `ad_funnel_daily` rollup splits rows by ad_unit, but the two
+    // sources of `ad_unit` in our pipeline are inconsistent — lifecycle
+    // events hardcode `'rewarded'` (Kotlin `LevelPlayRewardedAds.kt`) while
+    // ILRD revenue events carry the real mediation bucket (`'Rewarded
+    // Video'`). That used to produce two visually-identical rows per
+    // placement in the admin Funnel tab. We now sum across ad_unit and
+    // expose a single `'rewarded'` constant to keep the response shape
+    // stable for any older client.
     const history = await query<any>(
-      `SELECT stat_date::text AS stat_date, platform, placement, ad_unit,
-              requested, loaded, no_fill, shown, rewarded, failed, closed,
-              unique_users
+      `SELECT stat_date::text AS stat_date, platform, placement,
+              'rewarded' AS ad_unit,
+              sum(requested)::int    AS requested,
+              sum(loaded)::int       AS loaded,
+              sum(no_fill)::int      AS no_fill,
+              sum(shown)::int        AS shown,
+              sum(rewarded)::int     AS rewarded,
+              sum(failed)::int       AS failed,
+              sum(closed)::int       AS closed,
+              sum(unique_users)::int AS unique_users
        FROM ad_funnel_daily
        WHERE stat_date >= (current_date - ($1 || ' days')::interval)::date
+       GROUP BY stat_date, platform, placement
        ORDER BY stat_date DESC, placement`,
       [days],
     );
 
-    // IMPORTANT: we GROUP BY ordinals (1,2,3) instead of the aliases
-    // `platform` / `placement` / `ad_unit` because those alias names
-    // collide with real columns on `events` (added in migration 020).
-    // Postgres resolves `GROUP BY platform` to the column, not the alias,
-    // which leaves the `e.device->>'platform'` branch of the coalesce
-    // un-aggregated and throws 42803.
+    // IMPORTANT: we GROUP BY ordinals (1,2) instead of the aliases
+    // `platform` / `placement` because those alias names collide with real
+    // columns on `events` (added in migration 020). Postgres resolves
+    // `GROUP BY platform` to the column, not the alias, which leaves the
+    // `e.device->>'platform'` branch of the coalesce un-aggregated and
+    // throws 42803.
     const todayByDim = await query<any>(
       `SELECT
          coalesce(e.platform, e.device->>'platform', 'unknown') AS platform,
          coalesce(e.placement, 'unknown') AS placement,
-         coalesce(e.properties->>'ad_unit', 'rewarded') AS ad_unit,
+         'rewarded'::text AS ad_unit,
          count(*) FILTER (WHERE e.event_name = 'ad.requested')::int AS requested,
          count(*) FILTER (WHERE e.event_name = 'ad.loaded')::int    AS loaded,
          count(*) FILTER (WHERE e.event_name = 'ad.no_fill')::int   AS no_fill,
@@ -58,7 +75,7 @@ adminAdsRouter.get('/funnel', async (req, res) => {
        FROM events e
        WHERE e.event_name LIKE 'ad.%'
          AND e.created_at::date = current_date
-       GROUP BY 1, 2, 3`,
+       GROUP BY 1, 2`,
     );
 
     const todayRows = todayByDim.map((r) => ({

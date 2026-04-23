@@ -256,7 +256,12 @@ export function UsersPage() {
                     <td className="px-4 py-3 text-gray-600">{u.email}</td>
                     <td className="px-4 py-3"><RankBadge rank={u.rank_id || 'novice'} /></td>
                     <td className="px-4 py-3 text-gray-700">{u.current_stage ?? '-'}</td>
-                    <td className="px-4 py-3 text-gray-700">{u.growth_percent != null ? `${Math.round(u.growth_percent)}%` : '-'}</td>
+                    <td
+                      className="px-4 py-3 text-gray-700"
+                      title={u.growth_percent != null ? `Raw: ${u.growth_percent}` : ''}
+                    >
+                      {u.growth_percent != null ? `${Number(u.growth_percent).toFixed(1)}%` : '-'}
+                    </td>
                     <td className="px-4 py-3 text-gray-700">{u.total_water_this_month != null ? `${Math.round(u.total_water_this_month)}g` : '-'}</td>
                     <td className={`px-4 py-3 font-medium ${u.total_ad_views ? 'text-purple-700' : 'text-gray-400'}`}>
                       {u.total_ad_views || 0}
