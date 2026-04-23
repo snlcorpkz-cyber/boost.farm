@@ -15,6 +15,7 @@ import { productsRouter } from './routes/products.js';
 import { offersRouter } from './routes/offers.js';
 import { trackRouter } from './routes/track.js';
 import { adminRouter } from './routes/admin/index.js';
+import { partnerRouter } from './routes/partner/index.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { globalRateLimit } from './middleware/rate-limit.js';
 
@@ -54,6 +55,7 @@ app.use('/games', gamesRouter);
 app.use('/pets', petsRouter);
 app.use('/admin/products', productsRouter);
 app.use('/admin', adminRouter);
+app.use('/partner', partnerRouter);
 app.use('/offers', offersRouter);
 app.use('/track', trackRouter);
 

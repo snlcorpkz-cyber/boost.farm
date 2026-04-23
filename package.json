@@ -9,9 +9,12 @@
   "scripts": {
     "dev:web": "npm run dev -w apps/web",
     "dev:api": "npm run dev -w packages/api",
+    "dev:partner": "npm run dev -w apps/partner",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "build:web": "npm run build -w apps/web",
     "build:api": "npm run build -w packages/api",
+    "build:partner": "npm run build -w apps/partner",
+    "partner:create-account": "node scripts/create-partner-account.mjs",
     "simulate:load": "npm run simulate -w @eco-farm/load-simulator"
   },
   "devDependencies": {

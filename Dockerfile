@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY apps/admin/package.json apps/admin/
+COPY apps/partner/package.json apps/partner/
 COPY packages/game-engine/package.json packages/game-engine/
 COPY packages/shared/package.json packages/shared/
 COPY packages/api/package.json packages/api/
@@ -15,11 +16,14 @@ COPY tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 COPY apps/admin/ apps/admin/
+COPY apps/partner/ apps/partner/
 
 RUN npm run build -w packages/game-engine && \
+    npm run build -w packages/shared && \
     npm run build -w packages/api && \
     npm run build -w apps/web && \
-    npm run build -w apps/admin
+    npm run build -w apps/admin && \
+    npm run build -w apps/partner
 
 # Stage 2: Frontend — nginx
 FROM nginx:alpine AS frontend
@@ -27,6 +31,7 @@ FROM nginx:alpine AS frontend
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
 COPY --from=builder /app/apps/admin/dist /usr/share/nginx/html/admin
+COPY --from=builder /app/apps/partner/dist /usr/share/nginx/html/partner
 
 EXPOSE 80
 
