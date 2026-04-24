@@ -92,12 +92,189 @@ export function vibrate(ms: number): void {
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// Premium haptic design (Duolingo / iOS-native feel)
+//
+// The philosophy: haptics are *salt*, not gravy. They amplify moments
+// that matter, and the second you abuse them they stop feeling premium
+// and start feeling cheap — so every style below is deliberately
+// quiet. The loudest pulse (`error`) is ~80ms; the most common one
+// (`tap`) is 8ms which most users perceive as "responsive click"
+// rather than "phone shaking".
+//
+// Style semantics:
+//   tap       — the pedestrian tap on a UI control. Tab switch,
+//               open popup, close modal. "Nothing happened yet,
+//               I just acknowledged your tap."
+//   select    — even lighter than `tap` — for repeated ticks like
+//               batch selector rows, pet carousel dots, language row.
+//               Use when the user is *choosing between options*.
+//   impact    — a physical commit. Pouring water, collecting bucket,
+//               claiming a reward button. User just caused state to
+//               change; confirm it like a ka-chunk.
+//   success   — gentle victory: reward toast appears, challenge
+//               claimed, friend greeted. One short satisfying bump.
+//   warning   — soft two-beat used for "hey, can't do that" cases
+//               like "bucket needs an ad" (the shake animation).
+//   error     — single firmer bump for mutation failures, ad load
+//               errors, network timeouts. Not panic-level, but
+//               clearly distinct from success.
+//   celebrate — the "champagne" moment: success pulse, short pause,
+//               then a firmer impact. Reserved for stage-up, harvest
+//               complete, offer reward credited. Fires at most once
+//               per ~2s (enforced by a cheap throttle below) so that
+//               a burst of notifications doesn't turn the phone
+//               into a tuning fork.
+//
+// Dispatch order per call:
+//   1. Telegram WebApp (works inside TG Mini App on both Android + iOS,
+//      uses the OS's native Taptic Engine / Android vibrator)
+//   2. iOS WKWebView bridge (when we ship iOS; already named so the
+//      Swift side just needs to add a `vibrate` message handler)
+//   3. Android bridge (already live — FarmJsBridge.vibrate)
+//   4. Web Vibration API fallback (Android Chrome only; iOS Safari
+//      ignores it — known WebKit limitation)
+// ────────────────────────────────────────────────────────────
+
+export type HapticStyle =
+  | 'tap'
+  | 'select'
+  | 'impact'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'celebrate';
+
+/**
+ * Fallback durations for channels that only accept a ms value
+ * (Android bridge + Web Vibration API). `celebrate` and `warning`
+ * are handled as multi-step patterns inside `haptic()`.
+ */
+const DURATION_MS: Record<Exclude<HapticStyle, 'celebrate' | 'warning'>, number> = {
+  tap: 8,
+  select: 5,
+  impact: 22,
+  success: 18,
+  error: 70,
+};
+
+/**
+ * Maps our semantic style to Telegram WebApp HapticFeedback. Telegram
+ * has three flavors: impactOccurred (physical), notificationOccurred
+ * (semantic outcome), and selectionChanged (discrete selection).
+ */
+type TgHaptic = {
+  impactOccurred?: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void;
+  notificationOccurred?: (style: 'error' | 'success' | 'warning') => void;
+  selectionChanged?: () => void;
+};
+
+function tgHaptic(): TgHaptic | null {
+  if (typeof window === 'undefined') return null;
+  const h = (window as any).Telegram?.WebApp?.HapticFeedback as TgHaptic | undefined;
+  return h && (h.impactOccurred || h.notificationOccurred || h.selectionChanged) ? h : null;
+}
+
+type IosBridge = { postMessage?: (body: unknown) => void };
+
+function iosHapticBridge(): IosBridge | null {
+  if (typeof window === 'undefined') return null;
+  const h = (window as any).webkit?.messageHandlers?.vibrate as IosBridge | undefined;
+  return h?.postMessage ? h : null;
+}
+
+// Cheap throttle to prevent celebration spam (e.g. two simultaneous
+// reward toasts should feel like one moment, not a seizure).
+let lastCelebrateAt = 0;
+let lastHapticAt = 0;
+const HAPTIC_MIN_GAP_MS = 30; // coalesce identical rapid-fire calls
+
+function dispatchSingle(style: Exclude<HapticStyle, 'celebrate' | 'warning'>): void {
+  // 1) Telegram Mini App
+  const tg = tgHaptic();
+  if (tg) {
+    try {
+      if (style === 'success' || style === 'error') {
+        tg.notificationOccurred?.(style);
+      } else if (style === 'select') {
+        tg.selectionChanged?.();
+      } else if (style === 'tap') {
+        tg.impactOccurred?.('light');
+      } else if (style === 'impact') {
+        tg.impactOccurred?.('medium');
+      }
+      return;
+    } catch { /* fall through */ }
+  }
+
+  // 2) iOS WKWebView bridge (ready for when we ship iOS)
+  const ios = iosHapticBridge();
+  if (ios) {
+    try {
+      ios.postMessage!(style);
+      return;
+    } catch { /* fall through */ }
+  }
+
+  // 3) Android bridge + 4) Web Vibration API (handled inside `vibrate`)
+  vibrate(DURATION_MS[style]);
+}
+
+/**
+ * Fire a semantic haptic. Safe on every platform — silently no-ops
+ * where hardware/API is missing (desktop, iOS Safari without bridge,
+ * devices with vibrator disabled).
+ */
+export function haptic(style: HapticStyle): void {
+  const now = Date.now();
+
+  if (style === 'celebrate') {
+    // One celebration per ~1.5s regardless of how many toasts collide.
+    if (now - lastCelebrateAt < 1500) return;
+    lastCelebrateAt = now;
+    lastHapticAt = now;
+    dispatchSingle('success');
+    // Short gap between pulses reads as one combined "pop" rather than
+    // two distinct taps — this is the specific rhythm that feels
+    // "celebratory" vs "malfunction".
+    setTimeout(() => dispatchSingle('impact'), 130);
+    return;
+  }
+
+  if (style === 'warning') {
+    if (now - lastHapticAt < HAPTIC_MIN_GAP_MS) return;
+    lastHapticAt = now;
+    // Telegram has a dedicated 'warning' notification — use it when
+    // available, otherwise synthesize a soft two-beat.
+    const tg = tgHaptic();
+    if (tg?.notificationOccurred) {
+      try { tg.notificationOccurred('warning'); return; } catch { /* fall through */ }
+    }
+    dispatchSingle('tap');
+    setTimeout(() => dispatchSingle('tap'), 90);
+    return;
+  }
+
+  // Coalesce identical calls that can fire inside the same tick
+  // (e.g. React StrictMode double-invokes in dev, or two onClicks on
+  // nested buttons). 30ms is well under human perception.
+  if (now - lastHapticAt < HAPTIC_MIN_GAP_MS) return;
+  lastHapticAt = now;
+  dispatchSingle(style);
+}
+
+/**
+ * Legacy duration-based API. Kept for backwards compatibility with any
+ * code still calling `haptics.light()`. New call sites should use
+ * `haptic('tap')` etc. directly — the semantic names survive platform
+ * differences and map to OS-native taptic engines where possible.
+ */
 export const haptics = {
-  light: () => vibrate(10),
-  medium: () => vibrate(25),
-  heavy: () => vibrate(50),
-  success: () => vibrate(15),
-  error: () => vibrate(80),
+  light: () => haptic('tap'),
+  medium: () => haptic('impact'),
+  heavy: () => haptic('impact'),
+  success: () => haptic('success'),
+  error: () => haptic('error'),
 };
 
 // ────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import ProgressBar from '../components/farm/ProgressBar';
 import WateringCan from '../components/farm/WateringCan';
 import { AVATAR_IMAGES, PET_IMAGES, UI, getCropBase } from '../lib/assets';
 import { useRewardToast } from '../components/RewardToast';
+import { haptic } from '../lib/native';
 
 interface FriendFarm {
   growth_percent: number;
@@ -99,7 +100,12 @@ export default function FriendFarmPage() {
     },
     onError: (err: any) => {
       const code = err?.code || err?.error?.code || '';
-      if (code === 'ALREADY_GREETED' || code === 'LIMIT_REACHED') setGreetDone(true);
+      // "Already done / limit reached" is a soft nudge not a hard error
+      // — user already got the thing, we just remembered. 'warning'
+      // avoids the panic-y feel of 'error'.
+      const soft = code === 'ALREADY_GREETED' || code === 'LIMIT_REACHED';
+      haptic(soft ? 'warning' : 'error');
+      if (soft) setGreetDone(true);
       showToast(err?.message || 'Greet failed');
     },
   });
@@ -117,7 +123,9 @@ export default function FriendFarmPage() {
     },
     onError: (err: any) => {
       const code = err?.code || err?.error?.code || '';
-      if (code === 'LIMIT_REACHED' || code === 'ALREADY_WATERED') setWaterLimitHit(true);
+      const soft = code === 'LIMIT_REACHED' || code === 'ALREADY_WATERED';
+      haptic(soft ? 'warning' : 'error');
+      if (soft) setWaterLimitHit(true);
       showToast(err?.message || 'Water failed');
     },
   });
@@ -153,7 +161,7 @@ export default function FriendFarmPage() {
         <div className="flex flex-col h-full px-4 pt-4">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => { haptic('tap'); navigate(-1); }}
             className="self-start mb-4 text-sm font-bold text-gray-800 bg-white/60 backdrop-blur-sm rounded-full px-3 py-1.5"
           >
             ← {t('friendFarm.back')}
@@ -179,7 +187,7 @@ export default function FriendFarmPage() {
         {/* ═══ TOP BAR — same height as FarmPage ═══ */}
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => { haptic('tap'); navigate(-1); }}
             className="w-9 h-9 rounded-full bg-white/70 backdrop-blur-sm flex items-center justify-center shadow-sm border border-white/50"
           >
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
@@ -373,6 +381,8 @@ export default function FriendFarmPage() {
                 whileTap={greetDone ? {} : { scale: 0.92 }}
                 onClick={() => {
                   if (greetDone || greetBusy.current) return;
+                  // Waving hello to a friend = social impact moment.
+                  haptic('impact');
                   greetBusy.current = true;
                   greetMutation.mutate(undefined, { onSettled: () => { greetBusy.current = false; } });
                 }}

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { AVATAR_IMAGES, CROP_STAGES, UI } from '../lib/assets';
+import { haptic } from '../lib/native';
 
 interface Notification {
   id: string;
@@ -281,7 +282,7 @@ export default function NotificationsPopup({
                 {tab === 'settings' && (
                   <button
                     className="w-7 h-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors"
-                    onClick={() => setTab('list')}
+                    onClick={() => { haptic('tap'); setTab('list'); }}
                   >
                     <span className="text-white text-sm font-bold">←</span>
                   </button>
@@ -303,14 +304,14 @@ export default function NotificationsPopup({
                 {tab === 'list' && (
                   <button
                     className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
-                    onClick={() => setTab('settings')}
+                    onClick={() => { haptic('tap'); setTab('settings'); }}
                   >
                     <span className="text-white text-sm">⚙️</span>
                   </button>
                 )}
                 <button
                   className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors"
-                  onClick={onClose}
+                  onClick={() => { haptic('tap'); onClose(); }}
                 >
                   <span className="text-white text-sm font-bold">✕</span>
                 </button>
@@ -421,7 +422,7 @@ export default function NotificationsPopup({
                         style={i18n.language === lang.code ? {
                           background: 'linear-gradient(180deg, #8BC34A 0%, #689F38 100%)',
                         } : undefined}
-                        onClick={() => handleLangChange(lang.code)}
+                        onClick={() => { haptic('select'); handleLangChange(lang.code); }}
                       >
                         {lang.label}
                       </button>
@@ -440,14 +441,14 @@ export default function NotificationsPopup({
                 >
                   <button
                     className="w-full p-4 text-left text-sm font-semibold text-red-500 hover:bg-red-50/60 transition-colors active:scale-[0.98]"
-                    onClick={() => { logout(); onClose(); }}
+                    onClick={() => { haptic('impact'); logout(); onClose(); }}
                   >
                     {t('profile.logout')} →
                   </button>
                   <div className="border-t" style={{ borderColor: 'rgba(200,170,120,0.25)' }} />
                   <button
                     className="w-full p-4 text-left text-sm text-amber-800/70 hover:bg-amber-50/60 transition-colors active:scale-[0.98]"
-                    onClick={() => setShowDelete(true)}
+                    onClick={() => { haptic('warning'); setShowDelete(true); }}
                   >
                     {t('profile.delete_account')}
                   </button>
@@ -495,14 +496,14 @@ export default function NotificationsPopup({
                     <div className="flex gap-2">
                       <button
                         className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-sm font-semibold hover:bg-gray-200 transition-colors disabled:opacity-50"
-                        onClick={() => setShowDelete(false)}
+                        onClick={() => { haptic('tap'); setShowDelete(false); }}
                         disabled={deleting}
                       >
                         {t('profile.delete_no', 'No')}
                       </button>
                       <button
                         className="flex-1 py-2.5 rounded-xl bg-gray-700 text-white text-sm font-semibold hover:bg-gray-800 transition-colors disabled:opacity-50"
-                        onClick={handleDelete}
+                        onClick={() => { haptic('error'); handleDelete(); }}
                         disabled={deleting}
                       >
                         {deleting ? '…' : t('profile.delete_yes', 'Yes')}

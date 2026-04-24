@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
+import { haptic } from '../../lib/native';
 
 interface BucketProps {
   fillPercent: number;
@@ -34,12 +35,20 @@ export default function Bucket({
     if (isCollecting || bucketLevel < 0.01 || shaking) return;
 
     if (adRequired && onAdRequest) {
+      // The shake animation already tells the user "nope, earn this".
+      // A soft two-beat warning syncs with it so the message also
+      // arrives through the thumb, not just the eyes.
+      haptic('warning');
       setShaking(true);
       setTimeout(() => setShaking(false), 400);
       onAdRequest();
       return;
     }
 
+    // Ka-chunk: the bucket tips and water pours. Physical commit →
+    // `impact`. Actual success feedback fires in FarmPage.handleCollect
+    // onSuccess so we don't double-buzz on a failed request.
+    haptic('impact');
     sounds.bucketCollectToCan();
     setShaking(true);
     onShakeCan();

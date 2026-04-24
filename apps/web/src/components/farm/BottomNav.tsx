@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { haptic } from '../../lib/native';
 
 const NAV_ITEMS = [
   { path: '/', icon: '🏡', labelKey: 'nav.farm' },
@@ -24,7 +25,13 @@ export default function BottomNav() {
               className={`flex flex-col items-center gap-0.5 px-4 py-1 rounded-xl transition-colors ${
                 isActive ? 'text-farm-green' : 'text-gray-400'
               }`}
-              onClick={() => navigate(item.path)}
+              onClick={() => {
+                // Skip haptic when tapping the tab you're already on —
+                // nothing is changing so the buzz would feel like the
+                // device malfunctioned.
+                if (!isActive) haptic('select');
+                navigate(item.path);
+              }}
             >
               <span className="text-xl">{item.icon}</span>
               <span className="text-[10px] font-semibold">{t(item.labelKey)}</span>

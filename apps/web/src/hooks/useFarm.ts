@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useRewardToast } from '../components/RewardToast';
+import { haptic } from '../lib/native';
 
 export function useFarm() {
   return useQuery({
@@ -24,6 +25,11 @@ export function useCollectBucket() {
       if (data.collected > 0) showReward('water', data.collected);
     },
     onError: () => {
+      // Bucket tipped but server rejected — let the thumb know.
+      // The Bucket component already fired 'impact' on the tap, so
+      // this 'error' creates a clear start→fail contrast rather than
+      // a silent no-op.
+      haptic('error');
       qc.invalidateQueries({ queryKey: ['farm'] });
     },
   });

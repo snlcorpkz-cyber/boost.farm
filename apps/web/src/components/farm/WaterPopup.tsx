@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { AVATAR_IMAGES, UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
+import { haptic } from '../../lib/native';
 import MockAdModal from '../MockAdModal';
 import { useRewardToast } from '../RewardToast';
 import { useRewardedAd } from '../../hooks/useRewardedAd';
@@ -25,7 +26,7 @@ const CHECKIN_WATER_REWARD = 40;
 
 function BackArrow({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-8 h-8 flex items-center justify-center text-amber-800 hover:text-amber-950 -ml-1">
+    <button onClick={() => { haptic('tap'); onClick(); }} className="w-8 h-8 flex items-center justify-center text-amber-800 hover:text-amber-950 -ml-1">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <path d="M13 4L7 10l6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -35,7 +36,7 @@ function BackArrow({ onClick }: { onClick: () => void }) {
 
 function CloseBtn({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="w-8 h-8 flex items-center justify-center text-amber-700/60 hover:text-amber-900">
+    <button onClick={() => { haptic('tap'); onClick(); }} className="w-8 h-8 flex items-center justify-center text-amber-700/60 hover:text-amber-900">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
         <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
       </svg>
@@ -52,6 +53,13 @@ function ChevronRight() {
 }
 
 function FarmBtn({ children, onClick, disabled, variant = 'green' }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; variant?: 'green' | 'orange' | 'pink' | 'blue' | 'disabled' }) {
+  // Every primary green / blue CTA in the popup routes through this
+  // component. Firing 'impact' here — rather than at every call site —
+  // guarantees every Claim / Watch / Play button feels like a
+  // committed action without us remembering to add it one by one.
+  const wrapped = onClick
+    ? () => { if (!disabled && variant !== 'disabled') haptic('impact'); onClick(); }
+    : undefined;
   const colors: Record<string, string> = {
     green: 'bg-gradient-to-b from-[#78D44B] via-[#5DBB36] to-[#3F9922] shadow-[0_3px_0_0_#2D7A15,0_4px_8px_rgba(0,0,0,0.15)] active:shadow-[0_1px_0_0_#2D7A15] active:translate-y-[2px]',
     orange: 'bg-gradient-to-b from-amber-400 via-amber-500 to-amber-600 shadow-[0_3px_0_0_#B45309,0_4px_8px_rgba(0,0,0,0.15)] active:shadow-[0_1px_0_0_#B45309] active:translate-y-[2px]',
@@ -63,7 +71,7 @@ function FarmBtn({ children, onClick, disabled, variant = 'green' }: { children:
   return (
     <button
       className={`text-white font-extrabold text-[11px] px-4 py-1.5 rounded-xl transition-all ${colors[variant]} disabled:opacity-60`}
-      onClick={onClick}
+      onClick={wrapped}
       disabled={disabled}
     >
       {children}
@@ -108,7 +116,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
     placement: 'water_popup',
     rewardType: 'water',
     rewardAmount: AD_WATER_REWARD,
-    onError: (msg) => { setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
+    onError: (msg) => { haptic('error'); setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
   });
 
   const { data: adLimits } = useQuery({
@@ -148,6 +156,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
       try { sounds.rewardChime(); } catch { /* audio context may not be initialized */ }
     },
     onError: (err: any) => {
+      haptic('error');
       qc.invalidateQueries({ queryKey: ['quests'] });
       const msg = err?.error?.message || err?.message || 'Check-in failed';
       setMutationError(msg);
@@ -256,7 +265,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                     {/* 2. Greet Friends */}
                     <button
                       className="w-full active:scale-[0.98] transition-transform text-left"
-                      onClick={() => setPage('friends')}
+                      onClick={() => { haptic('tap'); setPage('friends'); }}
                     >
                       <TaskCard>
                         <TaskIcon gradient="bg-gradient-to-br from-orange-400 to-amber-600">
@@ -296,7 +305,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                     {/* 4. Game Offers */}
                     <button
                       className="w-full active:scale-[0.98] transition-transform text-left"
-                      onClick={() => setPage('games')}
+                      onClick={() => { haptic('tap'); setPage('games'); }}
                     >
                       <TaskCard>
                         <TaskIcon gradient="bg-gradient-to-br from-indigo-400 to-purple-600">
@@ -362,7 +371,7 @@ function FriendsList({ friends, onSelectFriend, t }: { friends: any[]; onSelectF
           <button
             key={f.id}
             className="w-full active:scale-[0.98] transition-transform text-left"
-            onClick={() => onSelectFriend(f)}
+            onClick={() => { haptic('tap'); onSelectFriend(f); }}
           >
             <TaskCard>
               <div className="w-11 h-11 rounded-full bg-amber-100 flex items-center justify-center overflow-hidden border-2 border-amber-300/50 shadow-sm shrink-0">

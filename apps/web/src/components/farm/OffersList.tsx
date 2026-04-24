@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { haptic } from '../../lib/native';
 
 interface Milestone {
   id: string;
@@ -79,7 +80,7 @@ function OfferListItem({ offer, onSelect }: { offer: Offer; onSelect: () => void
   return (
     <button
       className="w-full active:scale-[0.98] transition-transform text-left"
-      onClick={onSelect}
+      onClick={() => { haptic('tap'); onSelect(); }}
     >
       <div className="bg-gradient-to-br from-[#FFFDF5] to-[#FFF8E7] rounded-2xl border-2 border-amber-200/70 shadow-[0_2px_8px_rgba(180,130,50,0.1)] flex items-center gap-3 px-3.5 py-3">
         {offer.icon_url ? (
@@ -152,7 +153,7 @@ function OfferDetail({ offer, onBack }: { offer: Offer; onBack: () => void }) {
   return (
     <div className="space-y-3">
       {/* Back button */}
-      <button onClick={onBack} className="flex items-center gap-1 text-amber-700 font-bold text-[12px] -ml-0.5">
+      <button onClick={() => { haptic('tap'); onBack(); }} className="flex items-center gap-1 text-amber-700 font-bold text-[12px] -ml-0.5">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
           <path d="M13 4L7 10l6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -186,7 +187,7 @@ function OfferDetail({ offer, onBack }: { offer: Offer; onBack: () => void }) {
                 ? 'bg-gray-500 cursor-not-allowed'
                 : 'bg-gradient-to-r from-emerald-500 to-green-500 shadow-[0_3px_0_0_#166534] active:shadow-[0_1px_0_0_#166534] active:translate-y-[2px]'
               }`}
-            onClick={offer.all_completed ? undefined : handlePlay}
+            onClick={offer.all_completed ? undefined : () => { haptic('impact'); handlePlay(); }}
             disabled={offer.all_completed || opening}
           >
             {offer.all_completed
@@ -202,13 +203,13 @@ function OfferDetail({ offer, onBack }: { offer: Offer; onBack: () => void }) {
       <div className="flex border-b-2 border-amber-200/50">
         <button
           className={`flex-1 py-2 text-[13px] font-bold text-center transition-all ${tab === 'rewards' ? 'text-amber-900 border-b-2 border-amber-600 -mb-[2px]' : 'text-amber-600/50'}`}
-          onClick={() => setTab('rewards')}
+          onClick={() => { if (tab !== 'rewards') haptic('select'); setTab('rewards'); }}
         >
           Rewards
         </button>
         <button
           className={`flex-1 py-2 text-[13px] font-bold text-center transition-all ${tab === 'details' ? 'text-amber-900 border-b-2 border-amber-600 -mb-[2px]' : 'text-amber-600/50'}`}
-          onClick={() => setTab('details')}
+          onClick={() => { if (tab !== 'details') haptic('select'); setTab('details'); }}
         >
           Details
         </button>

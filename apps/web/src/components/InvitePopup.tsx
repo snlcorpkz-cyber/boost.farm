@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { UI } from '../lib/assets';
+import { haptic } from '../lib/native';
 
 interface InvitePopupProps {
   open: boolean;
@@ -90,7 +91,7 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
                 <h3 className="text-white font-bold text-sm">{t('ref.title')}</h3>
                 <button
                   className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center"
-                  onClick={onClose}
+                  onClick={() => { haptic('tap'); onClose(); }}
                 >
                   <span className="text-white text-xs font-bold">✕</span>
                 </button>
@@ -111,7 +112,7 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
                       <span className="flex-1 text-center text-lg font-mono font-extrabold text-green-600 tracking-widest">{inviteData.code}</span>
                       <button
                         className="shrink-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                        onClick={copyCode}
+                        onClick={() => { haptic('success'); copyCode(); }}
                       >
                         {copied ? t('ref.copied') : t('ref.copy_code')}
                       </button>
@@ -127,14 +128,14 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
                       <span className="flex-1 text-xs font-medium text-gray-700 truncate">{inviteLink}</span>
                       <button
                         className="shrink-0 bg-emerald-500 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                        onClick={copyLink}
+                        onClick={() => { haptic('success'); copyLink(); }}
                       >
                         {linkCopied ? t('ref.copied') : 'Copy'}
                       </button>
                     </div>
                     <button
                       className="mt-2 w-full bg-gradient-to-r from-emerald-500 to-green-600 text-white font-bold py-2.5 rounded-xl text-sm shadow-md active:scale-95 transition-transform"
-                      onClick={shareLink}
+                      onClick={() => { haptic('impact'); shareLink(); }}
                     >
                       Share link
                     </button>

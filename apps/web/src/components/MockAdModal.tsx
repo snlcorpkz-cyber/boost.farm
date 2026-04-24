@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { sounds } from '../lib/sounds';
+import { haptic } from '../lib/native';
 
 export interface MockAdModalProps {
   open: boolean;
@@ -42,6 +43,11 @@ export default function MockAdModal({
 
   const handleClaim = () => {
     if (!canClose) return;
+    // The reward toast that follows will do the 'success' buzz when the
+    // server confirms. This one is the physical commit of the "claim"
+    // button press — feels like the reward *starts* arriving under the
+    // thumb, then "lands" a moment later with the toast.
+    haptic('impact');
     onComplete({ amount: rewardAmount });
     onClose();
   };

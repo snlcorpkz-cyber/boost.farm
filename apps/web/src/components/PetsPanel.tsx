@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { api } from '../lib/api';
 import { PET_IMAGES } from '../lib/assets';
+import { haptic } from '../lib/native';
 import { useRewardToast } from './RewardToast';
 import type { PetId } from '@eco-farm/game-engine';
 
@@ -80,6 +81,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
       qc.invalidateQueries({ queryKey: ['farm'] });
     },
     onError: () => {
+      haptic('error');
       qc.invalidateQueries({ queryKey: ['pets'] });
     },
   });
@@ -93,6 +95,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
       showReward('water', data.waterEarned);
     },
     onError: (err: any) => {
+      haptic('warning');
       qc.invalidateQueries({ queryKey: ['pets'] });
       const msg = err?.code === 'COOLDOWN'
         ? t('pet.gift_cooldown', { hours: 24 })
@@ -143,7 +146,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
               <button
                 type="button"
                 className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-lg"
-                onClick={onClose}
+                onClick={() => { haptic('tap'); onClose(); }}
               >
                 &times;
               </button>
@@ -250,7 +253,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
                           type="button"
                           className="mt-3 w-full rounded-xl bg-gradient-to-r from-emerald-400 to-green-500 text-white font-bold py-2.5 text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
                           disabled={activate.isPending}
-                          onClick={() => activate.mutate(id)}
+                          onClick={() => { haptic('impact'); activate.mutate(id); }}
                         >
                           {t('pet.activate')}
                         </button>
@@ -262,7 +265,7 @@ export default function PetsPanel({ open, onClose }: PetsPanelProps) {
                             type="button"
                             className="mt-2 w-full rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-white font-bold py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
                             disabled={giftDisabled}
-                            onClick={() => { setGiftError(null); gift.mutate(); }}
+                            onClick={() => { haptic('impact'); setGiftError(null); gift.mutate(); }}
                           >
                             {cooldownH !== null
                               ? t('pet.gift_cooldown', { hours: cooldownH })

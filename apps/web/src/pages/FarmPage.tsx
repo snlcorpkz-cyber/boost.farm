@@ -27,7 +27,7 @@ import { useEventToast } from '../components/EventToast';
 import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
-import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible } from '../lib/native';
+import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible, haptic } from '../lib/native';
 import { trackClient } from '../lib/track';
 
 
@@ -325,6 +325,13 @@ export default function FarmPage() {
               pendingStageBonusRef.current = res.stageUpBonus;
             }
           },
+          onError: () => {
+            // The pour animation already ran (we fire it optimistically
+            // for snappiness) so the user needs a tactile cue that the
+            // server bounced it — otherwise the plant silently doesn't
+            // grow and it feels broken.
+            haptic('error');
+          },
           onSettled: () => {
             setTimeout(() => setIsWatering(false), 1200);
           },
@@ -433,7 +440,7 @@ export default function FarmPage() {
           {(farmError as any)?.message || 'Connection error'}
         </p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => { haptic('tap'); window.location.reload(); }}
           className="px-6 py-2 bg-green-500 text-white rounded-xl font-bold text-sm"
         >
           {t('notif.load_more') || 'Retry'}
@@ -457,7 +464,7 @@ export default function FarmPage() {
         <div className="flex items-center justify-between px-3 pt-2 pb-1">
           <button
             className="relative w-9 h-9 rounded-full bg-white/70 backdrop-blur-sm flex items-center justify-center shadow-sm border border-white/50"
-            onClick={() => setShowNotifPopup(true)}
+            onClick={() => { haptic('tap'); setShowNotifPopup(true); }}
           >
             <img src={UI.bell} alt="notifications" className="w-5 h-5 object-contain" />
             {(notifData?.unreadCount ?? 0) > 0 && (
@@ -470,7 +477,7 @@ export default function FarmPage() {
           <div className="flex items-center gap-1.5">
             {data?.rank && (
               <button
-                onClick={() => setShowRankModal(true)}
+                onClick={() => { haptic('tap'); setShowRankModal(true); }}
                 className={`flex items-center gap-1 rounded-full px-2.5 py-1 shadow-sm text-[10px] font-bold ${
                   data.rank === 'master' ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-white' :
                   data.rank === 'farmer' ? 'bg-gradient-to-r from-blue-400 to-blue-600 text-white' :
@@ -494,7 +501,7 @@ export default function FarmPage() {
 
           <button
             className="relative w-9 h-9 rounded-full bg-white/70 backdrop-blur-sm flex items-center justify-center shadow-sm border border-white/50"
-            onClick={() => sounds.toggle()}
+            onClick={() => { haptic('select'); sounds.toggle(); }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={soundEnabled ? 'text-gray-700' : 'text-gray-400'}>
               {soundEnabled ? (
@@ -620,7 +627,7 @@ export default function FarmPage() {
                 {/* ── Layer 2: Nutrition badge (z-15) ── */}
                 <button
                   className="absolute left-[26%] bottom-[38%] z-[15]"
-                  onClick={() => setShowNutritionPopup(true)}
+                  onClick={() => { haptic('tap'); setShowNutritionPopup(true); }}
                   data-tutorial="nutrition"
                 >
                   <div className="w-14 h-14 rounded-full bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg border-2 border-white/60 active:scale-95 transition-transform">
@@ -739,7 +746,7 @@ export default function FarmPage() {
             {/* Water */}
             <button
               className="flex flex-col items-center"
-              onClick={() => setShowWaterPopup(true)}
+              onClick={() => { haptic('tap'); setShowWaterPopup(true); }}
               data-tutorial="water-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-blue-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
@@ -753,7 +760,7 @@ export default function FarmPage() {
             {/* Fertilizer */}
             <button
               className="flex flex-col items-center"
-              onClick={() => setShowFertPopup(true)}
+              onClick={() => { haptic('tap'); setShowFertPopup(true); }}
               data-tutorial="fert-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-amber-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
@@ -767,7 +774,7 @@ export default function FarmPage() {
             {/* Pet */}
             <button
               className="flex flex-col items-center"
-              onClick={() => setShowPets(true)}
+              onClick={() => { haptic('tap'); setShowPets(true); }}
               data-tutorial="pet-btn"
             >
               <div className="w-[80px] h-[80px] rounded-full bg-pink-100/80 backdrop-blur-sm flex items-center justify-center shadow-sm border-2 border-white/50">
@@ -794,7 +801,7 @@ export default function FarmPage() {
           <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
             <button
               className="flex-shrink-0 flex flex-col items-center gap-0.5"
-              onClick={() => setShowInvitePopup(true)}
+              onClick={() => { haptic('tap'); setShowInvitePopup(true); }}
               data-tutorial="invite-btn"
             >
               <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center border border-dashed border-gray-300 shadow-sm">
@@ -812,7 +819,7 @@ export default function FarmPage() {
                 <button
                   key={friend.id}
                   className="flex-shrink-0 flex flex-col items-center gap-0.5"
-                  onClick={() => navigate(`/friends/${friend.id}`)}
+                  onClick={() => { haptic('tap'); navigate(`/friends/${friend.id}`); }}
                 >
                   <div className="w-9 h-9 rounded-full bg-white/70 flex items-center justify-center border border-white/50 shadow-sm overflow-hidden">
                     <img src={avatarSrc || AVATAR_IMAGES.bear} alt="" className="w-7 h-7 object-contain" />
@@ -886,6 +893,10 @@ export default function FarmPage() {
                   className="w-full bg-gradient-to-b from-blue-400 to-blue-600 text-white font-bold py-3 rounded-2xl shadow-sm active:scale-[0.97] transition-transform text-sm disabled:opacity-50"
                   disabled={claimChallenge.isPending}
                   onClick={() => {
+                    // Claim = physical commit. The reward toast that
+                    // follows will add its own 'success' buzz — this
+                    // one confirms the button press itself.
+                    haptic('impact');
                     claimChallenge.mutate();
                     setShowChallengeModal(false);
                   }}

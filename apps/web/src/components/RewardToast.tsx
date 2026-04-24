@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../lib/assets';
+import { haptic } from '../lib/native';
 
 type RewardType = 'water' | 'fertilizer' | 'offer';
 
@@ -28,6 +29,13 @@ export function RewardToastProvider({ children }: { children: React.ReactNode })
   const showReward = useCallback((type: RewardType, amount: number, label?: string, sublabel?: string) => {
     const id = ++idRef.current;
     const duration = type === 'offer' ? 2400 : 1600;
+    // Champagne moment. The haptic lives HERE (not at the mutation
+    // call site) so every code path that lands in a reward toast
+    // gets the same tactile payoff — ad reward, check-in, friend
+    // greet, offer postback, hamster gift, you name it. Offers get
+    // the bigger two-pulse 'celebrate' because they're monetarily
+    // real; water/fert get a single 'success' bump.
+    haptic(type === 'offer' ? 'celebrate' : 'success');
     setQueue((prev) => [...prev, { id, type, amount, label, sublabel }]);
     setTimeout(() => {
       setQueue((prev) => prev.filter((r) => r.id !== id));

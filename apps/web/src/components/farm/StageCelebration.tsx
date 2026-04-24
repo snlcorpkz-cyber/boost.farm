@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
+import { haptic } from '../../lib/native';
 
 interface StageCelebrationProps {
   active: boolean;
@@ -101,6 +102,12 @@ export default function StageCelebration({ active, stage, onDismiss }: StageCele
     }
     setPhase('effects');
     sounds.celebration();
+    // Stage-up is one of THE flagship moments in the game. A full
+    // 'celebrate' pulse (success + impact combo) pairs with the glow
+    // + rainbow + butterflies so the phone feels the event fire.
+    // Throttle inside `haptic()` prevents retrigger if the effect
+    // re-mounts during the animation.
+    haptic('celebrate');
     const modalTimer = setTimeout(() => setPhase('modal'), EFFECTS_DURATION);
     return () => clearTimeout(modalTimer);
   }, [active]);

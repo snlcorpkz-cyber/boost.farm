@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../../lib/assets';
 import { sounds } from '../../lib/sounds';
+import { haptic } from '../../lib/native';
 
 interface WateringCanProps {
   waterAmount: number;
@@ -63,6 +64,10 @@ export default function WateringCan({
   return (
     <div className="flex flex-col items-center" data-tutorial="watering-can">
       {/* Batch selector — single pill with dropdown */}
+      {/* `select` is our lightest haptic — ~5ms — used only where the
+          user is *choosing* between discrete options (batch row, menu
+          toggle). Keeps the popup feeling crisp without ever being
+          in the way. */}
       {singleShot ? (
         <div className="mb-1.5 z-20">
           <span className="px-3.5 py-1 rounded-full text-[10px] font-extrabold bg-gradient-to-b from-blue-400 to-blue-600 text-white shadow-md inline-flex items-center gap-1">
@@ -73,7 +78,7 @@ export default function WateringCan({
       <div className="relative mb-1.5 z-20" ref={menuRef}>
         <button
           className="px-3.5 py-1 rounded-full text-[10px] font-extrabold bg-gradient-to-b from-blue-400 to-blue-600 text-white shadow-md active:scale-95 transition-transform flex items-center gap-1"
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={() => { haptic('tap'); setMenuOpen((v) => !v); }}
         >
           <span>{t('farm.water_x', { count: selectedBatch })}</span>
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className={`transition-transform duration-200 ${menuOpen ? 'rotate-180' : ''}`}>
@@ -105,6 +110,7 @@ export default function WateringCan({
                     }`}
                     onClick={() => {
                       if (enough) {
+                        haptic('select');
                         setSelectedBatch(size);
                         setMenuOpen(false);
                       }
@@ -128,7 +134,21 @@ export default function WateringCan({
       <motion.button
         className="relative w-[96px] h-[96px] rounded-full bg-blue-100/80 backdrop-blur-sm flex items-center justify-center shadow-md border-2 border-white/60"
         whileTap={canDoSelected ? { scale: 0.88 } : {}}
-        onClick={() => { if (canDoSelected) { sounds.waterDrip(); onWater(effectiveBatch); } }}
+        onClick={() => {
+          if (canDoSelected) {
+            // Tilting the can to pour = physical commit. Must fire on
+            // the same gesture that starts `isWatering`, not inside the
+            // mutation callback, so the buzz lines up with the pour
+            // animation (eyes + palm see the same moment).
+            haptic('impact');
+            sounds.waterDrip();
+            onWater(effectiveBatch);
+          } else if (canWater && !isWatering) {
+            // User tried to pour with an empty can — soft nudge so they
+            // don't think the tap was ignored.
+            haptic('warning');
+          }
+        }}
         disabled={!canDoSelected}
         animate={
           shaking
