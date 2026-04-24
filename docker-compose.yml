@@ -7,6 +7,11 @@ services:
       - "3000:80"
     depends_on:
       - api
+    volumes:
+      # Admin-uploaded offer icons. Shared read-only with the api
+      # container which writes into the same volume. Must match the
+      # path nginx looks at (server root + /assets/offers/).
+      - offer_assets:/usr/share/nginx/html/assets/offers:ro
     restart: unless-stopped
 
   api:
@@ -20,4 +25,13 @@ services:
       - CLIENT_URL=http://localhost:3000
     expose:
       - "3001"
+    volumes:
+      # Persist uploaded offer icons across api rebuilds and expose the
+      # same directory to nginx via the shared named volume (see `web`).
+      # Path matches UPLOAD_DIR in packages/api/src/routes/admin/offers.ts
+      # (process.cwd() is /app under the node:20-alpine runtime).
+      - offer_assets:/app/public/assets/offers
     restart: unless-stopped
+
+volumes:
+  offer_assets:

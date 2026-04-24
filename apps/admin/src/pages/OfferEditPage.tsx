@@ -267,19 +267,37 @@ export function OfferEditPage() {
             </div>
           </div>
 
-          {/* Icon upload (only for existing offers) */}
-          {!isNew && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Icon</h3>
-              {iconUrl && <img src={iconUrl} alt="" className="w-20 h-20 rounded-xl mb-3 border border-gray-200 object-cover" />}
-              <input
-                type="file"
-                accept=".png,.jpg,.jpeg,.webp"
-                onChange={e => { if (e.target.files?.[0]) uploadIcon(e.target.files[0]); }}
-                className="text-xs"
-              />
-            </div>
-          )}
+          {/* Icon upload. Disabled until the offer has an id because the
+              upload endpoint is POST /offers/:id/icon — we need a saved
+              offer to attach the file to. On a brand-new offer we show the
+              field anyway so the admin isn't left wondering if icons are
+              supported. */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Icon</h3>
+            {iconUrl ? (
+              <img src={iconUrl} alt="" className="w-20 h-20 rounded-xl mb-3 border border-gray-200 object-cover" />
+            ) : (
+              <div className="w-20 h-20 rounded-xl mb-3 border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-2xl text-gray-400">
+                🎮
+              </div>
+            )}
+            <input
+              type="file"
+              accept=".png,.jpg,.jpeg,.webp"
+              disabled={isNew}
+              onChange={e => { if (e.target.files?.[0]) uploadIcon(e.target.files[0]); }}
+              className="text-xs disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            {isNew ? (
+              <p className="mt-2 text-[11px] text-amber-600">
+                Save the offer first — then you can upload an icon.
+              </p>
+            ) : (
+              <p className="mt-2 text-[11px] text-gray-500">
+                PNG / JPG / WebP, up to 2 MB.
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

@@ -276,15 +276,59 @@ adminOffersRouter.put('/:id', async (req, res) => {
   }
 });
 
-adminOffersRouter.post('/:id/icon', upload.single('icon'), async (req, res) => {
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Upload (or replace) the icon for an offer.
+ *
+ * Files land on a named Docker volume mounted at UPLOAD_DIR — see the
+ * `offer_assets` volume in docker-compose.yml. The same volume is
+ * mounted read-only inside the nginx (web) container at
+ * /usr/share/nginx/html/assets/offers/, which is how the browser then
+ * fetches the icon via the same `/assets/offers/...` URL returned here.
+ */
+adminOffersRouter.post('/:id/icon', (req, res, next) => {
+  // Wrap multer so we can turn its errors (file too large, bad mime,
+  // disk full, etc.) into proper JSON responses instead of default HTML.
+  upload.single('icon')(req, res, (err: any) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({ error: 'File too large (max 2 MB)' });
+        return;
+      }
+      console.error('[admin/offers/icon] multer:', err);
+      res.status(400).json({ error: err.message || 'Upload failed' });
+      return;
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
-    if (!req.file) { res.status(400).json({ error: 'No file' }); return; }
+    if (!UUID_RE.test(req.params.id)) {
+      res.status(400).json({ error: 'Invalid offer ID' });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: 'No file or unsupported format (png / jpg / jpeg / webp)' });
+      return;
+    }
+    const offerExists = await queryOne<{ id: string }>(
+      `SELECT id FROM offers WHERE id = $1`,
+      [req.params.id],
+    );
+    if (!offerExists) {
+      // Clean up the orphan file we just wrote — otherwise the volume
+      // collects garbage from typos in the URL.
+      fs.unlink(path.join(UPLOAD_DIR, req.file.filename), () => {});
+      res.status(404).json({ error: 'Offer not found' });
+      return;
+    }
     const iconUrl = `/assets/offers/${req.file.filename}`;
     await execute(`UPDATE offers SET icon_url = $2 WHERE id = $1`, [req.params.id, iconUrl]);
     res.json({ icon_url: iconUrl });
   } catch (err) {
     console.error('[admin/offers/icon]', err);
-    res.status(500).json({ error: 'Failed' });
+    res.status(500).json({ error: 'Failed', details: (err as Error).message });
   }
 });
 
