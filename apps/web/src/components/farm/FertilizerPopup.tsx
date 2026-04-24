@@ -137,6 +137,29 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
     enabled: open,
   });
 
+  // waterFriendFert is rank-scaled (novice=1, amateur/farmer=2, master=3).
+  // Reading it from the farm payload keeps the preview honest instead of
+  // showing a hard-coded constant that's correct for amateur and lies at
+  // every other rank.
+  const { data: farmData } = useQuery({
+    queryKey: ['farm'],
+    queryFn: () => api<{ rankDef?: { waterFriendFert?: number } }>('/farm'),
+    enabled: open,
+  });
+  const waterFriendFertReward = farmData?.rankDef?.waterFriendFert ?? WATER_FRIEND_FERT_REWARD;
+
+  // Same pattern as WaterPopup: deduped by React Query with OffersList,
+  // summed as *remaining* potential so a user mid-through an offer sees
+  // what's still actually earnable.
+  const { data: offersData } = useQuery({
+    queryKey: ['offers'],
+    queryFn: () => api<{ offers: Array<{ reward_type: 'water' | 'nutrition'; total_reward: number; earned_reward: number }> }>('/offers'),
+    enabled: open,
+  });
+  const gamesFertUpTo = (offersData?.offers || [])
+    .filter((o) => o.reward_type === 'nutrition')
+    .reduce((sum, o) => sum + Math.max(0, (o.total_reward ?? 0) - (o.earned_reward ?? 0)), 0);
+
   const checkinClaimed = (() => {
     const fertQuest = questsData?.quests?.find((q: any) => q.quest_key === 'checkin_fert');
     return fertQuest ? fertQuest.isCompleted : false;
@@ -290,7 +313,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                           <p className="text-[13px] font-bold text-amber-900">Water Friends</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Water friends' plants</p>
                         </div>
-                        <RewardBadge amount={WATER_FRIEND_FERT_REWARD} color="text-amber-700" />
+                        <RewardBadge amount={waterFriendFertReward} color="text-amber-700" />
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -331,6 +354,11 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                           <p className="text-[13px] font-bold text-amber-900">Games</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Play games for fertilizer</p>
                         </div>
+                        {gamesFertUpTo > 0 && (
+                          <span className="text-[11px] font-extrabold text-amber-700 bg-white/60 rounded-lg px-1.5 py-0.5 mr-0.5 shrink-0">
+                            Up to {gamesFertUpTo}
+                          </span>
+                        )}
                         <ChevronRight />
                       </TaskCard>
                     </button>

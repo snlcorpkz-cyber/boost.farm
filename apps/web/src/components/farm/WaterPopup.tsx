@@ -139,6 +139,31 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
     enabled: open,
   });
 
+  // Farm payload carries the user's rank definition, which is the *actual*
+  // source of truth for per-greet water (server uses rankDef.greetWater when
+  // granting). Fetching it here lets the popup preview the real amount the
+  // user will earn, not a hard-coded constant that drifts as ranks evolve.
+  const { data: farmData } = useQuery({
+    queryKey: ['farm'],
+    queryFn: () => api<{ rankDef?: { greetWater?: number; waterFriendFert?: number } }>('/farm'),
+    enabled: open,
+  });
+  const greetWaterReward = farmData?.rankDef?.greetWater ?? 8;
+
+  // Offers feed also powers the Games sub-page (OffersList queries the same
+  // key, so React Query dedupes and we pay one request). We sum the
+  // *remaining* potential — what's still earnable — so a user who already
+  // finished some milestones sees an honest "Up to X" instead of the
+  // per-offer max that no longer applies.
+  const { data: offersData } = useQuery({
+    queryKey: ['offers'],
+    queryFn: () => api<{ offers: Array<{ reward_type: 'water' | 'nutrition'; total_reward: number; earned_reward: number }> }>('/offers'),
+    enabled: open,
+  });
+  const gamesWaterUpTo = (offersData?.offers || [])
+    .filter((o) => o.reward_type === 'water')
+    .reduce((sum, o) => sum + Math.max(0, (o.total_reward ?? 0) - (o.earned_reward ?? 0)), 0);
+
   const checkinClaimed = (() => {
     const checkinQuest = questsData?.quests?.find((q: any) => q.quest_key === 'checkin');
     return checkinQuest ? checkinQuest.isCompleted : false;
@@ -275,6 +300,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                           <p className="text-[13px] font-bold text-amber-900">Greet Friends</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Visit and say hello!</p>
                         </div>
+                        <RewardBadge amount={greetWaterReward} unit="g" color="text-blue-600" />
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -315,6 +341,11 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                           <p className="text-[13px] font-bold text-amber-900">Games</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Play games for water</p>
                         </div>
+                        {gamesWaterUpTo > 0 && (
+                          <span className="text-[11px] font-extrabold text-blue-600 bg-white/60 rounded-lg px-1.5 py-0.5 mr-0.5 shrink-0">
+                            Up to {gamesWaterUpTo}g
+                          </span>
+                        )}
                         <ChevronRight />
                       </TaskCard>
                     </button>
