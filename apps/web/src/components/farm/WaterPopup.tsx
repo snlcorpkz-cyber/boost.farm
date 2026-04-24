@@ -19,7 +19,13 @@ interface WaterPopupProps {
 
 type Page = 'main' | 'friends' | 'games';
 
-const AD_WATER_REWARD = 35;
+// Fallback used until the /farm payload lands. We deliberately seed it with the
+// novice rate (25g) rather than the old amateur hard-code (35g) — showing a
+// lower number and paying out a higher one is fine, but the reverse makes the
+// badge feel dishonest for every rank except amateur. The real amount is
+// sourced from rankDef.adWater below, so as soon as the user's rank is known
+// the badge matches exactly what the server will credit.
+const AD_WATER_REWARD_FALLBACK = 25;
 const CHECKIN_WATER_REWARD = 40;
 
 /* ─── Shared farm-styled sub-components ─── */
@@ -112,10 +118,14 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const busyRef = useRef(false);
 
+  // rewardAmount is only used for the fallback toast preview — the server
+  // authoritatively decides what the user actually receives. We still want it
+  // to match the visible badge though, so we wire it from the same rank-derived
+  // value below (adWaterReward), with the novice fallback before /farm loads.
   const ad = useRewardedAd({
     placement: 'water_popup',
     rewardType: 'water',
-    rewardAmount: AD_WATER_REWARD,
+    rewardAmount: AD_WATER_REWARD_FALLBACK,
     onError: (msg) => { haptic('error'); setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
   });
 
@@ -138,6 +148,35 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
     queryFn: () => api<{ quests: any[] }>('/quests'),
     enabled: open,
   });
+
+  // Farm payload carries the user's rank definition, which is the *actual*
+  // source of truth for per-greet water (server uses rankDef.greetWater when
+  // granting). Fetching it here lets the popup preview the real amount the
+  // user will earn, not a hard-coded constant that drifts as ranks evolve.
+  const { data: farmData } = useQuery({
+    queryKey: ['farm'],
+    queryFn: () => api<{ rankDef?: { greetWater?: number; waterFriendFert?: number; adWater?: number } }>('/farm'),
+    enabled: open,
+  });
+  const greetWaterReward = farmData?.rankDef?.greetWater ?? 8;
+  // Rank-scaled ad reward (novice=25, amateur=35, farmer=45, master=55). The
+  // server grants exactly this; showing the hard-coded 35g for every rank is
+  // a transparency bug we're fixing here.
+  const adWaterReward = farmData?.rankDef?.adWater ?? AD_WATER_REWARD_FALLBACK;
+
+  // Offers feed also powers the Games sub-page (OffersList queries the same
+  // key, so React Query dedupes and we pay one request). We sum the
+  // *remaining* potential — what's still earnable — so a user who already
+  // finished some milestones sees an honest "Up to X" instead of the
+  // per-offer max that no longer applies.
+  const { data: offersData } = useQuery({
+    queryKey: ['offers'],
+    queryFn: () => api<{ offers: Array<{ reward_type: 'water' | 'nutrition'; total_reward: number; earned_reward: number }> }>('/offers'),
+    enabled: open,
+  });
+  const gamesWaterUpTo = (offersData?.offers || [])
+    .filter((o) => o.reward_type === 'water')
+    .reduce((sum, o) => sum + Math.max(0, (o.total_reward ?? 0) - (o.earned_reward ?? 0)), 0);
 
   const checkinClaimed = (() => {
     const checkinQuest = questsData?.quests?.find((q: any) => q.quest_key === 'checkin');
@@ -275,6 +314,10 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                           <p className="text-[13px] font-bold text-amber-900">Greet Friends</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Visit and say hello!</p>
                         </div>
+                        {/* unit="g / greet" reads as "+8g per greet" so users
+                            understand the amount is earned *per* friend-greet,
+                            not a one-off reward for opening the tab. */}
+                        <RewardBadge amount={greetWaterReward} unit="g / greet" color="text-blue-600" />
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -292,7 +335,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                             : `${waterAdsLeft === Infinity ? '' : `${waterAdsLeft}/${adLimits?.limit ?? 3} `}Watch a short video`}
                         </p>
                       </div>
-                      <RewardBadge amount={AD_WATER_REWARD} unit="g" color="text-blue-600" />
+                      <RewardBadge amount={adWaterReward} unit="g" color="text-blue-600" />
                       {waterAdLimitReached ? (
                         <FarmBtn variant="disabled" disabled>Done</FarmBtn>
                       ) : (
@@ -315,6 +358,11 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
                           <p className="text-[13px] font-bold text-amber-900">Games</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Play games for water</p>
                         </div>
+                        {gamesWaterUpTo > 0 && (
+                          <span className="text-[11px] font-extrabold text-blue-600 bg-white/60 rounded-lg px-1.5 py-0.5 mr-0.5 shrink-0">
+                            Up to {gamesWaterUpTo}g
+                          </span>
+                        )}
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -341,7 +389,7 @@ export default function WaterPopup({ open, onClose }: WaterPopupProps) {
       <MockAdModal
         open={ad.showFallbackAd}
         onClose={ad.closeFallback}
-        rewardAmount={AD_WATER_REWARD}
+        rewardAmount={adWaterReward}
         onComplete={ad.handleFallbackComplete}
       />
     </>

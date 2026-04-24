@@ -19,7 +19,10 @@ interface FertilizerPopupProps {
 
 type Page = 'main' | 'invite' | 'friends' | 'games';
 
-const AD_FERT_REWARD = 8;
+// Novice rate — used as the preview until /farm returns the user's real rank.
+// Prior hard-code of 8 matched amateur and over-promised at every other rank;
+// the real amount comes from rankDef.adFertilizer below.
+const AD_FERT_REWARD_FALLBACK = 5;
 const CHECKIN_FERT_REWARD = 5;
 const INVITE_FERT_REWARD = 100;
 const WATER_FRIEND_FERT_REWARD = 2;
@@ -110,10 +113,12 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
   const [mutationError, setMutationError] = useState<string | null>(null);
   const busyRef = useRef(false);
 
+  // rewardAmount is only a hint for the fallback toast; the server is source
+  // of truth. We align it with the visible badge value (adFertReward below).
   const ad = useRewardedAd({
     placement: 'fert_popup',
     rewardType: 'nutrition',
-    rewardAmount: AD_FERT_REWARD,
+    rewardAmount: AD_FERT_REWARD_FALLBACK,
     onError: (msg) => { haptic('error'); setMutationError(msg); setTimeout(() => setMutationError(null), 3000); },
   });
 
@@ -136,6 +141,32 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
     queryFn: () => api<{ quests: any[] }>('/quests'),
     enabled: open,
   });
+
+  // waterFriendFert is rank-scaled (novice=1, amateur/farmer=2, master=3).
+  // Reading it from the farm payload keeps the preview honest instead of
+  // showing a hard-coded constant that's correct for amateur and lies at
+  // every other rank.
+  const { data: farmData } = useQuery({
+    queryKey: ['farm'],
+    queryFn: () => api<{ rankDef?: { waterFriendFert?: number; adFertilizer?: number } }>('/farm'),
+    enabled: open,
+  });
+  const waterFriendFertReward = farmData?.rankDef?.waterFriendFert ?? WATER_FRIEND_FERT_REWARD;
+  // Rank-scaled ad reward (novice=5, amateur=7, farmer/master=8). Mirrors the
+  // same fix we do for water so the badge matches the real server payout.
+  const adFertReward = farmData?.rankDef?.adFertilizer ?? AD_FERT_REWARD_FALLBACK;
+
+  // Same pattern as WaterPopup: deduped by React Query with OffersList,
+  // summed as *remaining* potential so a user mid-through an offer sees
+  // what's still actually earnable.
+  const { data: offersData } = useQuery({
+    queryKey: ['offers'],
+    queryFn: () => api<{ offers: Array<{ reward_type: 'water' | 'nutrition'; total_reward: number; earned_reward: number }> }>('/offers'),
+    enabled: open,
+  });
+  const gamesFertUpTo = (offersData?.offers || [])
+    .filter((o) => o.reward_type === 'nutrition')
+    .reduce((sum, o) => sum + Math.max(0, (o.total_reward ?? 0) - (o.earned_reward ?? 0)), 0);
 
   const checkinClaimed = (() => {
     const fertQuest = questsData?.quests?.find((q: any) => q.quest_key === 'checkin_fert');
@@ -290,7 +321,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                           <p className="text-[13px] font-bold text-amber-900">Water Friends</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Water friends' plants</p>
                         </div>
-                        <RewardBadge amount={WATER_FRIEND_FERT_REWARD} color="text-amber-700" />
+                        <RewardBadge amount={waterFriendFertReward} color="text-amber-700" />
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -308,7 +339,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                             : `${fertAdsLeft === Infinity ? '' : `${fertAdsLeft}/${adLimits?.limit ?? 3} `}Watch a short video`}
                         </p>
                       </div>
-                      <RewardBadge amount={AD_FERT_REWARD} color="text-amber-700" />
+                      <RewardBadge amount={adFertReward} color="text-amber-700" />
                       {fertAdLimitReached ? (
                         <FarmBtn variant="disabled" disabled>Done</FarmBtn>
                       ) : (
@@ -331,6 +362,11 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
                           <p className="text-[13px] font-bold text-amber-900">Games</p>
                           <p className="text-[10px] text-amber-700/60 font-medium">Play games for fertilizer</p>
                         </div>
+                        {gamesFertUpTo > 0 && (
+                          <span className="text-[11px] font-extrabold text-amber-700 bg-white/60 rounded-lg px-1.5 py-0.5 mr-0.5 shrink-0">
+                            Up to {gamesFertUpTo}
+                          </span>
+                        )}
                         <ChevronRight />
                       </TaskCard>
                     </button>
@@ -359,7 +395,7 @@ export default function FertilizerPopup({ open, onClose }: FertilizerPopupProps)
       <MockAdModal
         open={ad.showFallbackAd}
         onClose={ad.closeFallback}
-        rewardAmount={AD_FERT_REWARD}
+        rewardAmount={adFertReward}
         onComplete={ad.handleFallbackComplete}
       />
     </>
