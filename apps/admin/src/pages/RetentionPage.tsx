@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 
 export function RetentionPage() {
@@ -153,31 +154,75 @@ export function RetentionPage() {
                   ) : !cohortData?.cohorts?.length ? (
                     <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-500">No cohort data</td></tr>
                   ) : (
-                    cohortData.cohorts.map((c: any) => (
-                      <tr key={c.cohort_start} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="px-3 py-2.5 font-medium text-gray-700 sticky left-0 bg-white z-10">
-                          {new Date(c.cohort_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: groupBy === 'week' ? '2-digit' : undefined })}
-                        </td>
-                        <td className="px-3 py-2.5 text-right text-gray-700 font-semibold">{c.cohort_size}</td>
-                        {(cohortData.offsets || []).map((o: number) => {
-                          const r = c.retention[o];
-                          const pct = r?.pct ?? 0;
-                          const intensity = Math.min(pct / 50, 1);
-                          const bg = pct > 0
-                            ? `rgba(37, 99, 235, ${intensity * 0.8})`
-                            : 'transparent';
-                          const color = intensity > 0.5 ? 'white' : '#374151';
-                          return (
-                            <td key={o} className="px-3 py-2.5 text-center text-xs"
-                              style={{ backgroundColor: bg, color }}
-                              title={`${r?.count || 0} / ${c.cohort_size}`}
+                    cohortData.cohorts.map((c: any) => {
+                      // Filters propagate into the drill-down URL so the
+                      // per-cell user list matches what was counted on
+                      // the cohort row (same country/platform/rank/utm).
+                      const baseDrill = (extra: Record<string, string>) => {
+                        const p = new URLSearchParams({
+                          date: String(c.cohort_start).slice(0, 10),
+                          group_by: groupBy,
+                          ...(country ? { country } : {}),
+                          ...(platform ? { platform } : {}),
+                          ...(rank ? { rank } : {}),
+                          ...(utmSource ? { utm_source: utmSource } : {}),
+                          ...extra,
+                        });
+                        return `/retention/cohort?${p.toString()}`;
+                      };
+                      return (
+                        <tr key={c.cohort_start} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="px-3 py-2.5 font-medium text-gray-700 sticky left-0 bg-white z-10">
+                            {new Date(c.cohort_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: groupBy === 'week' ? '2-digit' : undefined })}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-gray-700 font-semibold">
+                            <Link
+                              to={baseDrill({ offset: 'all' })}
+                              className="hover:underline text-blue-700"
+                              title="View all users in this cohort"
                             >
-                              {pct > 0 ? `${pct}%` : '-'}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))
+                              {c.cohort_size}
+                            </Link>
+                          </td>
+                          {(cohortData.offsets || []).map((o: number) => {
+                            const r = c.retention[o];
+                            const pct = r?.pct ?? 0;
+                            const count = r?.count || 0;
+                            const intensity = Math.min(pct / 50, 1);
+                            const bg = pct > 0
+                              ? `rgba(37, 99, 235, ${intensity * 0.8})`
+                              : 'transparent';
+                            const color = intensity > 0.5 ? 'white' : '#374151';
+                            const isClickable = count > 0;
+                            return (
+                              <td
+                                key={o}
+                                className="px-0 py-0 text-center text-xs"
+                                style={{ backgroundColor: bg, color }}
+                              >
+                                {isClickable ? (
+                                  <Link
+                                    to={baseDrill({ offset: String(o) })}
+                                    className="block px-3 py-2.5 hover:underline cursor-pointer"
+                                    title={`${count} / ${c.cohort_size} — click to see retained users`}
+                                    style={{ color }}
+                                  >
+                                    {pct}%
+                                  </Link>
+                                ) : (
+                                  <div
+                                    className="px-3 py-2.5"
+                                    title={`${count} / ${c.cohort_size}`}
+                                  >
+                                    -
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
