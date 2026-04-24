@@ -10,9 +10,11 @@ import android.os.VibratorManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.boostfarm.app.BuildConfig
+import android.os.Bundle
 import com.boostfarm.app.ads.OfferwallPort
 import com.boostfarm.app.ads.RewardedAdsPort
 import com.boostfarm.app.referrer.InstallReferrerHelper
+import com.facebook.appevents.AppEventsLogger
 import org.json.JSONObject
 
 /**
@@ -158,6 +160,63 @@ class FarmJsBridge(
     }
 
     /**
+     * Forwards an event into the Facebook App Events SDK. The web layer
+     * calls e.g. `EcoFarmAndroid.logFbEvent('fb_mobile_tutorial_completion', '{}')`.
+     *
+     * DESIGN RULE: SDK-side logging is ONLY for events that Meta needs to
+     * see as "happening on the device" for SKAdNetwork / install-side
+     * attribution. Everything that needs user context (user_id, email,
+     * precise timestamp, monetary value) goes through Conversions API
+     * server-side — NOT here — so Meta dedupes by `event_id` and gets
+     * higher match quality via the hashed email / external_id path.
+     *
+     * Current callers (web side):
+     *   • FarmTutorial onClose → `fb_mobile_tutorial_completion`
+     *
+     * That's it. If you add a caller here, also audit whether it should
+     * fire via CAPI instead. Most answers: CAPI.
+     *
+     * Numeric fields: Meta treats `_valueToSum` as a double (standard
+     * convention for Purchase / AddToCart / CompleteRegistration).
+     * We try to parse it as a number; on failure fall back to string.
+     */
+    @JavascriptInterface
+    fun logFbEvent(name: String, paramsJson: String) {
+        try {
+            val parsed = runCatching { JSONObject(paramsJson) }.getOrElse { JSONObject() }
+            val bundle = Bundle()
+            val keys = parsed.keys()
+            var valueToSum: Double? = null
+            while (keys.hasNext()) {
+                val k = keys.next()
+                if (k == "_valueToSum") {
+                    valueToSum = runCatching { parsed.getDouble(k) }.getOrNull()
+                    continue
+                }
+                // Meta allows string/int/long/double in params. We keep it
+                // simple: flatten everything to a string. Downstream
+                // ad-manager breakdowns work on string equality anyway.
+                val v = parsed.opt(k) ?: continue
+                when (v) {
+                    is Number -> bundle.putDouble(k, v.toDouble())
+                    else -> bundle.putString(k, v.toString())
+                }
+            }
+            val logger = AppEventsLogger.newLogger(webView.context)
+            if (valueToSum != null) {
+                logger.logEvent(name, valueToSum, bundle)
+            } else {
+                logger.logEvent(name, bundle)
+            }
+        } catch (e: Throwable) {
+            // Never surface a marketing-SDK failure to the web layer —
+            // worst case we lose this event, CAPI backfills on the
+            // server via the events table poll.
+            android.util.Log.w("FarmJsBridge", "logFbEvent failed: $name", e)
+        }
+    }
+
+    /**
      * Generic analytics event forwarder. The web layer calls
      * `EcoFarmAndroid.track('ad.loaded', '{"placement":"water_popup"}')` which
      * ultimately becomes a row in the server `events` table via
@@ -236,8 +295,13 @@ class FarmJsBridge(
          *      `count(DISTINCT properties->>'attempt_id')`. Safe to omit:
          *      native simply doesn't stamp attempt_id onto its own events
          *      when the web bundle predates v7.
+         * v8: logFbEvent(name, paramsJson) forwards into the Facebook App
+         *      Events SDK (Meta App Events). Web side uses this to emit
+         *      device-side signals that pair with our server-side
+         *      Conversions API pipeline. See logFbEvent doc above for
+         *      the allow-list of callers.
          */
-        const val BRIDGE_API_VERSION = 7
+        const val BRIDGE_API_VERSION = 8
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?, reason: String?) {

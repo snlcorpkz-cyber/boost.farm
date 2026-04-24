@@ -17,12 +17,21 @@ function parseDays(raw: unknown, def = 30): number {
 adminAcquisitionRouter.get('/by-utm', async (req, res) => {
   try {
     const days = parseDays(req.query.days, 30);
+    // Prefer the richer `acquisition_source` JSONB — it's populated
+    // from the Play Install Referrer which is the canonical source
+    // for mobile installs. Fall back to the flat `utm_*` columns so
+    // older users registered before the referrer pipeline was live
+    // still appear.
     const rows = await query<any>(
       `SELECT
-         coalesce(u.utm_source, 'organic')        AS utm_source,
-         coalesce(u.utm_medium, '')               AS utm_medium,
-         coalesce(u.utm_campaign, '')             AS utm_campaign,
+         coalesce(u.acquisition_source->>'utmSource', u.utm_source, 'organic') AS utm_source,
+         coalesce(u.acquisition_source->>'utmMedium', u.utm_medium, '')        AS utm_medium,
+         coalesce(u.acquisition_source->>'utmCampaign', u.utm_campaign, '')    AS utm_campaign,
+         coalesce(u.acquisition_source->>'utmContent', '')                     AS utm_content,
          count(DISTINCT u.id)::int                AS users,
+         count(DISTINCT CASE
+           WHEN e.event_name = 'EngagedD0' THEN u.id
+         END)::int                                AS engaged_d0,
          count(DISTINCT CASE
            WHEN e.created_at::date = u.created_at::date + 1
            THEN u.id
@@ -30,9 +39,9 @@ adminAcquisitionRouter.get('/by-utm', async (req, res) => {
        FROM users u
        LEFT JOIN events e ON e.user_id = u.id
        WHERE u.created_at >= now() - ($1 || ' days')::interval
-       GROUP BY utm_source, utm_medium, utm_campaign
+       GROUP BY utm_source, utm_medium, utm_campaign, utm_content
        ORDER BY users DESC
-       LIMIT 50`,
+       LIMIT 100`,
       [days],
     );
     res.json({
@@ -40,10 +49,72 @@ adminAcquisitionRouter.get('/by-utm', async (req, res) => {
       rows: rows.map((r) => ({
         ...r,
         d1_pct: r.users > 0 ? Math.round((r.d1_retained / r.users) * 1000) / 10 : 0,
+        engaged_d0_pct: r.users > 0 ? Math.round((r.engaged_d0 / r.users) * 1000) / 10 : 0,
       })),
     });
   } catch (err) {
     console.error('[admin/acquisition/by-utm]', err);
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+/**
+ * GET /admin/acquisition/by-creative
+ *
+ * Breakdown by creative identifier — utm_content (populated from
+ * `{{ad.name}}` in the Meta Ads Manager URL macros) with the raw
+ * Meta ad id / campaign id surfaced alongside. This is the view to
+ * look at when comparing creative concepts — "which video hook is
+ * converting installs into EngagedD0 users".
+ *
+ * Data path:
+ *   acquisition_source → users row, populated by InstallReferrerHelper
+ *   via /auth/verify-code at signup. Includes installs that never
+ *   clicked our link directly (view-through attribution via
+ *   Play Install Referrer).
+ */
+adminAcquisitionRouter.get('/by-creative', async (req, res) => {
+  try {
+    const days = parseDays(req.query.days, 30);
+    const rows = await query<any>(
+      `SELECT
+         coalesce(u.acquisition_source->>'utmCampaign',
+                  u.utm_campaign, 'organic')              AS utm_campaign,
+         coalesce(u.acquisition_source->>'utmContent',
+                  'no_creative')                          AS utm_content,
+         coalesce(u.acquisition_source->>'fbCampaignId', '') AS fb_campaign_id,
+         coalesce(u.acquisition_source->>'fbAdsetId', '')    AS fb_adset_id,
+         coalesce(u.acquisition_source->>'fbAdId', '')       AS fb_ad_id,
+         count(DISTINCT u.id)::int                        AS users,
+         count(DISTINCT CASE
+           WHEN e.event_name = 'EngagedD0' THEN u.id
+         END)::int                                        AS engaged_d0,
+         count(DISTINCT CASE
+           WHEN e.created_at::date = u.created_at::date + 1
+           THEN u.id
+         END)::int                                        AS d1_retained
+       FROM users u
+       LEFT JOIN events e ON e.user_id = u.id
+       WHERE u.created_at >= now() - ($1 || ' days')::interval
+         AND (u.acquisition_source IS NOT NULL OR u.utm_campaign IS NOT NULL)
+       GROUP BY utm_campaign, utm_content, fb_campaign_id, fb_adset_id, fb_ad_id
+       ORDER BY users DESC
+       LIMIT 200`,
+      [days],
+    );
+    res.json({
+      days,
+      rows: rows.map((r) => ({
+        ...r,
+        d1_pct: r.users > 0 ? Math.round((r.d1_retained / r.users) * 1000) / 10 : 0,
+        // EngagedD0 rate is the signal Meta Ads Manager optimises on —
+        // expose it directly so the CPO can compare creative quality
+        // without exporting data.
+        engaged_d0_pct: r.users > 0 ? Math.round((r.engaged_d0 / r.users) * 1000) / 10 : 0,
+      })),
+    });
+  } catch (err) {
+    console.error('[admin/acquisition/by-creative]', err);
     res.status(500).json({ error: 'Failed' });
   }
 });

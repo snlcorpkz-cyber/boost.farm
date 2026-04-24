@@ -18,6 +18,7 @@ import {
 import { notify } from '../lib/notify.js';
 import { incrementActivityQuest } from './quests.js';
 import { trackEvent } from '../lib/analytics.js';
+import { maybeMarkEngagedD0 } from '../lib/engagedD0.js';
 
 export const farmRouter = Router();
 farmRouter.use(requireAuth);
@@ -218,6 +219,12 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
       req.user?.sessionId,
       { placement: 'bucket_collect' },
     ).catch(() => {});
+
+    // Second half of the EngagedD0 floor — after an ad.server_granted
+    // we know the user has both signed up AND viewed a rewarded ad.
+    // If they've also watered inside the 24h window, this is the
+    // call that actually flips the flag.
+    maybeMarkEngagedD0(userId).catch(() => {});
   }
 
   const nextFreeRemaining = rank.id === 'master' ? Infinity : Math.max(0, FREE_BUCKET_COLLECTS_PER_DAY - newFreeUsed);
@@ -374,6 +381,13 @@ farmRouter.post(
 
         await notify(userId, 'harvest', 'notif.harvest_complete', { product: farm.products.name_key });
       }
+
+      // EngagedD0 evaluation. Cheap check (one query, no HTTP), fires
+      // at-most-once per user via the partial unique index inside the
+      // helper. Water is the first half of the "quality install"
+      // definition — ad.server_granted in /collect-bucket triggers
+      // the same check from the other side.
+      maybeMarkEngagedD0(userId).catch(() => {});
 
       res.json({ success: true, data: { ...waterResult, stageUpBonus } });
     } catch (err: any) {
@@ -635,6 +649,27 @@ farmRouter.post(
 
     // H-1: advance watch_ad activity quest counter.
     await incrementActivityQuest(userId, 'watch_ad', phase, today).catch(() => {});
+
+    // Server-confirmed grant for /track dashboards. Mirrors the signal
+    // we fire from /collect-bucket so every rewarded-ad payout — water,
+    // nutrition, bucket — shows up in the same ad_funnel metric.
+    trackEvent(
+      userId,
+      'ad.server_granted',
+      {
+        type: body.type,
+        amount,
+        reason: 'ad_reward',
+      },
+      req,
+      req.user?.sessionId,
+      { placement: body.placement ?? `${body.type}_popup` },
+    ).catch(() => {});
+
+    // Same EngagedD0 hook as /collect-bucket — rewarded-ad view is
+    // the second half of the "quality install" definition. No-ops
+    // once the flag is already set (cheap single query).
+    maybeMarkEngagedD0(userId).catch(() => {});
 
     res.json({ success: true, data: { type: body.type, amount } });
   }

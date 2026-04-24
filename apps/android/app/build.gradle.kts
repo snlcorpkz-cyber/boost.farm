@@ -34,8 +34,8 @@ android {
         applicationId = "io.boostfarm.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.3.7"
+        versionCode = 11
+        versionName = "0.4.0"
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
 
@@ -46,6 +46,40 @@ android {
         // StubOfferwall so debug builds keep working without a key.
         val levelPlayAppKey = (keystoreProps["levelPlayAppKey"] as String?) ?: ""
         buildConfigField("String", "LEVELPLAY_APP_KEY", "\"$levelPlayAppKey\"")
+
+        // ─────────────────────────────────────────────────────────────
+        // Facebook / Meta App Events credentials. Same gitignored file
+        // as LevelPlay so sharing credentials across dev machines is
+        // symmetric. Missing values are replaced with empty strings —
+        // SDK short-circuits cleanly, the app still boots.
+        //
+        //   facebookAppId          → app id from Meta Business Manager
+        //   facebookClientToken    → client token (Settings → Advanced)
+        //
+        // The authority string for FacebookContentProvider is built by
+        // concatenating `com.facebook.app.FacebookContentProvider` +
+        // the app id, as documented by the SDK.
+        // ─────────────────────────────────────────────────────────────
+        val facebookAppId = (keystoreProps["facebookAppId"] as String?) ?: ""
+        val facebookClientToken = (keystoreProps["facebookClientToken"] as String?) ?: ""
+        val facebookContentProviderAuthority =
+            if (facebookAppId.isBlank()) "com.facebook.app.FacebookContentProvider"
+            else "com.facebook.app.FacebookContentProvider$facebookAppId"
+
+        // Expose the credentials both as BuildConfig (used nowhere
+        // mandatory today, but handy for feature-detection) AND as
+        // Android string resources — the AndroidManifest <meta-data>
+        // tags reference them via @string/... so the SDK auto-init
+        // pipeline picks them up without extra code.
+        resValue("string", "facebook_app_id", facebookAppId)
+        resValue("string", "facebook_client_token", facebookClientToken)
+        resValue(
+            "string",
+            "facebook_content_provider_authority",
+            facebookContentProviderAuthority,
+        )
+        buildConfigField("String", "META_APP_ID", "\"$facebookAppId\"")
+        buildConfigField("String", "META_CLIENT_TOKEN", "\"$facebookClientToken\"")
     }
 
     // Release signing is opt-in: only wire it up when keystore.properties
@@ -139,4 +173,21 @@ dependencies {
     // like https://play.google.com/store/apps/details?id=...&referrer=CODE.
     // Read once on first launch, pass into WebView, then dispose.
     implementation("com.android.installreferrer:installreferrer:2.2")
+
+    // ─────────────────────────────────────────────────────────────
+    // Facebook / Meta Android SDK. Version 17.x is the current LTS
+    // line (Apr 2024 — 17.0.2 is documented against compileSdk 34/35).
+    // Provides:
+    //   • Auto-logged events: first_app_launch, activate_app, session
+    //   • Custom AppEventsLogger.logEvent for manual events
+    //   • Advertising ID collection (gated by AD_ID permission in the
+    //     manifest) for SKAdNetwork-equivalent match quality
+    //   • Data Processing Options API for LDU / GDPR compliance
+    //
+    // We deliberately do NOT ship the full -marketing extension — we
+    // only need App Events. The smaller dep footprint keeps cold-start
+    // lean and reduces R8 noise. If / when we want custom audiences
+    // uploaded via SDK (we upload via CAPI instead) we can switch.
+    // ─────────────────────────────────────────────────────────────
+    implementation("com.facebook.android:facebook-android-sdk:17.0.2")
 }

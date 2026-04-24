@@ -36,10 +36,38 @@ const sendCodeSchema = z.object({
   email: z.string().email(),
 });
 
+/**
+ * Attribution bag captured from the Play Install Referrer on native
+ * and from URL params on web. Mirrors InstallReferrerHelper.snapshot()
+ * shape on Android — each key is optional. Persisted on the user row
+ * so downstream admin reports can segment by Meta ad/adset/campaign.
+ *
+ * We accept it on /verify-code (and all other auth entry points) so
+ * a fresh install is attributed BEFORE the first `auth.register`
+ * event is emitted — giving the CAPI worker the campaign_ids to send
+ * back to Meta.
+ */
+const acquisitionSourceSchema = z
+  .object({
+    utmSource: z.string().max(128).optional().nullable(),
+    utmMedium: z.string().max(128).optional().nullable(),
+    utmCampaign: z.string().max(256).optional().nullable(),
+    utmContent: z.string().max(256).optional().nullable(),
+    fbAdId: z.string().max(64).optional().nullable(),
+    fbAdsetId: z.string().max(64).optional().nullable(),
+    fbCampaignId: z.string().max(64).optional().nullable(),
+    raw: z.string().max(2048).optional().nullable(),
+    clickTs: z.number().int().optional().nullable(),
+    installTs: z.number().int().optional().nullable(),
+  })
+  .partial()
+  .optional();
+
 const verifyCodeSchema = z.object({
   email: z.string().email(),
   code: z.string().min(6).max(6),
   refCode: z.string().optional(),
+  acquisition: acquisitionSourceSchema,
 });
 
 const googleAuthSchema = z.object({
@@ -51,14 +79,67 @@ const telegramInitSchema = z.object({
 });
 
 function makeDemoUser(email: string) {
-  return {
+  const user = {
     id: randomUUID(),
     email,
     nickname: email.split('@')[0],
     avatar_id: randomAvatar(),
     locale: 'en',
     created_at: new Date().toISOString(),
+    __demo: true as const,
   };
+  demoUserIds.add(user.id);
+  return user;
+}
+
+// Track demo ids so we don't pollute `users` with acquisition data
+// keyed to a UUID that doesn't exist in Postgres. Demo users only
+// appear when the DB is briefly unavailable during boot.
+const demoUserIds = new Set<string>();
+function isDemoUser(userId: string): boolean {
+  return demoUserIds.has(userId);
+}
+
+/**
+ * Writes campaign attribution to `users.acquisition_source`.
+ *
+ * Semantics: we only populate the column when it's currently NULL.
+ * The `COALESCE(acquisition_source, $2)` guard preserves the first
+ * referrer we ever saw — important because some devices re-open the
+ * auth flow on day 2+ (e.g. re-link email) and at that point we've
+ * lost the original Play install referrer. Campaign reports must
+ * reflect the acquisition moment, not the latest session.
+ */
+async function saveAcquisitionSource(
+  userId: string,
+  acquisition: {
+    utmSource?: string | null;
+    utmMedium?: string | null;
+    utmCampaign?: string | null;
+    utmContent?: string | null;
+    fbAdId?: string | null;
+    fbAdsetId?: string | null;
+    fbCampaignId?: string | null;
+    raw?: string | null;
+    clickTs?: number | null;
+    installTs?: number | null;
+  },
+): Promise<void> {
+  // Strip null/undefined/empty strings so the JSONB stays compact.
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(acquisition)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    cleaned[k] = v;
+  }
+  if (Object.keys(cleaned).length === 0) return;
+
+  await execute(
+    `UPDATE users
+        SET acquisition_source = COALESCE(acquisition_source, $2::jsonb)
+      WHERE id = $1`,
+    [userId, JSON.stringify(cleaned)],
+  );
 }
 
 function makeTokens(userId: string, email: string, sessionId: string) {
@@ -216,7 +297,7 @@ authRouter.post('/send-code', async (req: Request, res: Response) => {
 
 authRouter.post('/verify-code', async (req: Request, res: Response) => {
   try {
-    const { email, code, refCode } = verifyCodeSchema.parse(req.body);
+    const { email, code, refCode, acquisition } = verifyCodeSchema.parse(req.body);
 
     const reviewer = isReviewerAccount(email);
 
@@ -290,12 +371,34 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       }
     }
 
+    // Persist campaign attribution BEFORE auth.register so the CAPI
+    // worker sees fb_ad_id / fb_adset_id / fb_campaign_id on the very
+    // first registration event. Only writes when the JSONB is empty —
+    // we never overwrite an existing acquisition_source because the
+    // original install referrer is the true source of truth.
+    if (acquisition && user?.id && !isDemoUser(user.id)) {
+      await saveAcquisitionSource(user.id, acquisition).catch((err) => {
+        console.warn('[auth] saveAcquisitionSource failed:', (err as Error).message);
+      });
+    }
+
     const sessionId = await createSession(user.id);
     const tokens = makeTokens(user.id, email, sessionId);
     // Analytics: record session row (geo/device/ip) and backfill user cohort fields.
     startSession(user.id, sessionId, req).catch(() => {});
     enrichUserProfile(user.id, req).catch(() => {});
-    trackEvent(user.id, isNewUser ? 'auth.register' : 'auth.login', { method: 'email' }, req, sessionId).catch(() => {});
+    trackEvent(
+      user.id,
+      isNewUser ? 'auth.register' : 'auth.login',
+      {
+        method: 'email',
+        ...(acquisition?.fbAdId ? { fb_ad_id: acquisition.fbAdId } : {}),
+        ...(acquisition?.fbAdsetId ? { fb_adset_id: acquisition.fbAdsetId } : {}),
+        ...(acquisition?.fbCampaignId ? { fb_campaign_id: acquisition.fbCampaignId } : {}),
+      },
+      req,
+      sessionId,
+    ).catch(() => {});
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {

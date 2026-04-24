@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-type Tab = 'utm' | 'geo' | 'referrer' | 'cohorts';
+type Tab = 'utm' | 'creative' | 'geo' | 'referrer' | 'cohorts';
 
 function Tile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -47,8 +47,9 @@ function UtmTab({ days }: { days: number }) {
               <th className="text-left py-2 px-3 font-medium text-gray-500">utm_source</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">utm_medium</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">utm_campaign</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">utm_content</th>
               <th className="text-right py-2 px-3 font-medium text-gray-500">Users</th>
-              <th className="text-right py-2 px-3 font-medium text-gray-500">D1 retained</th>
+              <th className="text-right py-2 px-3 font-medium text-gray-500">EngagedD0 %</th>
               <th className="text-right py-2 px-3 font-medium text-gray-500">D1 %</th>
             </tr>
           </thead>
@@ -58,8 +59,19 @@ function UtmTab({ days }: { days: number }) {
                 <td className="py-2 px-3 text-gray-800 font-medium">{r.utm_source}</td>
                 <td className="py-2 px-3 text-gray-600">{r.utm_medium || '—'}</td>
                 <td className="py-2 px-3 text-gray-600">{r.utm_campaign || '—'}</td>
+                <td className="py-2 px-3 text-gray-600 font-mono text-xs">{r.utm_content || '—'}</td>
                 <td className="py-2 px-3 text-right">{r.users}</td>
-                <td className="py-2 px-3 text-right text-gray-500">{r.d1_retained}</td>
+                <td
+                  className={`py-2 px-3 text-right font-medium ${
+                    r.engaged_d0_pct >= 30
+                      ? 'text-green-600'
+                      : r.engaged_d0_pct >= 15
+                      ? 'text-amber-600'
+                      : 'text-red-600'
+                  }`}
+                >
+                  {r.engaged_d0_pct ?? 0}%
+                </td>
                 <td
                   className={`py-2 px-3 text-right font-medium ${
                     r.d1_pct >= 25 ? 'text-green-600' : r.d1_pct >= 10 ? 'text-amber-600' : 'text-red-600'
@@ -71,8 +83,86 @@ function UtmTab({ days }: { days: number }) {
             ))}
             {(!data?.rows || data.rows.length === 0) && (
               <tr>
-                <td colSpan={6} className="py-6 text-center text-gray-400">
+                <td colSpan={7} className="py-6 text-center text-gray-400">
                   No acquisition data in this range.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CreativeTab({ days }: { days: number }) {
+  const { data, isPending } = useQuery<any>({
+    queryKey: ['admin', 'acq', 'creative', days],
+    queryFn: () => api(`/acquisition/by-creative?days=${days}`),
+  });
+  if (isPending) return <div className="mt-4 text-sm text-gray-500">Loading…</div>;
+
+  const rows = data?.rows ?? [];
+  const totalUsers = rows.reduce((s: number, r: any) => s + (r.users || 0), 0);
+  const totalEngaged = rows.reduce((s: number, r: any) => s + (r.engaged_d0 || 0), 0);
+
+  return (
+    <div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <Tile label={`Attributed users (${days}d)`} value={totalUsers} />
+        <Tile label="EngagedD0 users" value={totalEngaged} />
+        <Tile
+          label="Avg EngagedD0 %"
+          value={`${
+            totalUsers > 0 ? Math.round((totalEngaged / totalUsers) * 1000) / 10 : 0
+          }%`}
+        />
+      </div>
+
+      <div className="mt-6 rounded-xl border border-gray-200 bg-white p-4 overflow-x-auto">
+        <p className="mb-3 text-xs text-gray-500">
+          Creative-level breakdown. utm_content is the Meta ad name — so each row is one ad
+          variant. Rank by EngagedD0 % to see which creative converts into quality users.
+        </p>
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100">
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Campaign</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Creative (utm_content)</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">fb_ad_id</th>
+              <th className="text-right py-2 px-3 font-medium text-gray-500">Users</th>
+              <th className="text-right py-2 px-3 font-medium text-gray-500">EngagedD0</th>
+              <th className="text-right py-2 px-3 font-medium text-gray-500">EngagedD0 %</th>
+              <th className="text-right py-2 px-3 font-medium text-gray-500">D1 %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r: any, i: number) => (
+              <tr key={i} className="border-b border-gray-50">
+                <td className="py-2 px-3 text-gray-800 font-medium">{r.utm_campaign || '—'}</td>
+                <td className="py-2 px-3 text-gray-600 font-mono text-xs">{r.utm_content || '—'}</td>
+                <td className="py-2 px-3 text-gray-400 font-mono text-xs">{r.fb_ad_id || '—'}</td>
+                <td className="py-2 px-3 text-right">{r.users}</td>
+                <td className="py-2 px-3 text-right text-gray-500">{r.engaged_d0}</td>
+                <td
+                  className={`py-2 px-3 text-right font-medium ${
+                    r.engaged_d0_pct >= 30
+                      ? 'text-green-600'
+                      : r.engaged_d0_pct >= 15
+                      ? 'text-amber-600'
+                      : 'text-red-600'
+                  }`}
+                >
+                  {r.engaged_d0_pct}%
+                </td>
+                <td className="py-2 px-3 text-right text-gray-500">{r.d1_pct}%</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-6 text-center text-gray-400">
+                  No attributed installs yet — run a Meta campaign or wait for first
+                  conversions to appear here.
                 </td>
               </tr>
             )}
@@ -208,7 +298,7 @@ export function AcquisitionPage() {
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 bg-white">
-          {(['utm', 'geo', 'referrer', 'cohorts'] as Tab[]).map((t) => (
+          {(['utm', 'creative', 'geo', 'referrer', 'cohorts'] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -239,6 +329,7 @@ export function AcquisitionPage() {
       </div>
 
       {tab === 'utm' && <UtmTab days={days} />}
+      {tab === 'creative' && <CreativeTab days={days} />}
       {tab === 'geo' && <GeoTab days={days} />}
       {tab === 'referrer' && <ReferrerTab days={days} />}
       {tab === 'cohorts' && <CohortsTab />}

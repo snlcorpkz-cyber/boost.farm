@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { haptic, logFbEvent } from '../lib/native';
 
 const STEPS = [
   {
@@ -86,19 +87,38 @@ export default function FarmTutorial() {
     };
   }, [visible, measure]);
 
-  const next = useCallback(() => {
-    if (step < STEPS.length - 1) {
-      setStep((s) => s + 1);
-    } else {
-      localStorage.setItem(STORAGE_KEY, '1');
-      setVisible(false);
-    }
-  }, [step]);
-
-  const skip = useCallback(() => {
+  const finishTutorial = useCallback((reason: 'completed' | 'skipped') => {
     localStorage.setItem(STORAGE_KEY, '1');
     setVisible(false);
+    // Fire Meta App Event so campaigns optimizing on
+    // `fb_mobile_tutorial_completion` can use the onboarding-complete
+    // signal as an early proxy for engagement while EngagedD0 warms up.
+    // Safe no-op on web / older bridges.
+    try {
+      logFbEvent('fb_mobile_tutorial_completion', {
+        fb_content_id: 'farm_onboarding',
+        fb_content_type: 'tutorial',
+        fb_description: reason,
+      });
+    } catch {
+      // ignore — marketing signals are non-critical
+    }
   }, []);
+
+  const next = useCallback(() => {
+    if (step < STEPS.length - 1) {
+      haptic('tap');
+      setStep((s) => s + 1);
+    } else {
+      haptic('success');
+      finishTutorial('completed');
+    }
+  }, [step, finishTutorial]);
+
+  const skip = useCallback(() => {
+    haptic('select');
+    finishTutorial('skipped');
+  }, [finishTutorial]);
 
   if (!visible || !rect) return null;
 

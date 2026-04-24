@@ -34,6 +34,15 @@ object InstallReferrerHelper {
     private const val KEY_UTM_SOURCE = "utm_source"
     private const val KEY_UTM_MEDIUM = "utm_medium"
     private const val KEY_UTM_CAMPAIGN = "utm_campaign"
+    // utm_content + Meta campaign ids captured from the Play Install
+    // Referrer. These are what Meta Ads Manager sets via {{ad.id}} /
+    // {{campaign.id}} macros on the Play Store URL — without them we
+    // cannot attribute installs to the specific creative + ad set that
+    // drove them. Introduced alongside the Facebook SDK rollout.
+    private const val KEY_UTM_CONTENT = "utm_content"
+    private const val KEY_FB_AD_ID = "fb_ad_id"
+    private const val KEY_FB_ADSET_ID = "fb_adset_id"
+    private const val KEY_FB_CAMPAIGN_ID = "fb_campaign_id"
     private const val KEY_CLICK_TS = "click_ts"
     private const val KEY_INSTALL_TS = "install_ts"
 
@@ -64,10 +73,18 @@ object InstallReferrerHelper {
                                 .putString(KEY_UTM_SOURCE, parsed.utmSource)
                                 .putString(KEY_UTM_MEDIUM, parsed.utmMedium)
                                 .putString(KEY_UTM_CAMPAIGN, parsed.utmCampaign)
+                                .putString(KEY_UTM_CONTENT, parsed.utmContent)
+                                .putString(KEY_FB_AD_ID, parsed.fbAdId)
+                                .putString(KEY_FB_ADSET_ID, parsed.fbAdsetId)
+                                .putString(KEY_FB_CAMPAIGN_ID, parsed.fbCampaignId)
                                 .putLong(KEY_CLICK_TS, details.referrerClickTimestampSeconds)
                                 .putLong(KEY_INSTALL_TS, details.installBeginTimestampSeconds)
                                 .apply()
-                            Log.i(TAG, "referrer captured: code=${parsed.refCode} src=${parsed.utmSource}")
+                            Log.i(
+                                TAG,
+                                "referrer captured: code=${parsed.refCode} " +
+                                    "src=${parsed.utmSource} ad=${parsed.fbAdId}",
+                            )
                         }
 
                         InstallReferrerClient.InstallReferrerResponse.FEATURE_NOT_SUPPORTED,
@@ -107,6 +124,10 @@ object InstallReferrerHelper {
             "utmSource" to prefs.getString(KEY_UTM_SOURCE, null),
             "utmMedium" to prefs.getString(KEY_UTM_MEDIUM, null),
             "utmCampaign" to prefs.getString(KEY_UTM_CAMPAIGN, null),
+            "utmContent" to prefs.getString(KEY_UTM_CONTENT, null),
+            "fbAdId" to prefs.getString(KEY_FB_AD_ID, null),
+            "fbAdsetId" to prefs.getString(KEY_FB_ADSET_ID, null),
+            "fbCampaignId" to prefs.getString(KEY_FB_CAMPAIGN_ID, null),
             "clickTs" to prefs.getLong(KEY_CLICK_TS, 0L),
             "installTs" to prefs.getLong(KEY_INSTALL_TS, 0L),
             "processed" to prefs.getBoolean(KEY_PROCESSED, false),
@@ -132,16 +153,45 @@ object InstallReferrerHelper {
         val utmSource: String?,
         val utmMedium: String?,
         val utmCampaign: String?,
-    )
+        val utmContent: String?,
+        val fbAdId: String?,
+        val fbAdsetId: String?,
+        val fbCampaignId: String?,
+    ) {
+        companion object {
+            val EMPTY = ParsedReferrer(
+                refCode = null,
+                utmSource = null,
+                utmMedium = null,
+                utmCampaign = null,
+                utmContent = null,
+                fbAdId = null,
+                fbAdsetId = null,
+                fbCampaignId = null,
+            )
+        }
+    }
 
     /**
-     * Extracts our `ref` parameter + any UTM markers from the raw referrer
-     * string. Play passes us either a bare key=value query string or something
-     * URL-encoded like `utm_source%3Dapp%26ref%3DABC`. `Uri.parse` copes with
-     * both formats once we prepend a scheme.
+     * Extracts our `ref` parameter + any UTM markers + Meta campaign ids
+     * from the raw referrer string. Play passes us either a bare
+     * key=value query string or something URL-encoded like
+     * `utm_source%3Dapp%26ref%3DABC`. `Uri.parse` copes with both
+     * formats once we prepend a scheme.
+     *
+     * Meta Ads Manager URL parameter macros (see
+     * https://www.facebook.com/business/help/1016122818401732):
+     *   {{ad.id}}        → fb_ad_id
+     *   {{adset.id}}     → fb_adset_id
+     *   {{campaign.id}}  → fb_campaign_id
+     *   {{ad.name}}      → utm_content (our convention, carries the
+     *                      creative identifier for admin breakdowns)
+     *
+     * All four are optional — if the URL was organic or came from a
+     * non-Meta source they simply stay null.
      */
     internal fun parseReferrer(raw: String): ParsedReferrer {
-        if (raw.isBlank()) return ParsedReferrer(null, null, null, null)
+        if (raw.isBlank()) return ParsedReferrer.EMPTY
         return try {
             val uri = Uri.parse("https://x/?$raw")
             val ref = uri.getQueryParameter("ref")
@@ -152,9 +202,13 @@ object InstallReferrerHelper {
                 utmSource = uri.getQueryParameter("utm_source"),
                 utmMedium = uri.getQueryParameter("utm_medium"),
                 utmCampaign = uri.getQueryParameter("utm_campaign"),
+                utmContent = uri.getQueryParameter("utm_content"),
+                fbAdId = uri.getQueryParameter("fb_ad_id"),
+                fbAdsetId = uri.getQueryParameter("fb_adset_id"),
+                fbCampaignId = uri.getQueryParameter("fb_campaign_id"),
             )
         } catch (_: Exception) {
-            ParsedReferrer(null, null, null, null)
+            ParsedReferrer.EMPTY
         }
     }
 }

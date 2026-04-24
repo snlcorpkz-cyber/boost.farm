@@ -63,6 +63,8 @@ app.use(errorHandler);
 
 import { runPushCron } from './cron/push-cron.js';
 import { runAnalyticsRollup } from './cron/analytics-rollup.js';
+import { runCapiDispatch } from './workers/capiWorker.js';
+import { isCapiEnabled } from './meta/env.js';
 
 app.listen(PORT, () => {
   console.log(`[API] Running on http://localhost:${PORT}`);
@@ -87,6 +89,35 @@ app.listen(PORT, () => {
     }, ROLLUP_INTERVAL);
   }, 2 * 60 * 1000);
   console.log('[analytics-rollup] Scheduled hourly (first run in 2 min)');
+
+  // Meta Conversions API dispatcher. Polls the `events` table for
+  // unsent rows, batches them, and POSTs to Meta Graph API. Safe
+  // to schedule always — when credentials are missing or the
+  // feature flag is off, each tick no-ops immediately and costs
+  // exactly one boolean check.
+  //
+  // 30-second cadence gives us real-time-ish dispatch without
+  // hammering Postgres. The worker itself self-caps at
+  // MAX_EVENTS_PER_TICK per run so a backlog can't monopolise
+  // the event loop.
+  const CAPI_INTERVAL = 30 * 1000;
+  if (isCapiEnabled()) {
+    setTimeout(() => {
+      runCapiDispatch()
+        .then(({ sent, failed }) => {
+          if (sent > 0 || failed > 0) {
+            console.log(`[capi-worker] first run: sent=${sent} failed=${failed}`);
+          }
+        })
+        .catch((err) => console.error('[capi-worker] initial run error:', err));
+      setInterval(() => {
+        runCapiDispatch().catch((err) => console.error('[capi-worker]', err));
+      }, CAPI_INTERVAL);
+    }, 3 * 60 * 1000);
+    console.log('[capi-worker] Scheduled every 30s (first run in 3 min)');
+  } else {
+    console.log('[capi-worker] Disabled (META_CAPI_ENABLED=false or creds missing)');
+  }
 });
 
 export default app;
