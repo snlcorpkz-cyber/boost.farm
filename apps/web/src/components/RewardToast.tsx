@@ -3,17 +3,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { UI } from '../lib/assets';
 
-type RewardType = 'water' | 'fertilizer';
+type RewardType = 'water' | 'fertilizer' | 'offer';
 
 interface RewardEntry {
   id: number;
   type: RewardType;
   amount: number;
   label?: string;
+  sublabel?: string;
 }
 
 interface RewardToastCtx {
-  showReward: (type: RewardType, amount: number, label?: string) => void;
+  showReward: (type: RewardType, amount: number, label?: string, sublabel?: string) => void;
 }
 
 const Ctx = createContext<RewardToastCtx>({ showReward: () => {} });
@@ -24,12 +25,13 @@ export function RewardToastProvider({ children }: { children: React.ReactNode })
   const [queue, setQueue] = useState<RewardEntry[]>([]);
   const idRef = useRef(0);
 
-  const showReward = useCallback((type: RewardType, amount: number, label?: string) => {
+  const showReward = useCallback((type: RewardType, amount: number, label?: string, sublabel?: string) => {
     const id = ++idRef.current;
-    setQueue((prev) => [...prev, { id, type, amount, label }]);
+    const duration = type === 'offer' ? 2400 : 1600;
+    setQueue((prev) => [...prev, { id, type, amount, label, sublabel }]);
     setTimeout(() => {
       setQueue((prev) => prev.filter((r) => r.id !== id));
-    }, 1600);
+    }, duration);
   }, []);
 
   return (
@@ -37,21 +39,27 @@ export function RewardToastProvider({ children }: { children: React.ReactNode })
       {children}
       <AnimatePresence>
         {queue.map((r) => (
-          <RewardModal key={r.id} type={r.type} amount={r.amount} label={r.label} />
+          <RewardModal key={r.id} type={r.type} amount={r.amount} label={r.label} sublabel={r.sublabel} />
         ))}
       </AnimatePresence>
     </Ctx.Provider>
   );
 }
 
-function RewardModal({ type, amount, label }: { type: RewardType; amount: number; label?: string }) {
+function RewardModal({ type, amount, label, sublabel }: { type: RewardType; amount: number; label?: string; sublabel?: string }) {
   const { t } = useTranslation();
 
   const isWater = type === 'water';
-  const headerText = label || (isWater ? t('reward.water_received') : t('reward.fert_received'));
-  const icon = isWater ? UI.waterDrop : UI.fertilizer;
+  const isOffer = type === 'offer';
+  const defaultHeader = isOffer
+    ? t('reward.offer_received')
+    : isWater
+      ? t('reward.water_received')
+      : t('reward.fert_received');
+  const headerText = label || defaultHeader;
+  const icon = isOffer ? UI.coupon : isWater ? UI.waterDrop : UI.fertilizer;
   const amountText = isWater ? `+${amount}g` : `+${amount}`;
-  const amountColor = isWater ? 'text-sky-600' : 'text-amber-700';
+  const amountColor = isWater ? 'text-sky-600' : isOffer ? 'text-emerald-600' : 'text-amber-700';
 
   return (
     <motion.div
@@ -94,6 +102,11 @@ function RewardModal({ type, amount, label }: { type: RewardType; amount: number
             transition={{ duration: 0.6, ease: 'easeOut' }}
           />
           <span className={`text-2xl font-black ${amountColor} drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]`}>{amountText}</span>
+          {sublabel && (
+            <span className="text-[11px] font-semibold text-amber-800/80 text-center px-3 leading-tight line-clamp-2 max-w-[170px]">
+              {sublabel}
+            </span>
+          )}
         </div>
       </motion.div>
     </motion.div>

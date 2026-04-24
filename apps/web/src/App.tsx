@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from './hooks/useAuth';
 import { api } from './lib/api';
+import { useRewardToast } from './components/RewardToast';
 import FarmPage from './pages/FarmPage';
 import AuthPage from './pages/AuthPage';
 import OnboardingPage from './pages/OnboardingPage';
@@ -26,10 +28,41 @@ function captureRefFromUrl() {
   }
 }
 
+const CELEBRATED_OFFERS_KEY = 'eco_celebrated_offers';
+const CELEBRATED_OFFERS_MAX = 100;
+
+function loadCelebratedOffers(): Set<string> {
+  try {
+    const raw = localStorage.getItem(CELEBRATED_OFFERS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch { return new Set(); }
+}
+
+function persistCelebratedOffers(set: Set<string>) {
+  try {
+    const arr = Array.from(set).slice(-CELEBRATED_OFFERS_MAX);
+    localStorage.setItem(CELEBRATED_OFFERS_KEY, JSON.stringify(arr));
+  } catch { /* ignore quota errors */ }
+}
+
+interface CelebrationNotif {
+  id: string;
+  type: string;
+  message_key: string;
+  params: Record<string, any>;
+  read: boolean;
+}
+
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
   const qc = useQueryClient();
+  const { t } = useTranslation();
+  const { showReward } = useRewardToast();
   const refProcessed = useRef(false);
+  const celebratedRef = useRef<Set<string>>(loadCelebratedOffers());
+  const celebrationBootstrapRef = useRef(false);
   const [showOnboarding, setShowOnboarding] = useState(
     () => !localStorage.getItem(ONBOARDING_KEY),
   );
@@ -144,6 +177,70 @@ export default function App() {
       window.removeEventListener('pagehide', onBye);
     };
   }, [isAuthenticated]);
+
+  // Offer-reward celebration poller. Everflow postbacks credit rewards on
+  // the server and create a type='offer' notification. If the user happens
+  // to be in the app at that moment we want a visible "toast" moment — the
+  // partner spent real money on this conversion, a silent balance bump is
+  // a terrible UX. We poll the same /user/notifications endpoint the popup
+  // uses (cheap, already indexed) and fire `showReward('offer', …)` once
+  // per notification id. The "once" part is persisted in localStorage so
+  // reopening the app doesn't re-trigger celebrations for rewards the user
+  // has already seen. The very first fetch after login never celebrates —
+  // everything it returns is "historical" by definition.
+  const { data: celebrationData } = useQuery<{ notifications: CelebrationNotif[] }>({
+    queryKey: ['notifications-celebration'],
+    queryFn: () => api(`/user/notifications?limit=10&offset=0`),
+    enabled: isAuthenticated,
+    refetchInterval: isAuthenticated ? 20_000 : false,
+    refetchOnWindowFocus: true,
+    staleTime: 10_000,
+  });
+
+  useEffect(() => {
+    if (!celebrationData?.notifications) return;
+    const offerNotifs = celebrationData.notifications.filter(
+      (n) => n.type === 'offer' && !n.read,
+    );
+    if (offerNotifs.length === 0) return;
+
+    // First poll after login: seed the "already seen" set without firing
+    // toasts. Anything older than 60s at that point is not new enough to
+    // celebrate anyway.
+    if (!celebrationBootstrapRef.current) {
+      celebrationBootstrapRef.current = true;
+      for (const n of offerNotifs) celebratedRef.current.add(n.id);
+      persistCelebratedOffers(celebratedRef.current);
+      return;
+    }
+
+    let changed = false;
+    for (const n of offerNotifs) {
+      if (celebratedRef.current.has(n.id)) continue;
+      celebratedRef.current.add(n.id);
+      changed = true;
+
+      const reward = Number(n.params?.reward) || 0;
+      const game = String(n.params?.game || '');
+      const milestone = String(n.params?.milestone || '');
+      if (reward <= 0) continue;
+
+      showReward(
+        'offer',
+        reward,
+        game ? `🎁 ${game}` : t('reward.offer_received'),
+        milestone || undefined,
+      );
+    }
+    if (changed) {
+      persistCelebratedOffers(celebratedRef.current);
+      // The server already credited the reward before creating the
+      // notification, but the client still has a stale /farm snapshot.
+      // Invalidate it so the banner on the farm (water-in-can / nutrition)
+      // bumps in sync with the celebration toast.
+      qc.invalidateQueries({ queryKey: ['farm'] });
+    }
+  }, [celebrationData, showReward, t, qc]);
 
   // Referral landing must work for both authed and unauthed users — and on
   // mobile browsers before the app is even installed. Route it before the

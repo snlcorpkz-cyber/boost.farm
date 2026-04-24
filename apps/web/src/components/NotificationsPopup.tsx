@@ -34,6 +34,7 @@ const NOTIF_ICON: Record<string, { src: string; bg: string }> = {
   invite: { src: UI.greetHand, bg: 'bg-pink-100' },
   gift: { src: UI.gift, bg: 'bg-orange-100' },
   game: { src: UI.gift, bg: 'bg-indigo-100' },
+  offer: { src: UI.coupon, bg: 'bg-emerald-100' },
   campaign: { src: UI.bell, bg: 'bg-amber-50' },
 };
 
@@ -115,53 +116,84 @@ export default function NotificationsPopup({
     }
   }, [loadingMore, hasMore, nextOffset]);
 
+  // Mark-read batching. Historically this fired ~15+ POSTs per popup open
+  // because:
+  //   1. `useMutation` returned a new object reference on every render,
+  //      which churned a `useCallback` → churned the IntersectionObserver
+  //      effect, which disconnected + re-observed on every render.
+  //   2. Every re-observe immediately re-fired intersection for the same
+  //      visible items, re-adding their IDs to the pending set.
+  //   3. `onSuccess` invalidated the ['notifications'] query, triggering a
+  //      refetch → more renders → goto 1.
+  // The fix: optimistic local state update (so read=true is reflected
+  // instantly and the observer stops seeing `data-notif-id`), a stable
+  // flush callback via ref, and a `sentIds` guard so a given id is POSTed
+  // at most once per popup session.
+  const sentIds = useRef<Set<string>>(new Set());
+  const pendingIds = useRef<Set<string>>(new Set());
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const markRead = useMutation({
     mutationFn: (ids: string[]) =>
       api('/user/notifications/mark-read', {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notifications'] });
-    },
   });
 
-  const pendingIds = useRef<Set<string>>(new Set());
-  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const markReadRef = useRef(markRead);
+  useEffect(() => { markReadRef.current = markRead; }, [markRead]);
 
   const flushMarkRead = useCallback(() => {
     if (pendingIds.current.size === 0) return;
-    const ids = Array.from(pendingIds.current);
+    const ids = Array.from(pendingIds.current).filter((id) => !sentIds.current.has(id));
     pendingIds.current.clear();
-    markRead.mutate(ids);
-  }, [markRead]);
+    if (ids.length === 0) return;
+    for (const id of ids) sentIds.current.add(id);
+
+    // Optimistic update so the UI (and, crucially, the observer's
+    // `data-notif-id` selector) reflects read=true before the round-trip
+    // completes. This is what prevents the re-observe → re-mark spam
+    // loop — without it, a refetch racing the next render could hand us
+    // notifications with read=false and we'd re-enqueue the same ids.
+    setAllNotifications((prev) =>
+      prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)),
+    );
+    setUnreadCount((c) => Math.max(0, c - ids.length));
+
+    markReadRef.current.mutate(ids);
+  }, []);
 
   useEffect(() => {
     if (!open || tab !== 'list') return;
 
-    observerRef.current = new IntersectionObserver(
+    const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const id = (entry.target as HTMLElement).dataset.notifId;
-            if (id) pendingIds.current.add(id);
-          }
+          if (!entry.isIntersecting) continue;
+          const id = (entry.target as HTMLElement).dataset.notifId;
+          if (!id || sentIds.current.has(id)) continue;
+          pendingIds.current.add(id);
         }
         if (flushTimer.current) clearTimeout(flushTimer.current);
         flushTimer.current = setTimeout(flushMarkRead, 800);
       },
       { root: scrollRef.current, threshold: 0.5 }
     );
+    observerRef.current = observer;
 
     const items = scrollRef.current?.querySelectorAll('[data-notif-id]');
-    items?.forEach((el) => observerRef.current?.observe(el));
+    items?.forEach((el) => observer.observe(el));
 
     return () => {
-      observerRef.current?.disconnect();
+      observer.disconnect();
       if (flushTimer.current) {
         clearTimeout(flushTimer.current);
-        flushMarkRead();
+        flushTimer.current = null;
       }
+      // Flush whatever's queued when the list changes / popup closes, so
+      // items that were visible but not yet debounced still get marked.
+      flushMarkRead();
     };
   }, [open, tab, allNotifications.length, flushMarkRead]);
 
@@ -169,8 +201,15 @@ export default function NotificationsPopup({
     if (!open) {
       setTab('list');
       if (pendingIds.current.size > 0) flushMarkRead();
+      // Reset the per-session dedup set when popup fully closes, so if the
+      // user reopens it later with new unread items we're not permanently
+      // blocking those ids. Notifications are persisted server-side so
+      // the reopened popup will fetch them again anyway.
+      sentIds.current.clear();
+    } else {
+      qc.invalidateQueries({ queryKey: ['notifications-celebration'] });
     }
-  }, [open, flushMarkRead]);
+  }, [open, flushMarkRead, qc]);
 
   const handleLangChange = (lang: string) => {
     i18n.changeLanguage(lang);
