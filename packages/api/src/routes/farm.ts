@@ -17,6 +17,7 @@ import {
 } from '@eco-farm/game-engine';
 import { notify } from '../lib/notify.js';
 import { incrementActivityQuest } from './quests.js';
+import { trackEvent } from '../lib/analytics.js';
 
 export const farmRouter = Router();
 farmRouter.use(requireAuth);
@@ -180,6 +181,44 @@ farmRouter.post('/collect-bucket', async (req: Request, res: Response) => {
   // M-6: enrich the auto-tracked event payload.
   eventProps.collected = Math.round(result.collected);
   eventProps.isFreeCollect = isFreeCollect;
+
+  // ADS-AUDIT: bucket rewards watched on an ad must count like every other
+  // rewarded impression. Before this fix /farm/collect-bucket silently
+  // skipped both sides — no row in `ad_views`, no `ad.server_granted` event
+  // — so admin dashboards undercounted ~1 ad per active DAU, LevelPlay
+  // revenue appeared to "disappear", and bucket_collect never showed up
+  // in the rewarded funnel's payout_rate.
+  if (adWatched) {
+    const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;
+    const localHour = (new Date().getUTCHours() - tzOffset / 60 + 24) % 24;
+    const phase = getCurrentPhase(localHour);
+    // Use ad_type='bucket' so these rows never compete with the per-phase
+    // limit that /farm/ad-limits enforces on 'water' / 'nutrition'.
+    await execute(
+      `INSERT INTO ad_views (user_id, ad_type, phase, view_date, count)
+       VALUES ($1, 'bucket', $2, $3::date, 1)
+       ON CONFLICT (user_id, ad_type, phase, view_date)
+       DO UPDATE SET count = ad_views.count + 1`,
+      [userId, phase, today],
+    ).catch((err) => {
+      console.error('[collect-bucket] ad_views upsert failed:', err);
+    });
+    // Surfaces bucket in the rewarded funnel & Revenue tab (admin/ads.ts).
+    // `trackEvent` swallows its own errors so we never fail the HTTP
+    // response because analytics is having a bad minute.
+    trackEvent(
+      userId,
+      'ad.server_granted',
+      {
+        type: 'bucket',
+        amount: Math.round(result.collected),
+        reason: 'collect_bucket_ad_watched',
+      },
+      req,
+      req.user?.sessionId,
+      { placement: 'bucket_collect' },
+    ).catch(() => {});
+  }
 
   const nextFreeRemaining = rank.id === 'master' ? Infinity : Math.max(0, FREE_BUCKET_COLLECTS_PER_DAY - newFreeUsed);
   res.json({

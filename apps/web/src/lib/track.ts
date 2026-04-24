@@ -111,9 +111,11 @@ function flush(opts?: { beacon?: boolean }): void {
       // `sendBeacon` with a JSON Blob is accepted by Express body-parser
       // only if we set the MIME type; many CDNs otherwise drop the body.
       const blob = new Blob([payload], { type: 'application/json' });
-      // We can't attach an Authorization header on a Beacon — fall back to
-      // the cookie if there is one. If not, we lose these last events; that's
-      // acceptable for analytics.
+      // `sendBeacon` cannot attach `Authorization: Bearer …`. Auth is carried
+      // instead by the `eco_token` cookie that `requireAuth` mirrors onto
+      // every authed response on the server (see packages/api/src/middleware/
+      // auth.ts). Same-origin sendBeacon includes cookies by spec, so the
+      // server can authenticate this ingest.
       navigator.sendBeacon(ENDPOINT, blob);
       return;
     } catch { /* fall through to fetch */ }
