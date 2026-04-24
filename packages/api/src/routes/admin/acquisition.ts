@@ -24,8 +24,7 @@ adminAcquisitionRouter.get('/by-utm', async (req, res) => {
          coalesce(u.utm_campaign, '')             AS utm_campaign,
          count(DISTINCT u.id)::int                AS users,
          count(DISTINCT CASE
-           WHEN e.created_at >= u.created_at + interval '1 day'
-            AND e.created_at  < u.created_at + interval '2 days'
+           WHEN e.created_at::date = u.created_at::date + 1
            THEN u.id
          END)::int                                AS d1_retained
        FROM users u
@@ -61,8 +60,7 @@ adminAcquisitionRouter.get('/by-geo', async (req, res) => {
          coalesce(u.country, 'unknown') AS country,
          count(DISTINCT u.id)::int      AS users,
          count(DISTINCT CASE
-           WHEN e.created_at >= u.created_at + interval '1 day'
-            AND e.created_at  < u.created_at + interval '2 days'
+           WHEN e.created_at::date = u.created_at::date + 1
            THEN u.id
          END)::int AS d1_retained
        FROM users u
@@ -136,16 +134,13 @@ adminAcquisitionRouter.get('/cohort-quality', async (req, res) => {
          wu.cohort_week::text AS cohort_week,
          count(DISTINCT wu.id)::int AS cohort_size,
          count(DISTINCT CASE
-           WHEN e.created_at >= wu.created_at + interval '1 day'
-            AND e.created_at  < wu.created_at + interval '2 days'
+           WHEN e.created_at::date = wu.created_at::date + 1
            THEN wu.id END)::int AS d1,
          count(DISTINCT CASE
-           WHEN e.created_at >= wu.created_at + interval '3 days'
-            AND e.created_at  < wu.created_at + interval '4 days'
+           WHEN e.created_at::date = wu.created_at::date + 3
            THEN wu.id END)::int AS d3,
          count(DISTINCT CASE
-           WHEN e.created_at >= wu.created_at + interval '7 days'
-            AND e.created_at  < wu.created_at + interval '8 days'
+           WHEN e.created_at::date = wu.created_at::date + 7
            THEN wu.id END)::int AS d7
        FROM week_users wu
        LEFT JOIN events e ON e.user_id = wu.id

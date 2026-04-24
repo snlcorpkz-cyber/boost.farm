@@ -90,15 +90,27 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       };
 
       for (const offset of offsets) {
-        const unit = groupBy === 'week' ? 'weeks' : 'days';
-        // Count users from cohort who had activity in the offset period
+        // Calendar-day (or calendar-week) retention: a user is retained on
+        // day/week N if they have any event whose date_trunc matches the
+        // cohort's date_trunc + N units. Using strict >=N*24h / <(N+1)*24h
+        // intervals was wrong — someone who registers at 22:00 and returns
+        // at 09:00 the next morning would be missed entirely despite being
+        // a textbook D1-retained user. Industry standard (GA / Amplitude /
+        // Mixpanel) is calendar-bucket based.
         const retainedRow = await query(
-          `SELECT count(DISTINCT e.user_id)::int AS c
-           FROM events e
-           WHERE e.user_id = ANY($1::uuid[])
-             AND e.created_at >= (SELECT created_at FROM users WHERE id = e.user_id) + ($2 || ' ${unit}')::interval
-             AND e.created_at < (SELECT created_at FROM users WHERE id = e.user_id) + ($3 || ' ${unit}')::interval`,
-          [userIds, offset, offset + 1]
+          groupBy === 'week'
+            ? `SELECT count(DISTINCT e.user_id)::int AS c
+               FROM events e
+               JOIN users u ON u.id = e.user_id
+               WHERE e.user_id = ANY($1::uuid[])
+                 AND date_trunc('week', e.created_at)::date
+                     = date_trunc('week', u.created_at)::date + ($2::int * 7)`
+            : `SELECT count(DISTINCT e.user_id)::int AS c
+               FROM events e
+               JOIN users u ON u.id = e.user_id
+               WHERE e.user_id = ANY($1::uuid[])
+                 AND e.created_at::date = u.created_at::date + $2::int`,
+          [userIds, offset]
         );
         const retained = retainedRow[0]?.c || 0;
         row.retention[offset] = {
@@ -170,12 +182,10 @@ adminRetentionRouter.get('/segments', async (req, res) => {
         coalesce(${col}, 'unknown') AS segment,
         count(DISTINCT u.id)::int AS total_users,
         count(DISTINCT CASE
-          WHEN e.created_at >= u.created_at + interval '1 day'
-           AND e.created_at < u.created_at + interval '2 days'
+          WHEN e.created_at::date = u.created_at::date + 1
           THEN u.id END)::int AS d1,
         count(DISTINCT CASE
-          WHEN e.created_at >= u.created_at + interval '7 days'
-           AND e.created_at < u.created_at + interval '8 days'
+          WHEN e.created_at::date = u.created_at::date + 7
           THEN u.id END)::int AS d7
        FROM users u
        LEFT JOIN events e ON e.user_id = u.id
