@@ -144,6 +144,30 @@ export const EVENT_REGISTRY: readonly EventSpec[] = [
     description: 'Referral link copied / shared from the Invite popup.',
     props: ['method'],
   },
+  {
+    name: 'invite.session_shown',
+    category: 'social',
+    description: 'Periodic every-Nth-session invite popup was surfaced to the user.',
+    props: ['session_count'],
+  },
+  {
+    name: 'invite.share_copied',
+    category: 'social',
+    description: 'Combined invite code + Play Store referrer link was copied from the session invite popup.',
+    props: ['source', 'code'],
+  },
+  {
+    name: 'invite.share_native',
+    category: 'social',
+    description: 'User completed a native Web Share sheet from the session invite popup.',
+    props: ['source', 'code'],
+  },
+  {
+    name: 'invite.dismissed',
+    category: 'social',
+    description: 'Session invite popup was dismissed without sharing.',
+    props: ['source'],
+  },
 
   // ── Economy (informational — bulk of econ events come from middleware) ─
   {

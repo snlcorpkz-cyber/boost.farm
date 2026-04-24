@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from './hooks/useAuth';
 import { api } from './lib/api';
 import { useRewardToast } from './components/RewardToast';
+import SessionInvitePopup from './components/SessionInvitePopup';
+import { trackClient } from './lib/track';
 import FarmPage from './pages/FarmPage';
 import AuthPage from './pages/AuthPage';
 import OnboardingPage from './pages/OnboardingPage';
@@ -18,6 +20,24 @@ import ReferralLandingPage from './pages/ReferralLandingPage';
 const ONBOARDING_KEY = 'eco_onboarding_done';
 
 const REF_KEY = 'eco_ref_code';
+
+// ── Session-invite nudge ───────────────────────────────────────────
+// Keys for the periodic invite popup. We count a "session" as a cold start
+// after at least SESSION_GAP_MS of inactivity — a quick in-app reload should
+// NOT tick the counter (otherwise a user refreshing the page three times
+// would instantly get slammed with the popup).
+//
+// The popup is surfaced on every Nth session (sessions 5, 10, 15, …) and is
+// capped at MAX_SHOWS lifetime to avoid nagging loyal returning users. At
+// current config: 5 sessions between shows × 5 shows = the nudge is retired
+// after roughly session #25.
+const SESSION_COUNT_KEY = 'eco_session_count';
+const SESSION_LAST_START_KEY = 'eco_session_last_start';
+const SESSION_INVITE_SHOWN_KEY = 'eco_session_invite_shown_for';
+const SESSION_INVITE_SHOWN_COUNT_KEY = 'eco_session_invite_shown_count';
+const SESSION_GAP_MS = 30 * 60 * 1000;
+const SESSION_INVITE_EVERY = 5;
+const SESSION_INVITE_MAX_SHOWS = 5;
 
 function captureRefFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -66,6 +86,8 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(
     () => !localStorage.getItem(ONBOARDING_KEY),
   );
+  const [showSessionInvite, setShowSessionInvite] = useState(false);
+  const sessionBumpedRef = useRef(false);
 
   const finishOnboarding = () => {
     localStorage.setItem(ONBOARDING_KEY, '1');
@@ -100,6 +122,78 @@ export default function App() {
     tg.ready();
     tg.expand();
   }, [isAuthenticated]);
+
+  // Session counting + every-Nth-session invite popup. We bump the persisted
+  // counter once per "real" cold start (>= SESSION_GAP_MS of inactivity) and
+  // surface the invite on every Nth session up to MAX_SHOWS total. The
+  // `sessionBumpedRef` guard keeps StrictMode's double-render from
+  // double-counting; SHOWN_FOR_SESSION_KEY keeps the popup from re-appearing
+  // within the same session; SHOWN_COUNT_KEY enforces the lifetime cap so
+  // loyal users aren't nagged forever.
+  useEffect(() => {
+    if (!isAuthenticated || typeof window === 'undefined') return;
+    if (sessionBumpedRef.current) return;
+    sessionBumpedRef.current = true;
+
+    let count = 0;
+    let shownFor = 0;
+    let shownTotal = 0;
+    try {
+      const now = Date.now();
+      const lastStart = Number(localStorage.getItem(SESSION_LAST_START_KEY) || 0);
+      count = Number(localStorage.getItem(SESSION_COUNT_KEY) || 0);
+      shownFor = Number(localStorage.getItem(SESSION_INVITE_SHOWN_KEY) || 0);
+      shownTotal = Number(localStorage.getItem(SESSION_INVITE_SHOWN_COUNT_KEY) || 0);
+
+      if (!lastStart || now - lastStart > SESSION_GAP_MS) {
+        count += 1;
+        localStorage.setItem(SESSION_COUNT_KEY, String(count));
+      }
+      localStorage.setItem(SESSION_LAST_START_KEY, String(now));
+    } catch {
+      // localStorage can be blocked (private mode, quota). In that case we
+      // silently skip the nudge rather than spam the user in-memory.
+      return;
+    }
+
+    const dueThisSession =
+      count >= SESSION_INVITE_EVERY &&
+      count % SESSION_INVITE_EVERY === 0 &&
+      shownFor < count;
+    const underLifetimeCap = shownTotal < SESSION_INVITE_MAX_SHOWS;
+
+    if (dueThisSession && underLifetimeCap) {
+      // Small delay so the onboarding / crop-select / auth flows have a chance
+      // to settle first — avoids stacking modals on top of the farm entrance.
+      const id = window.setTimeout(() => {
+        setShowSessionInvite(true);
+        // Record the show immediately so a crash / force-close between surface
+        // and dismiss can't accidentally waste a slot (we'd rather under-show
+        // than over-show). SHOWN_FOR_SESSION is set in closeSessionInvite so
+        // the user definitely sees the modal even if they switch routes.
+        try {
+          const nextTotal = shownTotal + 1;
+          localStorage.setItem(SESSION_INVITE_SHOWN_COUNT_KEY, String(nextTotal));
+        } catch { /* storage blocked — already handled above */ }
+        trackClient(
+          'invite.session_shown',
+          { session_count: count, shown_total: shownTotal + 1, cap: SESSION_INVITE_MAX_SHOWS },
+          { placement: 'session_invite' },
+        );
+      }, 1500);
+      return () => window.clearTimeout(id);
+    }
+  }, [isAuthenticated]);
+
+  const closeSessionInvite = () => {
+    setShowSessionInvite(false);
+    try {
+      const count = Number(localStorage.getItem(SESSION_COUNT_KEY) || 0);
+      // Record which session we just showed the popup for, so this session
+      // won't see it again (even if the user reloads inside the 30-min window).
+      if (count > 0) localStorage.setItem(SESSION_INVITE_SHOWN_KEY, String(count));
+    } catch { /* storage unavailable — no-op */ }
+  };
 
   // Push open tracking. The native Android layer (MainActivity.kt) fires a
   // `push-opened` CustomEvent on window after the WebView page finishes,
@@ -272,14 +366,17 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<FarmPage />} />
-      <Route path="/select-crop" element={<CropSelectPage />} />
-      <Route path="/quests" element={<QuestsPage />} />
-      <Route path="/friends/:friendId" element={<FriendFarmPage />} />
-      <Route path="/friends" element={<FriendsPage />} />
-      <Route path="/profile" element={<ProfilePage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<FarmPage />} />
+        <Route path="/select-crop" element={<CropSelectPage />} />
+        <Route path="/quests" element={<QuestsPage />} />
+        <Route path="/friends/:friendId" element={<FriendFarmPage />} />
+        <Route path="/friends" element={<FriendsPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <SessionInvitePopup open={showSessionInvite} onClose={closeSessionInvite} />
+    </>
   );
 }
