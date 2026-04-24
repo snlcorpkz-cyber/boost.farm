@@ -11,6 +11,7 @@ import { PushCampaignsPage } from '@/pages/PushCampaignsPage';
 import { PushCreatePage } from '@/pages/PushCreatePage';
 import { LogsPage } from '@/pages/LogsPage';
 import { RetentionPage } from '@/pages/RetentionPage';
+import { CohortUsersPage } from '@/pages/CohortUsersPage';
 import { HealthPage } from '@/pages/HealthPage';
 import { AdsPage } from '@/pages/AdsPage';
 import { AcquisitionPage } from '@/pages/AcquisitionPage';
@@ -130,6 +131,7 @@ export default function App() {
             <Route path="/ads" element={<AdsPage />} />
             <Route path="/acquisition" element={<AcquisitionPage />} />
             <Route path="/retention" element={<RetentionPage />} />
+            <Route path="/retention/cohort" element={<CohortUsersPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserDetailPage />} />
             <Route path="/offers" element={<OffersPage />} />
