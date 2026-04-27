@@ -178,5 +178,5 @@ dependencies {
     // The dev key lives in keystore.properties (gitignored) and gets
     // read at init time in BoostFarmApplication.initAppsFlyer.
     // ─────────────────────────────────────────────────────────────
-    implementation("com.appsflyer:af-android-sdk:6.18.2")
+    implementation("com.appsflyer:af-android-sdk:6.18.0")
 }
