@@ -3,96 +3,111 @@ package com.boostfarm.app
 import android.app.Application
 import android.os.Build
 import android.util.Log
-import com.facebook.FacebookSdk
-import com.facebook.appevents.AppEventsLogger
-import java.util.Locale
+import com.appsflyer.AFLogger
+import com.appsflyer.AppsFlyerConversionListener
+import com.appsflyer.AppsFlyerLib
 
 /**
- * Custom Application class. Exists for two reasons:
+ * Custom Application class. Exists to host AppsFlyer SDK initialisation
+ * at the documented happy-path point in the lifecycle:
  *
- *  1. Facebook SDK (Meta App Events) MUST be initialised in
- *     `Application.onCreate` — not in Activity — otherwise the SDK's auto-
- *     logged events (install, app_activate, session_info) fire against a
- *     non-ready context and either silently drop or land with the wrong
- *     `app_id`. Meta's docs are explicit on this; every time someone
- *     reports "my installs aren't coming through" the answer is "you
- *     initialised it from MainActivity".
+ *  1. `AppsFlyerLib.init(...)` must be called BEFORE `start(...)`, and
+ *     `start()` should run during the first Activity-resume that
+ *     follows install. Doing both inside `Application.onCreate()` is
+ *     the documented happy path; calling either of them later misses
+ *     the install attribution window for ~10-15% of users.
  *
- *  2. Gives us a single place to apply data-processing options (Limited
- *     Data Use / LDU) before anything in the SDK fires. We turn LDU on
- *     BY DEFAULT, even for non-GDPR regions, on the first app_launch —
- *     it's strictly more conservative than the SDK default and costs us
- *     nothing in attribution match rate (CAPI does the heavy lifting via
- *     email/external_id hashing server-side; SDK match is a nice-to-have
- *     for the pre-login install event only). We will dial this down
- *     region-by-region once a proper consent flow ships.
+ *  2. We may eventually layer per-user consent on top
+ *     (`AppsFlyerLib.setSharingFilter(...)`) once we ship a CCPA / GDPR
+ *     opt-out banner. The Application class is the natural place to
+ *     wire that since the SDK reads consent state at every
+ *     `start()` / event-flush boundary.
  *
- * AppsFlyer / Adjust / Branch are explicitly NOT installed — see the
- * marketing playbook in docs/marketing/. We attribute via direct FB SDK
- * for install + server-side CAPI for post-login events.
+ * AppsFlyer is the SOLE marketing-attribution path in the app today.
+ * Earlier iterations also embedded the Facebook / Meta SDK; that path
+ * was removed because it required maintaining a Meta developer account
+ * + App on top of AppsFlyer — duplicate work for no signal gain, since
+ * AppsFlyer already postbacks our high-signal events to Meta server-
+ * side via the integrated-partner pipeline.
  */
 class BoostFarmApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        initAppsFlyer()
+    }
 
+    /**
+     * AppsFlyer is our MMP (Mobile Measurement Partner). It listens to the
+     * Play Install Referrer, decrypts the encrypted bits Google sends back,
+     * normalises GAID + Android ID, and routes events to the dashboards of
+     * connected partners (Meta, Google, TikTok, …).
+     *
+     * Init contract:
+     *   • init(devKey, conversionListener?, context)  — synchronous, just
+     *     stashes the key + lazily wires receivers.
+     *   • start(context, devKey?, callback?)          — kicks off the
+     *     attribution call. Required, otherwise no events flow.
+     *
+     * The conversion listener is OPTIONAL but we wire a tiny one to
+     * surface attribution data in logcat during dev. We don't store the
+     * payload — `getAppsFlyerUID()` is the canonical id we send to the
+     * server via the JS bridge.
+     */
+    private fun initAppsFlyer() {
+        val devKey = BuildConfig.APPSFLYER_DEV_KEY
+        if (devKey.isBlank()) {
+            Log.w(TAG, "AppsFlyer dev key is empty; SDK will not be initialised. Add appsFlyerDevKey to keystore.properties.")
+            return
+        }
         try {
-            // Auto-init reads ApplicationId / ClientToken from the
-            // `<meta-data>` tags we put in AndroidManifest.xml. We turn it
-            // on explicitly because `setAutoInitEnabled(true)` is the
-            // documented migration path as of SDK 12+: the old
-            // AutoInitEnabled manifest flag alone is not enough for
-            // newer compileSdks (it gets optimised out by R8 under some
-            // minify rules and we lose Advertiser ID collection).
-            FacebookSdk.setAutoInitEnabled(true)
-            FacebookSdk.fullyInitialize()
+            val af = AppsFlyerLib.getInstance()
 
-            applyDataProcessingPolicy()
+            // Verbose logs ONLY in debuggable builds. R8 strips this branch
+            // in release because BuildConfig.DEBUG is a compile-time const.
+            af.setDebugLog(BuildConfig.DEBUG)
+            if (BuildConfig.DEBUG) af.setLogLevel(AFLogger.LogLevel.DEBUG)
 
-            // activateApp fires the `fb_mobile_activate_app` event (our
-            // proxy for DAU on the Meta side) AND schedules first-launch
-            // detection. Called once per process, idempotent thereafter.
-            AppEventsLogger.activateApp(this)
+            // NOTE on data-sharing: we deliberately do NOT call
+            // `setSharingFilterForAllPartners()` here. Despite the
+            // intuitive name, that method BLOCKS the SDK from
+            // postbacking events to every integrated partner —
+            // including the Meta integration we configured in the
+            // AppsFlyer dashboard. Calling it would silently break the
+            // entire optimisation pipeline (events would land in the AF
+            // dashboard but Meta's auction would never see them).
+            //
+            // Per-user opt-out (CCPA / GDPR "no" choice) is handled via
+            // `setSharingFilter("facebook_int", ...)` once we ship a
+            // consent banner — gated behind an explicit user flag. The
+            // default app-launch path lets postbacks flow normally so
+            // Meta / Google can optimise our paid spend.
+
+            af.init(devKey, attributionListener, applicationContext)
+            af.start(this, devKey)
         } catch (e: Throwable) {
-            // Never let a marketing-SDK initialisation failure take down
-            // the app. Worst case: we lose this session's Meta events —
-            // CAPI will still catch registration and EngagedD0.
-            Log.e(TAG, "Facebook SDK init failed", e)
+            Log.e(TAG, "AppsFlyer init failed", e)
         }
     }
 
     /**
-     * Applies Meta's "Limited Data Use" (LDU) mode. When LDU is active,
-     * the Meta backend does not use the events for ad targeting /
-     * measurement beyond your own account — we can still see install
-     * counts and optimize via CAPI, but Meta does not feed the data into
-     * cross-app models.
-     *
-     * Per https://developers.facebook.com/docs/marketing-apis/data-processing-options:
-     *   setDataProcessingOptions(["LDU"], 0, 0)  → Meta detects country
-     *   setDataProcessingOptions(["LDU"], c, s)  → explicit country + state
-     *   setDataProcessingOptions([])             → disables LDU
-     *
-     * We keep it on globally until a proper consent flow ships. LDU is
-     * explicitly supported outside California / GDPR — Meta just routes
-     * the signal through their privacy pipeline anyway.
+     * Minimal AppsFlyer attribution listener. We only log in debug builds
+     * — production paths read the AppsFlyer ID via the JS bridge instead
+     * (more deterministic than relying on this callback firing in time
+     * for the first network request to /verify-code).
      */
-    private fun applyDataProcessingPolicy() {
-        try {
-            // Empty-country / zero-state tuple tells Meta to geo-IP the
-            // request itself. This is the documented "safe default" when
-            // the device locale cannot be trusted (VPN, travellers, etc).
-            val locale = Locale.getDefault().country
-            if (locale.isNullOrBlank()) {
-                FacebookSdk.setDataProcessingOptions(arrayOf("LDU"), 0, 0)
-            } else {
-                // Passing 0/0 means "let Meta geolocate from the IP"
-                // — same semantics as above. We use the same call path
-                // on purpose so behaviour is uniform across devices.
-                FacebookSdk.setDataProcessingOptions(arrayOf("LDU"), 0, 0)
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "setDataProcessingOptions failed", e)
+    private val attributionListener = object : AppsFlyerConversionListener {
+        override fun onConversionDataSuccess(data: MutableMap<String, Any>?) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "AF conversion: $data")
+        }
+        override fun onConversionDataFail(error: String?) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "AF conversion failed: $error")
+        }
+        override fun onAppOpenAttribution(data: MutableMap<String, String>?) {
+            // Deep-link payload. We don't deep-link from ads today.
+        }
+        override fun onAttributionFailure(error: String?) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "AF attribution failed: $error")
         }
     }
 

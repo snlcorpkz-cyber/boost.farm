@@ -16,8 +16,12 @@ type AndroidBridge = {
   consumeInstallReferrer?: () => void;
   /** Generic analytics event forwarder (bridge API v5+). */
   track?: (name: string, propsJson: string) => void;
-  /** Facebook App Events logger (bridge API v8+). */
-  logFbEvent?: (name: string, paramsJson: string) => void;
+  /** AppsFlyer in-app event logger (bridge API v9+). */
+  logAfEvent?: (name: string, paramsJson: string) => void;
+  /** AppsFlyer customer-user-id setter (bridge API v9+). */
+  setAfCustomerUserId?: (userId: string) => void;
+  /** AppsFlyer Unique ID accessor (bridge API v9+). */
+  getAppsFlyerId?: () => string;
 };
 
 function bridge(): AndroidBridge | null {
@@ -280,51 +284,109 @@ export const haptics = {
 };
 
 // ────────────────────────────────────────────────────────────
-// Facebook App Events (Meta SDK) — thin passthrough.
+// AppsFlyer (MMP) — primary attribution + event-routing path.
 //
-// IMPORTANT DESIGN RULE: this is ONLY for events that must originate
-// "from the device" so Meta can do install-side attribution. Everything
-// that carries user context — registration, EngagedD0, purchases, ad
-// revenue — goes through the server-side Conversions API (CAPI) feed
-// instead, so Meta dedupes via `event_id` and matches via hashed email
-// + external_id (our user UUID), which gives dramatically higher match
-// quality than a GAID-only SDK event.
+// WHY APPSFLYER, not direct CAPI: AppsFlyer holds partner-level
+// integrations with Meta / Google / TikTok / Unity Ads / ironSource
+// (already in our stack). One SDK + one event taxonomy = all networks
+// receive the postbacks they need to optimise our campaigns. We keep
+// the FB SDK + server CAPI worker alive in parallel as redundant
+// signal carriers — but AppsFlyer is the system of record.
 //
-// Allow-list of callers today:
-//   • FarmTutorial.tsx onClose → 'fb_mobile_tutorial_completion'
+// EVENT NAMING:
+//   • Predefined `af_*` events (af_complete_registration,
+//     af_tutorial_completion, af_level_achieved, af_purchase, af_invite)
+//     map automatically to standard partner events on the network side.
+//     Always prefer them when an equivalent semantic exists.
+//   • Custom `af_*` events (af_engaged_d0, af_offer_completed,
+//     af_withdrawal_initiated, af_bucket_collected, af_first_water,
+//     af_ad_watched_rewarded) are configured once in the AppsFlyer
+//     dashboard, then surfaced to partners that explicitly map them.
 //
-// Anything else is almost certainly better served by CAPI.
+// RESERVED PARAM NAMES (aggregated specially in AF dashboards):
+//   • af_revenue   (number) → ROAS / revenue columns
+//   • af_currency  (string, ISO 4217) → defaults to USD if omitted
+//   • af_quantity  (number)
+// Use them for revenue-bearing events (af_purchase, af_offer_completed).
 // ────────────────────────────────────────────────────────────
 
 /**
- * Meta-standard app event names we are willing to emit from the client.
- * Keeping this as a tight union ensures we don't accidentally sprinkle
- * ad-hoc events into the SDK — every entry here must be justified by
- * "Meta needs to see this as device-originated".
+ * Strict allow-list of AppsFlyer event names we emit. Keeps callers
+ * honest: a typo in `af_engaged_d0` becomes a TypeScript error instead
+ * of a silently-misfiring event you only catch when looking at empty
+ * dashboard columns weeks later.
  */
-export type FbSdkEventName =
-  | 'fb_mobile_tutorial_completion'
-  | 'fb_mobile_activate_app'; // reserved; currently fired by the SDK itself.
+export type AfEventName =
+  // Predefined AF events (auto-mapped to partner standards):
+  | 'af_complete_registration'
+  | 'af_tutorial_completion'
+  | 'af_level_achieved'
+  | 'af_invite'
+  | 'af_purchase'
+  // Custom BoostFarm events (configured in AF dashboard):
+  | 'af_first_water'
+  | 'af_bucket_collected'
+  | 'af_ad_watched_rewarded'
+  | 'af_offer_completed'
+  | 'af_engaged_d0'
+  | 'af_withdrawal_initiated';
 
 /**
- * Fire an app event through the native Meta SDK. No-op on web, older
- * bridges (< v8), and whenever the native side swallows an exception.
- *
- * `params` is serialised to JSON and unpacked into a Bundle on the
- * native side. Numeric values map to doubles; everything else is
- * stringified.  Special key `_valueToSum` maps to Meta's `valueToSum`
- * parameter (the standard convention for Purchase-like events).
+ * AppsFlyer accepts string / number / boolean parameter values. Anything
+ * else (objects, arrays, null) is silently dropped on the native side,
+ * so we encode the limit in the type.
  */
-export function logFbEvent(
-  name: FbSdkEventName,
-  params: Record<string, string | number | boolean> = {},
-): void {
+export type AfEventParams = Record<string, string | number | boolean>;
+
+/**
+ * Fire an in-app event through the AppsFlyer SDK. No-op on web, older
+ * bridges (< v9), and whenever the native side swallows an exception.
+ *
+ * Idempotency: AppsFlyer does NOT dedupe by name — calling this twice
+ * fires two events. Caller is responsible for one-shot semantics where
+ * relevant (e.g. `af_first_water`, `af_engaged_d0`). We use localStorage
+ * latches in the call sites to enforce that.
+ */
+export function logAfEvent(name: AfEventName, params: AfEventParams = {}): void {
   const b = bridge();
-  if (!b?.logFbEvent) return;
+  if (!b?.logAfEvent) return;
   try {
-    b.logFbEvent(name, JSON.stringify(params));
+    b.logAfEvent(name, JSON.stringify(params));
   } catch {
-    // Never raise — marketing SDKs are non-critical from the app's POV.
+    // Marketing SDK failures must never reach product code.
+  }
+}
+
+/**
+ * Stamps the AppsFlyer device with the logged-in user's id so events
+ * generated on a second device for the same account get correctly
+ * tied back to the original install. Safe to call repeatedly — AF
+ * de-dupes on identical values.
+ */
+export function setAfCustomerUserId(userId: string): void {
+  const b = bridge();
+  if (!b?.setAfCustomerUserId) return;
+  try {
+    b.setAfCustomerUserId(userId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Returns the AppsFlyer Unique ID for this install, or null on web /
+ * older native bridges. Sent to the server during /verify-code so the
+ * `users` table can join AF attribution data without re-querying their
+ * API later.
+ */
+export function getAppsFlyerId(): string | null {
+  const b = bridge();
+  if (!b?.getAppsFlyerId) return null;
+  try {
+    const id = b.getAppsFlyerId();
+    return id && id.trim() ? id.trim() : null;
+  } catch {
+    return null;
   }
 }
 

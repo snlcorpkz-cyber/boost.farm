@@ -34,8 +34,8 @@ android {
         applicationId = "io.boostfarm.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.4.0"
+        versionCode = 13
+        versionName = "0.4.2"
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
 
@@ -48,38 +48,18 @@ android {
         buildConfigField("String", "LEVELPLAY_APP_KEY", "\"$levelPlayAppKey\"")
 
         // ─────────────────────────────────────────────────────────────
-        // Facebook / Meta App Events credentials. Same gitignored file
-        // as LevelPlay so sharing credentials across dev machines is
-        // symmetric. Missing values are replaced with empty strings —
-        // SDK short-circuits cleanly, the app still boots.
+        // AppsFlyer Dev Key — single per-app secret, read from the same
+        // gitignored keystore.properties so it never lands in git. The
+        // dev key is technically embedded in the released APK anyway
+        // (any client SDK is reverse-engineerable), but we still keep
+        // it out of source for hygiene + so a fresh checkout doesn't
+        // pollute someone else's AF dashboard with localhost traffic.
         //
-        //   facebookAppId          → app id from Meta Business Manager
-        //   facebookClientToken    → client token (Settings → Advanced)
-        //
-        // The authority string for FacebookContentProvider is built by
-        // concatenating `com.facebook.app.FacebookContentProvider` +
-        // the app id, as documented by the SDK.
+        // Empty string disables AF init cleanly — see
+        // BoostFarmApplication.initAppsFlyer().
         // ─────────────────────────────────────────────────────────────
-        val facebookAppId = (keystoreProps["facebookAppId"] as String?) ?: ""
-        val facebookClientToken = (keystoreProps["facebookClientToken"] as String?) ?: ""
-        val facebookContentProviderAuthority =
-            if (facebookAppId.isBlank()) "com.facebook.app.FacebookContentProvider"
-            else "com.facebook.app.FacebookContentProvider$facebookAppId"
-
-        // Expose the credentials both as BuildConfig (used nowhere
-        // mandatory today, but handy for feature-detection) AND as
-        // Android string resources — the AndroidManifest <meta-data>
-        // tags reference them via @string/... so the SDK auto-init
-        // pipeline picks them up without extra code.
-        resValue("string", "facebook_app_id", facebookAppId)
-        resValue("string", "facebook_client_token", facebookClientToken)
-        resValue(
-            "string",
-            "facebook_content_provider_authority",
-            facebookContentProviderAuthority,
-        )
-        buildConfigField("String", "META_APP_ID", "\"$facebookAppId\"")
-        buildConfigField("String", "META_CLIENT_TOKEN", "\"$facebookClientToken\"")
+        val appsFlyerDevKey = (keystoreProps["appsFlyerDevKey"] as String?) ?: ""
+        buildConfigField("String", "APPSFLYER_DEV_KEY", "\"$appsFlyerDevKey\"")
     }
 
     // Release signing is opt-in: only wire it up when keystore.properties
@@ -175,19 +155,28 @@ dependencies {
     implementation("com.android.installreferrer:installreferrer:2.2")
 
     // ─────────────────────────────────────────────────────────────
-    // Facebook / Meta Android SDK. Version 17.x is the current LTS
-    // line (Apr 2024 — 17.0.2 is documented against compileSdk 34/35).
-    // Provides:
-    //   • Auto-logged events: first_app_launch, activate_app, session
-    //   • Custom AppEventsLogger.logEvent for manual events
-    //   • Advertising ID collection (gated by AD_ID permission in the
-    //     manifest) for SKAdNetwork-equivalent match quality
-    //   • Data Processing Options API for LDU / GDPR compliance
+    // AppsFlyer Android SDK — the MMP (Mobile Measurement Partner)
+    // that owns campaign attribution + post-install events for the
+    // app. Version 6.18.x is the current GA line (Apr 2026), matched
+    // against compileSdk 34/35. Pulls in the "purchase-connector"
+    // optional module out — we don't have IAP yet, so the slim core
+    // SDK is enough.
     //
-    // We deliberately do NOT ship the full -marketing extension — we
-    // only need App Events. The smaller dep footprint keeps cold-start
-    // lean and reduces R8 noise. If / when we want custom audiences
-    // uploaded via SDK (we upload via CAPI instead) we can switch.
+    // Why an MMP at all (not direct CAPI):
+    //   • Single integration handles Meta + Google + TikTok + Unity
+    //     Ads + ironSource (already in our stack via LevelPlay).
+    //   • AppsFlyer holds a partner-level integration with each ad
+    //     network; we don't need to do business-verification dances
+    //     with each one. Critical when our Meta account history is
+    //     volatile (see docs/marketing/ — a previous account got
+    //     blocked under unrelated checks).
+    //   • Built-in Protect360 fraud filter strips the 20-30% bot
+    //     traffic typical for CPI-heavy gaming inventories before
+    //     it ever lands in our optimisation signals.
+    //   • iOS SKAdNetwork postback handling for free when we ship.
+    //
+    // The dev key lives in keystore.properties (gitignored) and gets
+    // read at init time in BoostFarmApplication.initAppsFlyer.
     // ─────────────────────────────────────────────────────────────
-    implementation("com.facebook.android:facebook-android-sdk:17.0.2")
+    implementation("com.appsflyer:af-android-sdk:6.18.0")
 }

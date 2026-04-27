@@ -42,6 +42,34 @@
 -keep class com.android.installreferrer.** { *; }
 -dontwarn com.android.installreferrer.**
 
+# ════════════════════════════════════════════════════════════════
+# AppsFlyer SDK — defence-in-depth keep rules.
+#
+# The AAR ships its own consumer-proguard rules, but
+# proguard-android-optimize.txt enables -allowaccessmodification
+# which has historically broken AF's BroadcastReceiver registration
+# in 6.x lines (https://support.appsflyer.com/hc/en-us/articles/
+#   207032066). Symptom: SDK initialises silently, install event
+# fires correctly, but `logEvent` calls and Play Install Referrer
+# parsing get stripped → events silently disappear.
+#
+# We keep the entire SDK + the conversion-listener interface that
+# our app implements anonymously in BoostFarmApplication. The
+# `installreferrer` BroadcastReceiver below is declared in our
+# AndroidManifest by name — R8 will rename it without these rules.
+# ════════════════════════════════════════════════════════════════
+-keep public class com.appsflyer.** { *; }
+-keep class com.appsflyer.AppsFlyerConversionListener { *; }
+-keep class * implements com.appsflyer.AppsFlyerConversionListener { *; }
+-keep class * implements com.appsflyer.AppsFlyerLib { *; }
+-keep class * implements com.appsflyer.AppsFlyerInAppPurchaseValidatorListener { *; }
+-keep class * implements com.appsflyer.AppsFlyerRequestListener { *; }
+-dontwarn com.appsflyer.**
+
+# Play Install Referrer is read by AF's internal receivers.
+-keep class com.android.installreferrer.api.** { *; }
+-dontwarn com.android.installreferrer.api.**
+
 # --- Keep annotations and Kotlin metadata (harmless, prevents weird issues).
 -keepattributes *Annotation*
 -keepattributes Signature

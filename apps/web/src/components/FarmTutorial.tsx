@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { haptic, logFbEvent } from '../lib/native';
+import { haptic, logAfEvent } from '../lib/native';
 
 const STEPS = [
   {
@@ -90,19 +90,17 @@ export default function FarmTutorial() {
   const finishTutorial = useCallback((reason: 'completed' | 'skipped') => {
     localStorage.setItem(STORAGE_KEY, '1');
     setVisible(false);
-    // Fire Meta App Event so campaigns optimizing on
-    // `fb_mobile_tutorial_completion` can use the onboarding-complete
-    // signal as an early proxy for engagement while EngagedD0 warms up.
-    // Safe no-op on web / older bridges.
+    // Fire AppsFlyer tutorial-completion event. AF is the single MMP
+    // and postbacks to every connected partner (Meta, Google, TikTok)
+    // server-side via the integrated-partner pipeline. No-op on web /
+    // older native bridges that pre-date the bridge-v9 logAfEvent API.
     try {
-      logFbEvent('fb_mobile_tutorial_completion', {
-        fb_content_id: 'farm_onboarding',
-        fb_content_type: 'tutorial',
-        fb_description: reason,
+      logAfEvent('af_tutorial_completion', {
+        af_success: reason === 'completed',
+        af_tutorial_id: 'farm_onboarding',
+        af_content: 'farm_onboarding',
       });
-    } catch {
-      // ignore — marketing signals are non-critical
-    }
+    } catch { /* non-critical */ }
   }, []);
 
   const next = useCallback(() => {

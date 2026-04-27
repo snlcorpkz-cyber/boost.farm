@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { UI } from '../lib/assets';
 import { haptic } from '../lib/native';
+import { reportInvite } from '../lib/marketing';
 
 interface InvitePopupProps {
   open: boolean;
@@ -31,6 +32,7 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
     try {
       await navigator.clipboard.writeText(inviteData.code);
       setCopied(true);
+      reportInvite({ source: 'invite_popup_code', method: 'copy' });
       setTimeout(() => setCopied(false), 2000);
     } catch { /* fallback: ignore */ }
   };
@@ -40,6 +42,7 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
     try {
       await navigator.clipboard.writeText(inviteLink);
       setLinkCopied(true);
+      reportInvite({ source: 'invite_popup_link', method: 'copy' });
       setTimeout(() => setLinkCopied(false), 2000);
     } catch { /* ignore */ }
   };
@@ -56,6 +59,7 @@ export default function InvitePopup({ open, onClose }: InvitePopupProps) {
           text: "Join me on Boost Farm and we both get a bonus!",
           url: inviteLink,
         });
+        reportInvite({ source: 'invite_popup_link', method: 'native' });
         return;
       } catch { /* user cancelled */ }
     }
