@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../lib/api';
 import { haptic } from '../lib/native';
 import { trackClient } from '../lib/track';
+import { reportInvite } from '../lib/marketing';
 
 interface SessionInvitePopupProps {
   open: boolean;
@@ -51,6 +52,7 @@ export default function SessionInvitePopup({ open, onClose }: SessionInvitePopup
       await navigator.clipboard.writeText(shareText);
       setCopied(true);
       trackClient('invite.share_copied', { source: 'session_popup', code }, { placement: 'session_invite' });
+      reportInvite({ source: 'session_popup', method: 'copy' });
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // clipboard blocked (older WebViews / strict policies) — fall back to
@@ -80,6 +82,7 @@ export default function SessionInvitePopup({ open, onClose }: SessionInvitePopup
           text: shareText,
         });
         trackClient('invite.share_native', { source: 'session_popup', code }, { placement: 'session_invite' });
+        reportInvite({ source: 'session_popup', method: 'native' });
         return;
       } catch {
         // User dismissed the sheet — do nothing, they'll see the Copy button.

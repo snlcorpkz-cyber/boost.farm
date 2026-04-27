@@ -11,6 +11,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import com.boostfarm.app.BuildConfig
 import android.os.Bundle
+import com.appsflyer.AppsFlyerLib
 import com.boostfarm.app.ads.OfferwallPort
 import com.boostfarm.app.ads.RewardedAdsPort
 import com.boostfarm.app.referrer.InstallReferrerHelper
@@ -217,6 +218,103 @@ class FarmJsBridge(
     }
 
     /**
+     * Forwards an in-app event into the AppsFlyer SDK. The web layer calls
+     * e.g. `EcoFarmAndroid.logAfEvent('af_complete_registration',
+     * '{"af_registration_method":"email"}')`.
+     *
+     * AppsFlyer is the system of record for marketing attribution: events
+     * logged here flow into the AppsFlyer dashboard AND are auto-postbacked
+     * to every connected ad network (Meta, Google, TikTok, …) without us
+     * touching their APIs. That's the whole reason we picked an MMP over
+     * direct CAPI integrations.
+     *
+     * Event NAME conventions:
+     *   • Predefined AF events (`af_purchase`, `af_complete_registration`,
+     *     `af_level_achieved`, `af_tutorial_completion`, …) automatically
+     *     map to standard partner events on the network side. Use these
+     *     when an equivalent exists.
+     *   • Custom events (`af_engaged_d0`, `af_offer_completed`, …) are
+     *     prefixed `af_` for visual consistency and need to be configured
+     *     in the AppsFlyer dashboard once before partners can map them.
+     *
+     * Reserved parameter names that AppsFlyer aggregates specially:
+     *   • `af_revenue` (number)   → ROAS column in dashboards
+     *   • `af_currency` (string)  → ISO-4217, defaults to USD if missing
+     *   • `af_quantity` (number)  → for Purchase events
+     *
+     * Numeric params are passed as Java doubles; everything else is
+     * stringified. AF accepts strings/numbers/booleans natively but
+     * silently drops nested objects, so we flatten to scalars here.
+     */
+    @JavascriptInterface
+    fun logAfEvent(name: String, paramsJson: String) {
+        try {
+            val parsed = runCatching { JSONObject(paramsJson) }.getOrElse { JSONObject() }
+            val map = HashMap<String, Any>()
+            val keys = parsed.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = parsed.opt(k) ?: continue
+                when (v) {
+                    is Number -> map[k] = v
+                    is Boolean -> map[k] = v
+                    else -> map[k] = v.toString()
+                }
+            }
+            AppsFlyerLib.getInstance().logEvent(webView.context, name, map)
+        } catch (e: Throwable) {
+            // Never raise — marketing SDK failure is non-fatal. The same
+            // event will retry from the server's events table the next
+            // time the dispatch worker (future) runs.
+            android.util.Log.w("FarmJsBridge", "logAfEvent failed: $name", e)
+        }
+    }
+
+    /**
+     * Tells AppsFlyer "this device belongs to user X". Sent on the very
+     * first `/auth/verify-code` success (and on every cold start
+     * afterwards as a no-cost idempotent re-stamp).
+     *
+     * Critical for cross-device attribution: when the same user opens
+     * the app on a tablet later, AppsFlyer can still tie the events to
+     * the original install via `customer_user_id`. Without this, every
+     * device looks like a separate fresh user.
+     *
+     * Empty / blank ids are ignored — we never want to overwrite a real
+     * id with a falsy one.
+     */
+    @JavascriptInterface
+    fun setAfCustomerUserId(userId: String) {
+        try {
+            val trimmed = userId.trim()
+            if (trimmed.isEmpty()) return
+            AppsFlyerLib.getInstance().setCustomerUserId(trimmed)
+        } catch (e: Throwable) {
+            android.util.Log.w("FarmJsBridge", "setAfCustomerUserId failed", e)
+        }
+    }
+
+    /**
+     * Returns the AppsFlyer Unique ID (one per install). The web layer
+     * sends this to our server during /verify-code so we can later cross-
+     * reference our `users` table with AppsFlyer's attribution dashboard
+     * (e.g. when joining cohort retention to creative breakdown).
+     *
+     * Returns empty string if the SDK hasn't generated an ID yet (only
+     * happens in the very first ms after install — getInstance().getAppsFlyerUID
+     * is normally synchronous + cached).
+     */
+    @JavascriptInterface
+    fun getAppsFlyerId(): String {
+        return try {
+            AppsFlyerLib.getInstance().getAppsFlyerUID(webView.context) ?: ""
+        } catch (e: Throwable) {
+            android.util.Log.w("FarmJsBridge", "getAppsFlyerId failed", e)
+            ""
+        }
+    }
+
+    /**
      * Generic analytics event forwarder. The web layer calls
      * `EcoFarmAndroid.track('ad.loaded', '{"placement":"water_popup"}')` which
      * ultimately becomes a row in the server `events` table via
@@ -300,8 +398,15 @@ class FarmJsBridge(
          *      device-side signals that pair with our server-side
          *      Conversions API pipeline. See logFbEvent doc above for
          *      the allow-list of callers.
+         * v9: AppsFlyer integration trio:
+         *      - logAfEvent(name, paramsJson)     fires AF in-app events
+         *      - setAfCustomerUserId(userId)      ties device to user_id
+         *      - getAppsFlyerId()                 returns AF UID for backend
+         *     AF replaces direct CAPI for partner-routed attribution. The
+         *     Meta SDK + CAPI worker stay alive as redundant signal carriers
+         *     so we can fall back if AF→Meta postbacks ever break.
          */
-        const val BRIDGE_API_VERSION = 8
+        const val BRIDGE_API_VERSION = 9
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?, reason: String?) {

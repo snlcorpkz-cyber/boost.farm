@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { AVATAR_IMAGES, CROP_STAGES, UI } from '../lib/assets';
 import { haptic } from '../lib/native';
+import { reportOfferCompleted } from '../lib/marketing';
 
 interface Notification {
   id: string;
@@ -100,6 +101,26 @@ export default function NotificationsPopup({
       setHasMore(data.hasMore);
       setNextOffset(data.nextOffset);
       setUnreadCount(data.unreadCount);
+
+      // AppsFlyer mirror: when an offer-completion notification arrives,
+      // fire `af_offer_completed` exactly once per notification id (the
+      // helper latches by id via localStorage). We deliberately don't pass
+      // af_revenue here because the notification carries the in-game
+      // reward, not the USD payout from the advertiser — that revenue
+      // lives only on the server (Adsempire postback). When we ship S2S
+      // dispatch we'll send the revenue from there; until then, AF will
+      // see the count of offer completions, which is enough signal for
+      // Meta to optimise on "offer-completer" cohorts.
+      for (const n of data.notifications) {
+        if (n.type !== 'offer') continue;
+        const offerId =
+          (n.params && (n.params['game'] ?? n.params['offer_id'])) ?? 'unknown';
+        reportOfferCompleted({
+          notificationId: n.id,
+          offerId: String(offerId),
+          revenueUsd: 0,
+        });
+      }
     }
   }, [data]);
 

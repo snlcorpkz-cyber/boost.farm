@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { AVATAR_IMAGES, UI } from '../lib/assets';
 import { useRewardToast } from '../components/RewardToast';
 import BottomNav from '../components/farm/BottomNav';
+import { reportInvite } from '../lib/marketing';
 
 export default function FriendsPage() {
   const { t } = useTranslation();
@@ -50,6 +51,9 @@ export default function FriendsPage() {
     try {
       await navigator.clipboard.writeText(inviteData.code);
       setCopied(true);
+      // AppsFlyer invite signal — separate latch from session-popup invites,
+      // so we capture which surface drove the share.
+      reportInvite({ source: 'friends_page', method: 'copy' });
       setTimeout(() => setCopied(false), 2000);
     } catch { /* ignore */ }
   };

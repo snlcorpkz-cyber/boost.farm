@@ -2,13 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- ACCESS_NETWORK_STATE is recommended by AppsFlyer (and Firebase) so
+         the SDK can defer event flushes when the device is offline rather
+         than dropping them. Without it, AF still works but install
+         attribution accuracy drops on flaky connections. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- AD_ID: required on Android 13+ for apps that read the Google
-         Advertising ID. Both ironSource / LevelPlay adapters AND Meta's
-         AdvertiserIDCollection path need this permission declared —
-         otherwise targetSdk 33+ installs silently return a zeroed GAID
-         and Meta install match rates drop ~20%. -->
+         Advertising ID. Multiple SDKs in our stack need this permission
+         declared — otherwise targetSdk 33+ installs silently return a
+         zeroed GAID and attribution match rates drop ~20%:
+           • Meta's AdvertiserIDCollection (FB SDK)
+           • AppsFlyer's GAID-based device fingerprint
+           • ironSource / LevelPlay rewarded ads
+         One permission, one entry, three SDKs benefit. -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <application

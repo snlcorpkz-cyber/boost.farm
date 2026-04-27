@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, setToken, setRefreshToken, getToken } from '../lib/api';
-import { getInstallReferrer, type InstallReferrer } from './../lib/native';
+import {
+  getInstallReferrer,
+  logAfEvent,
+  setAfCustomerUserId,
+  type InstallReferrer,
+} from './../lib/native';
 
 /**
  * Collects campaign attribution from two sources:
@@ -83,6 +88,51 @@ interface User {
   locale: string;
 }
 
+/**
+ * Tells AppsFlyer "this device belongs to user X". Called on every
+ * successful authentication path (verify-code, telegram, token boot)
+ * so cross-device events tie back correctly. Idempotent — AppsFlyer
+ * de-dupes identical ids.
+ *
+ * The function is a thin wrapper instead of a direct call so we have
+ * a single place to layer additional bridges later (iOS, Telegram,
+ * web fingerprint MMP) without touching every login path.
+ */
+function stampMarketingIdentity(userId: string) {
+  if (!userId) return;
+  setAfCustomerUserId(userId);
+}
+
+/**
+ * Fires AppsFlyer's `af_complete_registration` ONCE per device per user
+ * — gated by a localStorage latch keyed on the user id. We need the
+ * latch because the server's `isNewUser` flag is only true on the very
+ * first /verify-code success; if the user clears app data and re-logs
+ * in, the server (correctly) reports isNewUser=false but the SDK on a
+ * fresh install would still want to register the device→user mapping.
+ *
+ * The latch lets us re-fire registration ONLY when both:
+ *   (a) server says this user is new, AND
+ *   (b) we haven't already logged registration for this user on this device
+ *
+ * `af_registration_method` is the AF-standard parameter name; values are
+ * free-form but `email` / `telegram` / `google` are the conventional ones.
+ */
+function maybeLogAfRegistration(userId: string, method: 'email' | 'telegram' | 'google'): void {
+  if (!userId) return;
+  const key = `af_registered:${userId}`;
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, '1');
+  } catch {
+    // localStorage might be disabled (private mode, quota). Fire anyway —
+    // a duplicate registration event in AF dashboards is far less harmful
+    // than missing the very first one.
+  }
+  logAfEvent('af_complete_registration', { af_registration_method: method });
+}
+
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
@@ -123,6 +173,7 @@ export function useAuth() {
           if (cancelled) return;
           globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
+          stampMarketingIdentity(data.user.id);
           registerPushToken();
           return;
         } catch {
@@ -137,6 +188,7 @@ export function useAuth() {
             accessToken: string;
             refreshToken: string;
             user: User;
+            isNewUser?: boolean;
           }>('/auth/telegram', {
             method: 'POST',
             body: JSON.stringify({ initData: tgInit }),
@@ -146,6 +198,8 @@ export function useAuth() {
           setRefreshToken(data.refreshToken);
           globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
           notify();
+          stampMarketingIdentity(data.user.id);
+          if (data.isNewUser) maybeLogAfRegistration(data.user.id, 'telegram');
           registerPushToken();
           return;
         } catch (e) {
@@ -179,6 +233,8 @@ export function useAuth() {
     setRefreshToken(data.refreshToken);
     globalAuthState = { user: data.user, isAuthenticated: true, isLoading: false };
     notify();
+    stampMarketingIdentity(data.user.id);
+    if (data.isNewUser) maybeLogAfRegistration(data.user.id, 'email');
     registerPushToken();
     return data;
   }, []);

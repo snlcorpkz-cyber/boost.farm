@@ -5,6 +5,7 @@ import { sounds } from '../lib/sounds';
 import { useRewardToast } from '../components/RewardToast';
 import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible } from '../lib/native';
 import { trackClient } from '../lib/track';
+import { reportAdWatchedRewarded } from '../lib/marketing';
 
 type RewardType = 'water' | 'nutrition';
 
@@ -58,6 +59,17 @@ export function useRewardedAd({ placement, rewardType, rewardAmount, onError }: 
         { type: rewardType, amount: res?.amount ?? 0, idempotencyKey, attempt_id: attemptId },
         { placement },
       );
+      // Mirror the server-confirmed reward to AppsFlyer. We deliberately
+      // wait for the server-grant (not the SDK rewarded callback) so AF
+      // and our backend agree on what counts as a real ad watch — the
+      // SDK can fire `rewarded` for fallback flows that the server later
+      // rejects as ineligible.
+      reportAdWatchedRewarded({
+        placement,
+        attemptId,
+        rewardType,
+        amount: res?.amount ?? 0,
+      });
       const amount = res?.amount ?? rewardAmount ?? 0;
       if (amount > 0) {
         showReward(rewardType === 'water' ? 'water' : 'fertilizer', amount);
