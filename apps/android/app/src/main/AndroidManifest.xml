@@ -10,13 +10,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- AD_ID: required on Android 13+ for apps that read the Google
-         Advertising ID. Multiple SDKs in our stack need this permission
-         declared — otherwise targetSdk 33+ installs silently return a
-         zeroed GAID and attribution match rates drop ~20%:
-           • Meta's AdvertiserIDCollection (FB SDK)
-           • AppsFlyer's GAID-based device fingerprint
-           • ironSource / LevelPlay rewarded ads
-         One permission, one entry, three SDKs benefit. -->
+         Advertising ID. SDKs in our stack that depend on this permission:
+           • AppsFlyer — GAID is the primary attribution identifier.
+             Without the permission, AF falls back to fingerprint matching
+             and Meta / Google match rates drop ~20%.
+           • ironSource / LevelPlay rewarded ads — uses GAID for ad
+             targeting and frequency capping. -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <application
@@ -32,34 +31,10 @@
         <!-- Ads are handled by Unity LevelPlay (ironSource) — initialization is
              purely runtime in MainActivity, no manifest meta-data required. -->
 
-        <!-- ───────────────────────────────────────────────────────────
-             Facebook SDK (Meta App Events). Values live in strings.xml
-             which reads them from BuildConfig at compile time (so the
-             raw ApplicationId / ClientToken never land in git). See
-             build.gradle.kts for the BuildConfig wiring.
-
-             AutoLogAppEventsEnabled: lets the SDK auto-emit
-               fb_mobile_first_app_launch + fb_mobile_activate_app +
-               session_info without us writing a single line of code.
-               This is the pre-login install signal that pairs with our
-               post-login Conversions API pipeline.
-
-             AdvertiserIDCollectionEnabled: permits the SDK to read the
-               GAID (AD_ID permission above). Without this Meta falls
-               back to fingerprint matching, which is much weaker.
-             ──────────────────────────────────────────────────────── -->
-        <meta-data
-            android:name="com.facebook.sdk.ApplicationId"
-            android:value="@string/facebook_app_id" />
-        <meta-data
-            android:name="com.facebook.sdk.ClientToken"
-            android:value="@string/facebook_client_token" />
-        <meta-data
-            android:name="com.facebook.sdk.AutoLogAppEventsEnabled"
-            android:value="true" />
-        <meta-data
-            android:name="com.facebook.sdk.AdvertiserIDCollectionEnabled"
-            android:value="true" />
+        <!-- Marketing attribution: AppsFlyer SDK. Init is runtime-only in
+             BoostFarmApplication.initAppsFlyer — no manifest meta-data
+             required. AF auto-installs its own InstallReferrerReceiver
+             through the merged manifest from the AAR. -->
 
         <!-- FCM: default icon & channel for notifications when app is killed -->
         <meta-data
@@ -88,17 +63,5 @@
             </intent-filter>
         </service>
 
-        <!-- FacebookContentProvider: REQUIRED by the Meta SDK for deferred
-             deep linking and attribution. The authority string MUST use
-             the FB app id as a suffix — that's how other Facebook apps
-             on the device find ours during attribution handshakes. The
-             ${applicationId}-style placeholder would be cleaner but
-             AAPT2 does not resolve it inside <provider> authorities on
-             all toolchain versions, so we inline the value via a
-             string resource.  -->
-        <provider
-            android:name="com.facebook.FacebookContentProvider"
-            android:authorities="@string/facebook_content_provider_authority"
-            android:exported="true" />
     </application>
 </manifest>

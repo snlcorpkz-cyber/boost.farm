@@ -16,8 +16,6 @@ type AndroidBridge = {
   consumeInstallReferrer?: () => void;
   /** Generic analytics event forwarder (bridge API v5+). */
   track?: (name: string, propsJson: string) => void;
-  /** Facebook App Events logger (bridge API v8+). */
-  logFbEvent?: (name: string, paramsJson: string) => void;
   /** AppsFlyer in-app event logger (bridge API v9+). */
   logAfEvent?: (name: string, paramsJson: string) => void;
   /** AppsFlyer customer-user-id setter (bridge API v9+). */
@@ -284,55 +282,6 @@ export const haptics = {
   success: () => haptic('success'),
   error: () => haptic('error'),
 };
-
-// ────────────────────────────────────────────────────────────
-// Facebook App Events (Meta SDK) — thin passthrough.
-//
-// IMPORTANT DESIGN RULE: this is ONLY for events that must originate
-// "from the device" so Meta can do install-side attribution. Everything
-// that carries user context — registration, EngagedD0, purchases, ad
-// revenue — goes through the server-side Conversions API (CAPI) feed
-// instead, so Meta dedupes via `event_id` and matches via hashed email
-// + external_id (our user UUID), which gives dramatically higher match
-// quality than a GAID-only SDK event.
-//
-// Allow-list of callers today:
-//   • FarmTutorial.tsx onClose → 'fb_mobile_tutorial_completion'
-//
-// Anything else is almost certainly better served by CAPI.
-// ────────────────────────────────────────────────────────────
-
-/**
- * Meta-standard app event names we are willing to emit from the client.
- * Keeping this as a tight union ensures we don't accidentally sprinkle
- * ad-hoc events into the SDK — every entry here must be justified by
- * "Meta needs to see this as device-originated".
- */
-export type FbSdkEventName =
-  | 'fb_mobile_tutorial_completion'
-  | 'fb_mobile_activate_app'; // reserved; currently fired by the SDK itself.
-
-/**
- * Fire an app event through the native Meta SDK. No-op on web, older
- * bridges (< v8), and whenever the native side swallows an exception.
- *
- * `params` is serialised to JSON and unpacked into a Bundle on the
- * native side. Numeric values map to doubles; everything else is
- * stringified.  Special key `_valueToSum` maps to Meta's `valueToSum`
- * parameter (the standard convention for Purchase-like events).
- */
-export function logFbEvent(
-  name: FbSdkEventName,
-  params: Record<string, string | number | boolean> = {},
-): void {
-  const b = bridge();
-  if (!b?.logFbEvent) return;
-  try {
-    b.logFbEvent(name, JSON.stringify(params));
-  } catch {
-    // Never raise — marketing SDKs are non-critical from the app's POV.
-  }
-}
 
 // ────────────────────────────────────────────────────────────
 // AppsFlyer (MMP) — primary attribution + event-routing path.

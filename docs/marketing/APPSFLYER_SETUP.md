@@ -130,27 +130,22 @@ in the AF dashboard.
 
 ---
 
-## 5. Coexistence with Meta SDK + CAPI worker
+## 5. Server-side CAPI worker (dormant)
 
-Both stay alive. Their division of labour:
+A `packages/api/src/workers/capiWorker.ts` lives in the codebase as a
+future-proofing channel. It polls the `events` table and would dispatch
+to Meta's Conversions API server-side. **Disabled by default** via
+`META_CAPI_ENABLED=false` and gated on `META_APP_ID` / `META_ACCESS_TOKEN`
+being present. Today AppsFlyer alone postbacks to Meta — flip the worker
+on only if AF→Meta integration ever breaks and we need a redundant
+server-side path.
 
-- **AppsFlyer** (system of record): every event listed in §2.3 fires
-  client-side via the bridge. AF then postbacks to all connected
-  partners including Meta.
-- **Meta SDK** (`facebook-android-sdk:17.0.2`, init in
-  `BoostFarmApplication.initFacebook`): auto-fires
-  `fb_mobile_first_app_launch` + `fb_mobile_activate_app` for SKAN-
-  style install attribution + `fb_mobile_tutorial_completion` from
-  `FarmTutorial.tsx`. Redundant signal; safe even if duplicated with
-  AF→Meta postbacks because dedupe key spaces are independent.
-- **CAPI worker** (`packages/api/src/workers/capiWorker.ts`): polls
-  the `events` table and dispatches to Meta CAPI. **Disabled by
-  default** via `META_CAPI_ENABLED=false`. Flip to `true` only as
-  fallback if AF→Meta integration breaks.
-
-If Meta dashboards start showing duplicated installs / events: turn the
-FB SDK off by setting `facebookAppId=` empty in `keystore.properties`
-and rebuild. AF alone will keep optimising — it's the system of record.
+The Facebook / Meta Android SDK that previously ran client-side has been
+removed (commit log: "remove Facebook SDK, AppsFlyer is the sole MMP")
+because maintaining two parallel client-side attribution paths added
+operational complexity (Meta developer account verification, key hashes,
+Business Manager onboarding) for zero signal gain — AppsFlyer covers the
+exact same Meta-side postbacks via its integrated-partner pipeline.
 
 ---
 

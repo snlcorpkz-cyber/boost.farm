@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { haptic, logAfEvent, logFbEvent } from '../lib/native';
+import { haptic, logAfEvent } from '../lib/native';
 
 const STEPS = [
   {
@@ -90,24 +90,15 @@ export default function FarmTutorial() {
   const finishTutorial = useCallback((reason: 'completed' | 'skipped') => {
     localStorage.setItem(STORAGE_KEY, '1');
     setVisible(false);
-    // Fire BOTH marketing SDK events so AppsFlyer (system of record) AND
-    // the redundant Meta SDK signal both light up. AF will postback to
-    // every connected partner including Meta; the parallel Meta SDK fire
-    // gives us SKAdNetwork-style device-level coverage as a backup if
-    // the AF→Meta integration ever blips. Both are no-ops on web / old
-    // bridges, so this is "fire and forget".
+    // Fire AppsFlyer tutorial-completion event. AF is the single MMP
+    // and postbacks to every connected partner (Meta, Google, TikTok)
+    // server-side via the integrated-partner pipeline. No-op on web /
+    // older native bridges that pre-date the bridge-v9 logAfEvent API.
     try {
       logAfEvent('af_tutorial_completion', {
         af_success: reason === 'completed',
         af_tutorial_id: 'farm_onboarding',
         af_content: 'farm_onboarding',
-      });
-    } catch { /* non-critical */ }
-    try {
-      logFbEvent('fb_mobile_tutorial_completion', {
-        fb_content_id: 'farm_onboarding',
-        fb_content_type: 'tutorial',
-        fb_description: reason,
       });
     } catch { /* non-critical */ }
   }, []);

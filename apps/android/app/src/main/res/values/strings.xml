@@ -1,15 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Boost Farm</string>
-    <!--
-        Facebook SDK credentials. Real values are injected at build time
-        via `resValue(...)` calls in build.gradle.kts which read from
-        apps/android/keystore.properties (gitignored). These default
-        empty values are used when the keystore props are missing
-        (first-time clones, CI) — an empty ApplicationId makes the FB
-        SDK short-circuit cleanly with no crash.
-
-        If you edit values here directly they will be overwritten by
-        `resValue` at build time. Edit keystore.properties instead.
-    -->
 </resources>
