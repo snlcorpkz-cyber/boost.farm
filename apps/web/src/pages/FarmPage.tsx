@@ -28,6 +28,7 @@ import FarmTutorial from '../components/FarmTutorial';
 import MockAdModal from '../components/MockAdModal';
 import RankModal from '../components/RankModal';
 import { requestRewardedAdNative, isAndroid, isRewardFallbackEligible, haptic } from '../lib/native';
+import { reportAdWatchedRewarded } from '../lib/marketing';
 import { trackClient } from '../lib/track';
 
 
@@ -233,6 +234,14 @@ export default function FarmPage() {
       setBucketAdPending(false);
       if (result.success) {
         sounds.bucketCollectToCan();
+        // Mirror the rewarded ad watch to AppsFlyer so engaged_d0 + Meta
+        // optimisation see ad-engagement on this placement. Bucket has its
+        // own ad flow (separate from useRewardedAd), so we fire it inline.
+        reportAdWatchedRewarded({
+          placement: 'bucket_collect',
+          attemptId,
+          rewardType: 'bucket',
+        });
         handleCollect(true);
         return;
       }
@@ -289,6 +298,12 @@ export default function FarmPage() {
         { fallback: true, reward_amount: r.amount, attempt_id: attemptId },
         { placement: 'bucket_collect' },
       );
+      reportAdWatchedRewarded({
+        placement: 'bucket_collect',
+        attemptId,
+        rewardType: 'bucket',
+        amount: r.amount,
+      });
       sounds.bucketCollectToCan();
       handleCollect(true);
     } else {
