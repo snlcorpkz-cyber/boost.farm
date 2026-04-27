@@ -9,6 +9,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import com.boostfarm.app.BoostFarmApplication
 import com.boostfarm.app.BuildConfig
 import com.appsflyer.AppsFlyerLib
 import com.boostfarm.app.ads.OfferwallPort
@@ -256,6 +257,78 @@ class FarmJsBridge(
     }
 
     /**
+     * Returns cached AppsFlyer attribution data as JSON string. The
+     * payload mirrors `onConversionDataSuccess` data — the fields the
+     * dashboard cares about are:
+     *
+     *   • af_status        ("Non-organic" | "Organic")
+     *   • media_source     ("Facebook Ads" | "googleadwords_int" | …)
+     *   • campaign / campaign_id
+     *   • adset / adset_id
+     *   • ad / ad_id
+     *   • af_attribution_id
+     *   • is_first_launch  (boolean — only true ONCE per install)
+     *
+     * The web layer reads this on /verify-code and forwards into
+     * `acquisition_source` so admin reports can answer "user X came
+     * from creative Y".
+     *
+     * Returns `{}` (empty JSON) when AppsFlyer hasn't reported yet
+     * (typically the first 1-3 seconds after install) or when the
+     * device is fully offline.
+     */
+    @JavascriptInterface
+    fun getAfAttribution(): String {
+        return try {
+            val ctx = webView.context
+            val prefs = ctx.getSharedPreferences(BoostFarmApplication.PREFS, Context.MODE_PRIVATE)
+            val cached = prefs.getString(BoostFarmApplication.KEY_ATTRIBUTION, null)
+            if (!cached.isNullOrBlank()) return cached
+            "{}"
+        } catch (e: Throwable) {
+            android.util.Log.w("FarmJsBridge", "getAfAttribution failed", e)
+            "{}"
+        }
+    }
+
+    /**
+     * Returns the cached OneLink deep-link payload as JSON, or `{}` if
+     * none. Used on cold launch to route retargeting traffic to the
+     * intended page (`deep_link_value` carries the route name).
+     *
+     * Reads the cache WITHOUT clearing it — the web layer must call
+     * [consumeAfDeepLink] explicitly once it has applied the route.
+     * That two-step prevents silent loss when the JS side fails to
+     * complete navigation (e.g. user logged out before the click
+     * resolves) — the deep link survives until consumed.
+     */
+    @JavascriptInterface
+    fun getAfDeepLink(): String {
+        return try {
+            val ctx = webView.context
+            val prefs = ctx.getSharedPreferences(BoostFarmApplication.PREFS, Context.MODE_PRIVATE)
+            prefs.getString(BoostFarmApplication.KEY_DEEP_LINK, null) ?: "{}"
+        } catch (e: Throwable) {
+            android.util.Log.w("FarmJsBridge", "getAfDeepLink failed", e)
+            "{}"
+        }
+    }
+
+    /** Drops the cached deep link after the web layer has navigated. */
+    @JavascriptInterface
+    fun consumeAfDeepLink() {
+        try {
+            val ctx = webView.context
+            ctx.getSharedPreferences(BoostFarmApplication.PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .remove(BoostFarmApplication.KEY_DEEP_LINK)
+                .apply()
+        } catch (e: Throwable) {
+            android.util.Log.w("FarmJsBridge", "consumeAfDeepLink failed", e)
+        }
+    }
+
+    /**
      * Generic analytics event forwarder. The web layer calls
      * `EcoFarmAndroid.track('ad.loaded', '{"placement":"water_popup"}')` which
      * ultimately becomes a row in the server `events` table via
@@ -351,8 +424,17 @@ class FarmJsBridge(
          *      stays dormant as a future redundant channel — but is gated
          *      behind explicit env vars so a missing Meta app config no
          *      longer throws or pollutes logs.
+         * v11: AppsFlyer attribution + deep-link plumbing:
+         *      - getAfAttribution()  returns cached conversion data
+         *        (media_source / campaign / af_status / …) so the web
+         *        layer can persist it into our `users.acquisition_source`
+         *        and surface in admin reports.
+         *      - getAfDeepLink() / consumeAfDeepLink() expose the
+         *        OneLink Universal Deep Link payload for retargeting.
+         *      Both rely on AppsFlyerLib.subscribeForDeepLink + the
+         *      conversion listener wired in BoostFarmApplication.
          */
-        const val BRIDGE_API_VERSION = 10
+        const val BRIDGE_API_VERSION = 11
     }
 
     private fun emit(callbackName: String, placement: String, success: Boolean, requestId: String?, reason: String?) {

@@ -121,15 +121,17 @@ function CreativeTab({ days }: { days: number }) {
 
       <div className="mt-6 rounded-xl border border-gray-200 bg-white p-4 overflow-x-auto">
         <p className="mb-3 text-xs text-gray-500">
-          Creative-level breakdown. utm_content is the Meta ad name — so each row is one ad
-          variant. Rank by EngagedD0 % to see which creative converts into quality users.
+          Creative-level breakdown sourced from AppsFlyer (with Play Install Referrer fallback).
+          Each row is one ad variant — rank by EngagedD0 % to see which creative converts into
+          quality users.
         </p>
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100">
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Source</th>
               <th className="text-left py-2 px-3 font-medium text-gray-500">Campaign</th>
-              <th className="text-left py-2 px-3 font-medium text-gray-500">Creative (utm_content)</th>
-              <th className="text-left py-2 px-3 font-medium text-gray-500">fb_ad_id</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">Creative</th>
+              <th className="text-left py-2 px-3 font-medium text-gray-500">ad_id</th>
               <th className="text-right py-2 px-3 font-medium text-gray-500">Users</th>
               <th className="text-right py-2 px-3 font-medium text-gray-500">EngagedD0</th>
               <th className="text-right py-2 px-3 font-medium text-gray-500">EngagedD0 %</th>
@@ -139,9 +141,10 @@ function CreativeTab({ days }: { days: number }) {
           <tbody>
             {rows.map((r: any, i: number) => (
               <tr key={i} className="border-b border-gray-50">
+                <td className="py-2 px-3 text-gray-700">{r.media_source || '—'}</td>
                 <td className="py-2 px-3 text-gray-800 font-medium">{r.utm_campaign || '—'}</td>
                 <td className="py-2 px-3 text-gray-600 font-mono text-xs">{r.utm_content || '—'}</td>
-                <td className="py-2 px-3 text-gray-400 font-mono text-xs">{r.fb_ad_id || '—'}</td>
+                <td className="py-2 px-3 text-gray-400 font-mono text-xs">{r.ad_id || r.fb_ad_id || '—'}</td>
                 <td className="py-2 px-3 text-right">{r.users}</td>
                 <td className="py-2 px-3 text-right text-gray-500">{r.engaged_d0}</td>
                 <td
@@ -160,7 +163,7 @@ function CreativeTab({ days }: { days: number }) {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-gray-400">
+                <td colSpan={8} className="py-6 text-center text-gray-400">
                   No attributed installs yet — run a Meta campaign or wait for first
                   conversions to appear here.
                 </td>

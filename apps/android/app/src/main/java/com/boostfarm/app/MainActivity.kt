@@ -69,6 +69,14 @@ class MainActivity : AppCompatActivity() {
             cacheMode = WebSettings.LOAD_DEFAULT
         }
 
+        // Publish the WebView for the AppsFlyer deep-link forwarder
+        // living in BoostFarmApplication. Live retargeting opens
+        // (user already has the app open, taps a Meta retargeting ad,
+        // expected to land on a specific page) need a foreground
+        // WebView reference that the Application class doesn't hold
+        // by default.
+        BoostFarmApplication.currentWebView = webView
+
         val adEventSink: AdEventSink = WebViewAdEventSink(webView)
 
         // Unity LevelPlay (ironSource) mediation. The app key is injected via
@@ -223,6 +231,16 @@ class MainActivity : AppCompatActivity() {
             IronSource.onPause(this)
         }
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        // Drop the WebView ref we registered for AppsFlyer deep-link
+        // forwarding so a subsequent Activity recreation cycle doesn't
+        // dispatch into a destroyed view.
+        if (BoostFarmApplication.currentWebView === webView) {
+            BoostFarmApplication.currentWebView = null
+        }
+        super.onDestroy()
     }
 
     // Fires a CustomEvent on the WebView so the React layer (see App.tsx)

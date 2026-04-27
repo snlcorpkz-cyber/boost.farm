@@ -65,6 +65,8 @@ import { runPushCron } from './cron/push-cron.js';
 import { runAnalyticsRollup } from './cron/analytics-rollup.js';
 import { runCapiDispatch } from './workers/capiWorker.js';
 import { isCapiEnabled } from './meta/env.js';
+import { runAppsFlyerS2SDispatch } from './workers/appsflyerS2SWorker.js';
+import { getAfS2SEnv } from './appsflyer/s2s.js';
 
 app.listen(PORT, () => {
   console.log(`[API] Running on http://localhost:${PORT}`);
@@ -117,6 +119,37 @@ app.listen(PORT, () => {
     console.log('[capi-worker] Scheduled every 30s (first run in 3 min)');
   } else {
     console.log('[capi-worker] Disabled (META_CAPI_ENABLED=false or creds missing)');
+  }
+
+  // AppsFlyer Server-to-Server dispatcher. Same shape as the CAPI
+  // worker: scans `events` for unsent rows whose internal name is in
+  // the env allow-list (APPSFLYER_S2S_EVENT_NAMES), POSTs them to
+  // api3.appsflyer.com one-at-a-time (no batch endpoint), marks
+  // success.
+  //
+  // Off-by-default: if the dev key, app id, or allow-list are missing
+  // each tick no-ops. Same defensive design as CAPI — safe to leave
+  // scheduled in dev and staging.
+  const AF_S2S_INTERVAL = 30 * 1000;
+  const afEnv = getAfS2SEnv();
+  if (afEnv.enabled) {
+    setTimeout(() => {
+      runAppsFlyerS2SDispatch()
+        .then(({ sent, failed }) => {
+          if (sent > 0 || failed > 0) {
+            console.log(`[af-s2s] first run: sent=${sent} failed=${failed}`);
+          }
+        })
+        .catch((err) => console.error('[af-s2s] initial run error:', err));
+      setInterval(() => {
+        runAppsFlyerS2SDispatch().catch((err) => console.error('[af-s2s]', err));
+      }, AF_S2S_INTERVAL);
+    }, 3 * 60 * 1000);
+    console.log(
+      `[af-s2s] Scheduled every 30s (first run in 3 min). Allow-list: ${afEnv.eventNamesAllowList.join(', ')}`,
+    );
+  } else {
+    console.log('[af-s2s] Disabled (APPSFLYER_S2S_ENABLED!=true or creds/allow-list missing)');
   }
 });
 

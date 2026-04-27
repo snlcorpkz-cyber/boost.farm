@@ -59,6 +59,27 @@ const acquisitionSourceSchema = z
     raw: z.string().max(2048).optional().nullable(),
     clickTs: z.number().int().optional().nullable(),
     installTs: z.number().int().optional().nullable(),
+    // ─────────────────────────────────────────────────────────
+    // AppsFlyer attribution. Mirrors the keys exposed by the
+    // native bridge `getAfAttribution()` after the SDK's
+    // onConversionDataSuccess callback fires.
+    //
+    // These fields populate the canonical creative/campaign
+    // breakdown in admin reports — preferred over the legacy
+    // fb* columns whenever both are present (AF carries a
+    // de-duped, fraud-filtered view of the same data + works
+    // for non-Meta networks too).
+    // ─────────────────────────────────────────────────────────
+    afStatus: z.string().max(64).optional().nullable(),
+    afMediaSource: z.string().max(128).optional().nullable(),
+    afCampaign: z.string().max(256).optional().nullable(),
+    afCampaignId: z.string().max(64).optional().nullable(),
+    afAdsetName: z.string().max(256).optional().nullable(),
+    afAdsetId: z.string().max(64).optional().nullable(),
+    afAdName: z.string().max(256).optional().nullable(),
+    afAdId: z.string().max(64).optional().nullable(),
+    afAttributionId: z.string().max(128).optional().nullable(),
+    afAppsflyerId: z.string().max(64).optional().nullable(),
   })
   .partial()
   .optional();
@@ -123,6 +144,16 @@ async function saveAcquisitionSource(
     raw?: string | null;
     clickTs?: number | null;
     installTs?: number | null;
+    afStatus?: string | null;
+    afMediaSource?: string | null;
+    afCampaign?: string | null;
+    afCampaignId?: string | null;
+    afAdsetName?: string | null;
+    afAdsetId?: string | null;
+    afAdName?: string | null;
+    afAdId?: string | null;
+    afAttributionId?: string | null;
+    afAppsflyerId?: string | null;
   },
 ): Promise<void> {
   // Strip null/undefined/empty strings so the JSONB stays compact.

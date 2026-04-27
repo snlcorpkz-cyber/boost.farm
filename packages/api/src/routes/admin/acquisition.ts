@@ -76,15 +76,33 @@ adminAcquisitionRouter.get('/by-utm', async (req, res) => {
 adminAcquisitionRouter.get('/by-creative', async (req, res) => {
   try {
     const days = parseDays(req.query.days, 30);
+    // AppsFlyer fields are PREFERRED over the legacy fb* columns:
+    //   • AF carries the de-duped, fraud-filtered view of the same data.
+    //   • AF populates `media_source` for non-Meta networks too (Google,
+    //     TikTok, ironSource), so the report stays meaningful when we
+    //     diversify ad spend.
+    //   • The legacy fb* columns only cover Play Install Referrer-flagged
+    //     installs; AF's coverage is broader (view-through, deferred
+    //     deep links, click-id matching).
+    // We fall back to the older paths whenever AF didn't see the install
+    // (organic users, devices that crashed before SDK init, etc.).
     const rows = await query<any>(
       `SELECT
-         coalesce(u.acquisition_source->>'utmCampaign',
+         coalesce(u.acquisition_source->>'afMediaSource',
+                  u.acquisition_source->>'utmSource',
+                  u.utm_source, 'organic')                AS media_source,
+         coalesce(u.acquisition_source->>'afCampaign',
+                  u.acquisition_source->>'utmCampaign',
                   u.utm_campaign, 'organic')              AS utm_campaign,
-         coalesce(u.acquisition_source->>'utmContent',
+         coalesce(u.acquisition_source->>'afAdName',
+                  u.acquisition_source->>'utmContent',
                   'no_creative')                          AS utm_content,
-         coalesce(u.acquisition_source->>'fbCampaignId', '') AS fb_campaign_id,
-         coalesce(u.acquisition_source->>'fbAdsetId', '')    AS fb_adset_id,
-         coalesce(u.acquisition_source->>'fbAdId', '')       AS fb_ad_id,
+         coalesce(u.acquisition_source->>'afCampaignId',
+                  u.acquisition_source->>'fbCampaignId', '') AS campaign_id,
+         coalesce(u.acquisition_source->>'afAdsetId',
+                  u.acquisition_source->>'fbAdsetId', '')    AS adset_id,
+         coalesce(u.acquisition_source->>'afAdId',
+                  u.acquisition_source->>'fbAdId', '')       AS ad_id,
          count(DISTINCT u.id)::int                        AS users,
          count(DISTINCT CASE
            WHEN e.event_name = 'EngagedD0' THEN u.id
@@ -97,7 +115,8 @@ adminAcquisitionRouter.get('/by-creative', async (req, res) => {
        LEFT JOIN events e ON e.user_id = u.id
        WHERE u.created_at >= now() - ($1 || ' days')::interval
          AND (u.acquisition_source IS NOT NULL OR u.utm_campaign IS NOT NULL)
-       GROUP BY utm_campaign, utm_content, fb_campaign_id, fb_adset_id, fb_ad_id
+       GROUP BY media_source, utm_campaign, utm_content,
+                campaign_id, adset_id, ad_id
        ORDER BY users DESC
        LIMIT 200`,
       [days],

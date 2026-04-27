@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, setToken, setRefreshToken, getToken } from '../lib/api';
 import {
+  getAfAttribution,
+  getAppsFlyerId,
   getInstallReferrer,
   logAfEvent,
   setAfCustomerUserId,
+  type AfAttribution,
   type InstallReferrer,
 } from './../lib/native';
 
@@ -33,6 +36,42 @@ function collectAcquisition(): Record<string, string | number> | undefined {
     if (native.clickTs && native.clickTs > 0) out.clickTs = native.clickTs;
     if (native.installTs && native.installTs > 0) out.installTs = native.installTs;
   }
+
+  // AppsFlyer conversion data — populated AFTER `onConversionDataSuccess`
+  // fires (~1-3s after install). The Play Install Referrer above gives
+  // us an early signal the SDK doesn't have yet, so we keep both — but
+  // AF's `media_source` / `campaign` are the canonical fields the
+  // admin acquisition reports break down on.
+  const af: AfAttribution | null = getAfAttribution();
+  if (af) {
+    const pickAf = (key: keyof AfAttribution, target: string) => {
+      const v = af[key];
+      if (v === undefined || v === null) return;
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        if (trimmed) out[target] = trimmed;
+      } else if (typeof v === 'number' && Number.isFinite(v)) {
+        out[target] = v;
+      } else if (typeof v === 'boolean') {
+        out[target] = v ? 'true' : 'false';
+      }
+    };
+    pickAf('af_status', 'afStatus');
+    pickAf('media_source', 'afMediaSource');
+    pickAf('campaign', 'afCampaign');
+    pickAf('campaign_id', 'afCampaignId');
+    pickAf('adset', 'afAdsetName');
+    pickAf('adset_id', 'afAdsetId');
+    pickAf('ad', 'afAdName');
+    pickAf('ad_id', 'afAdId');
+    pickAf('af_attribution_id', 'afAttributionId');
+  }
+
+  // Tie the install to the AppsFlyer Unique ID so the server can
+  // cross-reference our `users` row with AppsFlyer's dashboard
+  // (e.g. when joining cohort retention to creative breakdown).
+  const afid = getAppsFlyerId();
+  if (afid) out.afAppsflyerId = afid;
 
   try {
     if (typeof window !== 'undefined') {

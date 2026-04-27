@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from './hooks/useAuth';
@@ -7,6 +7,12 @@ import { api } from './lib/api';
 import { useRewardToast } from './components/RewardToast';
 import SessionInvitePopup from './components/SessionInvitePopup';
 import { trackClient } from './lib/track';
+import {
+  consumeAfDeepLink,
+  getAfDeepLink,
+  subscribeAfDeepLink,
+  type AfDeepLink,
+} from './lib/native';
 import FarmPage from './pages/FarmPage';
 import AuthPage from './pages/AuthPage';
 import OnboardingPage from './pages/OnboardingPage';
@@ -78,6 +84,7 @@ interface CelebrationNotif {
 export default function App() {
   const { isAuthenticated, isLoading } = useAuth();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const { showReward } = useRewardToast();
   const refProcessed = useRef(false);
@@ -194,6 +201,66 @@ export default function App() {
       if (count > 0) localStorage.setItem(SESSION_INVITE_SHOWN_KEY, String(count));
     } catch { /* storage unavailable — no-op */ }
   };
+
+  // AppsFlyer OneLink deep links — for retargeting campaigns ("come back
+  // to the app and finish your quest"). Two delivery channels:
+  //   1. Cold start: native Application caches the payload in
+  //      SharedPreferences before MainActivity's WebView even exists.
+  //      We drain the cache here on first authed render via
+  //      `getAfDeepLink()` and call `consumeAfDeepLink()` once we've
+  //      navigated.
+  //   2. Hot path: the user already has the app open and taps a
+  //      retargeting ad. The native side dispatches a `af-deep-link`
+  //      CustomEvent that `subscribeAfDeepLink` listens for.
+  //
+  // We deliberately keep the route map narrow — every entry must map to
+  // a top-level route the app actually has. Unknown values fall through
+  // (the user lands on the default farm page) so a typo in a campaign
+  // setup never strands the user on a 404.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const apply = (link: AfDeepLink) => {
+      const value =
+        (typeof link.deepLinkValue === 'string' ? link.deepLinkValue : undefined) ||
+        (typeof link.deep_link_value === 'string' ? (link.deep_link_value as string) : undefined);
+      if (!value) return;
+      const v = value.trim();
+      if (!v) return;
+
+      let target: string | null = null;
+      switch (v.toLowerCase()) {
+        case 'farm':
+        case 'home':
+        case '/': target = '/'; break;
+        case 'quests': target = '/quests'; break;
+        case 'friends': target = '/friends'; break;
+        case 'profile': target = '/profile'; break;
+        default:
+          // Allow campaign producers to pass arbitrary in-app paths
+          // verbatim (`/quests`, `/profile`, …). Anything that doesn't
+          // start with `/` is rejected to keep the surface area small.
+          if (v.startsWith('/')) target = v;
+      }
+
+      trackClient(
+        'marketing.deep_link_received',
+        {
+          deep_link_value: v,
+          is_deferred: !!link.isDeferred,
+          target_route: target ?? 'ignored',
+        },
+        { placement: 'af_onelink' },
+      );
+
+      if (target) navigate(target, { replace: false });
+      consumeAfDeepLink();
+    };
+
+    const cached = getAfDeepLink();
+    if (cached) apply(cached);
+    return subscribeAfDeepLink(apply);
+  }, [isAuthenticated]);
 
   // Push open tracking. The native Android layer (MainActivity.kt) fires a
   // `push-opened` CustomEvent on window after the WebView page finishes,

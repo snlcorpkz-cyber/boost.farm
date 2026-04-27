@@ -34,8 +34,19 @@ android {
         applicationId = "io.boostfarm.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.4.2"
+        // Bumped to 14 / 0.5.0 for the post-launch attribution polish:
+        //   • AppsFlyer media_source / campaign captured into our
+        //     `users.acquisition_source` JSONB so admin reports can
+        //     answer "user X came from creative Y".
+        //   • OneLink deep-link handling for retargeting campaigns
+        //     (`getAfDeepLink` / `subscribeAfDeepLink` on the JS side).
+        //   • Server-side AppsFlyer S2S worker scaffolding so events
+        //     survive even when the SDK fails or runs in background.
+        // Bridge API also moved 10 → 11 — older web bundles
+        // feature-detect via `if (!b.getAfAttribution) return;` and
+        // remain forward-compatible.
+        versionCode = 14
+        versionName = "0.5.0"
         // TODO: productFlavor для staging / http://10.0.2.2:5173/
         buildConfigField("String", "WEB_APP_URL", "\"https://boostfarm.io/\"")
 
@@ -63,14 +74,20 @@ android {
     }
 
     // Release signing is opt-in: only wire it up when keystore.properties
-    // actually contains the storeFile entry. This lets us reuse the same
-    // keystore.properties file just for `levelPlayAppKey` during dev without
-    // forcing every contributor to also have the upload keystore.
+    // both DECLARES the storeFile entry AND the keystore actually exists
+    // on disk. This lets the publisher build signed AABs on their machine
+    // (where `apps/android/keystore/boostfarm-release.jks` is present)
+    // while developers without the keystore can still produce unsigned
+    // release artefacts to verify R8 / proguard / build config without
+    // tripping `validateSigningRelease`.
     val releaseStoreFile = keystoreProps["storeFile"] as String?
+    val releaseStoreFilePath = releaseStoreFile?.let { rootProject.file(it) }
+    val hasReleaseKeystore =
+        !releaseStoreFile.isNullOrBlank() && releaseStoreFilePath?.exists() == true
     signingConfigs {
         create("release") {
-            if (!releaseStoreFile.isNullOrBlank()) {
-                storeFile = rootProject.file(releaseStoreFile)
+            if (hasReleaseKeystore) {
+                storeFile = releaseStoreFilePath
                 storePassword = keystoreProps["storePassword"] as String
                 keyAlias = keystoreProps["keyAlias"] as String
                 keyPassword = keystoreProps["keyPassword"] as String
@@ -90,7 +107,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (!releaseStoreFile.isNullOrBlank()) {
+            if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
         }

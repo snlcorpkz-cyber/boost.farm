@@ -64,6 +64,13 @@
 -keep class * implements com.appsflyer.AppsFlyerLib { *; }
 -keep class * implements com.appsflyer.AppsFlyerInAppPurchaseValidatorListener { *; }
 -keep class * implements com.appsflyer.AppsFlyerRequestListener { *; }
+# OneLink Universal Deep Link API. The SDK reflects on the
+# DeepLinkListener interface + DeepLinkResult class to deliver
+# `subscribeForDeepLink` callbacks; if R8 strips them retargeting
+# campaigns silently break (the listener never fires).
+-keep class com.appsflyer.deeplink.** { *; }
+-keep interface com.appsflyer.deeplink.** { *; }
+-keep class * implements com.appsflyer.deeplink.DeepLinkListener { *; }
 -dontwarn com.appsflyer.**
 
 # Play Install Referrer is read by AF's internal receivers.

@@ -22,6 +22,12 @@ type AndroidBridge = {
   setAfCustomerUserId?: (userId: string) => void;
   /** AppsFlyer Unique ID accessor (bridge API v9+). */
   getAppsFlyerId?: () => string;
+  /** AppsFlyer cached conversion-data accessor (bridge API v11+). */
+  getAfAttribution?: () => string;
+  /** AppsFlyer OneLink deep-link payload accessor (bridge API v11+). */
+  getAfDeepLink?: () => string;
+  /** Drops the cached deep link after the web layer has navigated (v11+). */
+  consumeAfDeepLink?: () => void;
 };
 
 function bridge(): AndroidBridge | null {
@@ -388,6 +394,106 @@ export function getAppsFlyerId(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Cached AppsFlyer conversion-data shape. Mirrors the keys AF returns
+ * in `onConversionDataSuccess` — see https://support.appsflyer.com/.
+ *
+ * Each field is optional because:
+ *   • Organic installs only carry `media_source: "organic"`.
+ *   • The callback fires async after install (~1-3s) and may not have
+ *     completed by the time we read the cache on the very first
+ *     /verify-code. Callers must tolerate `null`.
+ *   • Older campaigns / view-through paths populate only a subset of
+ *     campaign / adset / ad — never assume the full hierarchy is set.
+ */
+export interface AfAttribution {
+  af_status?: string;          // "Non-organic" | "Organic"
+  media_source?: string;       // "Facebook Ads" | "googleadwords_int" | …
+  campaign?: string;
+  campaign_id?: string;
+  adset?: string;
+  adset_id?: string;
+  ad?: string;
+  ad_id?: string;
+  af_attribution_id?: string;
+  is_first_launch?: boolean;
+  install_time?: string;
+  click_time?: string;
+  // Free-form passthrough for any extra keys the SDK includes.
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** Returns cached AppsFlyer attribution payload, or null on web / pre-v11 bridge. */
+export function getAfAttribution(): AfAttribution | null {
+  const b = bridge();
+  if (!b?.getAfAttribution) return null;
+  try {
+    const raw = b.getAfAttribution();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AfAttribution;
+    return parsed && Object.keys(parsed).length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AppsFlyer OneLink deep-link payload shape. `deep_link_value` is the
+ * canonical campaign-set route (e.g. "offer/123" or "withdrawals").
+ * `deep_link_sub1..N` are arbitrary string params surfaced from the
+ * Meta retargeting URL.
+ *
+ * `isDeferred` is true ONLY on the very first install from a OneLink
+ * ad — useful for distinguishing fresh acquisition retargeting from
+ * "user already has the app, just bring them back" flows.
+ */
+export interface AfDeepLink {
+  deepLinkValue?: string;
+  isDeferred?: boolean;
+  deep_link_value?: string;
+  [key: string]: string | number | boolean | undefined;
+}
+
+/** Reads the cached OneLink deep-link payload, or null on web / pre-v11 bridge. */
+export function getAfDeepLink(): AfDeepLink | null {
+  const b = bridge();
+  if (!b?.getAfDeepLink) return null;
+  try {
+    const raw = b.getAfDeepLink();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AfDeepLink;
+    return parsed && Object.keys(parsed).length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tells native side to drop the cached deep link after we've navigated. */
+export function consumeAfDeepLink(): void {
+  const b = bridge();
+  try { b?.consumeAfDeepLink?.(); } catch { /* ignore */ }
+}
+
+/**
+ * Subscribe to LIVE OneLink deep-link events (user taps a retargeting
+ * ad while the app is already open). The native side dispatches a
+ * `af-deep-link` CustomEvent on `window` with the payload as `detail`.
+ *
+ * Returns an unsubscribe function. Safe on web — listener never fires.
+ */
+export function subscribeAfDeepLink(handler: (link: AfDeepLink) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const listener = (e: Event) => {
+    try {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      handler(typeof detail === 'string' ? JSON.parse(detail) : detail);
+    } catch { /* ignore */ }
+  };
+  window.addEventListener('af-deep-link', listener as EventListener);
+  return () => window.removeEventListener('af-deep-link', listener as EventListener);
 }
 
 // ────────────────────────────────────────────────────────────
