@@ -108,15 +108,25 @@ APPSFLYER_S2S_EVENT_NAMES=retention.d1_return,retention.d3_return,retention.d7_r
 
 ## Шаг 7. SQL диагностика (опциональная)
 
-Чтобы проверить распределение источников установок и понять гэп между admin DB и Meta dashboard:
+⚠️ **PREREQUISITE**: для этих запросов колонка `users.acquisition_source` должна существовать. Она добавляется миграцией `023_meta_capi.sql` — если её ещё не применил, сначала выполни:
+
+```sql
+ALTER TABLE users ADD COLUMN IF NOT EXISTS acquisition_source jsonb;
+```
+
+(или применить полный файл `supabase/migrations/023_meta_capi.sql` через Supabase SQL Editor.)
+
+Когда колонка существует:
 
 ```sql
 -- Сколько юзеров пришли через Android (с AF tracked) vs остальные каналы
+-- Используем JSONB-оператор `?` который безопасно работает с NULL
 SELECT
   CASE
-    WHEN acquisition_source ? 'afAppsflyerId' THEN 'Android (AF tracked)'
-    WHEN acquisition_source ? 'fbCampaignId' THEN 'Web (FB referrer)'
-    ELSE 'Web/Telegram (untracked)'
+    WHEN acquisition_source IS NULL                         THEN 'Untracked (no referrer)'
+    WHEN acquisition_source ? 'afAppsflyerId'               THEN 'Android (AF tracked)'
+    WHEN acquisition_source ? 'fbCampaignId'                THEN 'Web (FB referrer)'
+    ELSE                                                          'Other'
   END AS source_type,
   COUNT(*) AS users
 FROM users
@@ -127,9 +137,10 @@ ORDER BY users DESC;
 -- Распределение media_source среди Android-юзеров
 SELECT
   acquisition_source->>'afMediaSource' AS media_source,
-  COUNT(*) AS users
+  COUNT(*)                              AS users
 FROM users
 WHERE created_at > now() - interval '7 days'
+  AND acquisition_source IS NOT NULL
   AND acquisition_source ? 'afAppsflyerId'
 GROUP BY 1
 ORDER BY users DESC;
@@ -137,7 +148,7 @@ ORDER BY users DESC;
 -- Funnel attribution per AppsFlyer media_source: install → register → tutorial → harvest
 SELECT
   acquisition_source->>'afMediaSource' AS media_source,
-  COUNT(*)                                                     AS installs,
+  COUNT(*)                              AS installs,
   COUNT(*) FILTER (WHERE EXISTS (
     SELECT 1 FROM events e WHERE e.user_id = u.id AND e.event_name = 'auth.register'
   )) AS registered,
@@ -149,6 +160,7 @@ SELECT
   )) AS harvested
 FROM users u
 WHERE created_at > now() - interval '14 days'
+  AND acquisition_source IS NOT NULL
   AND acquisition_source ? 'afAppsflyerId'
 GROUP BY 1
 ORDER BY installs DESC;

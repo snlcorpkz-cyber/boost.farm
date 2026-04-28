@@ -126,7 +126,14 @@ partnerOverviewRouter.get('/', async (req: Request, res: Response) => {
         UNION ALL
         SELECT 'tutorial',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'onboarding.tutorial_finished'
         UNION ALL
-        SELECT 'first_play',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'onboarding.first_farm_tick'
+        -- "First play" = at least one POST /farm/water success. The
+        -- activity middleware (middleware/activity.ts) auto-emits
+        -- `farm.water` on every successful state-changing request, so
+        -- a DISTINCT-user count here is the cheapest possible "they
+        -- actually played" check. We deliberately don't gate on a
+        -- bespoke `onboarding.first_farm_tick` because that event is
+        -- not emitted anywhere — it would always read as zero.
+        SELECT 'first_play',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.water'
         UNION ALL
         SELECT 'engaged_d0',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'EngagedD0'
         UNION ALL

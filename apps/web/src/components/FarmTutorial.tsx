@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { haptic, logAfEvent } from '../lib/native';
+import { trackClient } from '../lib/track';
 
 const STEPS = [
   {
@@ -101,6 +102,18 @@ export default function FarmTutorial() {
         af_content: 'farm_onboarding',
       });
     } catch { /* non-critical */ }
+    // Server-side mirror of the same signal — lands in our `events`
+    // table so partner/admin funnels can count tutorials and the
+    // CAPI / S2S workers can dispatch the matching event by name
+    // (see DISPATCHABLE_EVENT_NAMES in workers/capiWorker.ts and
+    // MAPPINGS in appsflyer/s2s.ts). Without this row the entire
+    // server-side tutorial signal is invisible — partner reports
+    // would always show 0 and the workers would never see the row.
+    trackClient(
+      'onboarding.tutorial_finished',
+      { reason, tutorial_id: 'farm_onboarding' },
+      { placement: 'farm_tutorial' },
+    );
   }, []);
 
   const next = useCallback(() => {
