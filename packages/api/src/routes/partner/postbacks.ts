@@ -20,6 +20,7 @@ partnerPostbacksRouter.get('/', async (req: Request, res: Response) => {
   const rows = await query<{
     id: string;
     conversion_id: string | null;
+    event_type: string | null;
     status: string;
     attempts: number;
     url: string;
@@ -30,7 +31,7 @@ partnerPostbacksRouter.get('/', async (req: Request, res: Response) => {
     sent_at: string | null;
     next_retry_at: string;
   }>(
-    `SELECT id, conversion_id, status, attempts, url,
+    `SELECT id, conversion_id, event_type, status, attempts, url,
             last_response_code, last_error,
             CASE WHEN last_response_body IS NULL THEN NULL
                  ELSE substring(last_response_body, 1, 300)
@@ -49,6 +50,7 @@ partnerPostbacksRouter.get('/', async (req: Request, res: Response) => {
       rows: rows.map((r) => ({
         id: r.id,
         conversionId: r.conversion_id,
+        eventType: r.event_type,
         status: r.status,
         attempts: r.attempts,
         url: r.url,

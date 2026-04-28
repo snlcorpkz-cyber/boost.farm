@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 interface PostbackRow {
   id: string;
   conversionId: string | null;
+  eventType: string | null;
   status: string;
   attempts: number;
   url: string;
@@ -56,6 +57,17 @@ export function PostbacksPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <StatusBadge status={r.status} />
+                  {r.eventType && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-xs font-mono ${
+                        r.eventType === 'reversed'
+                          ? 'bg-rose-50 text-rose-700'
+                          : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      {r.eventType}
+                    </span>
+                  )}
                   <span className="text-xs font-medium text-gray-500">Attempt #{r.attempts}</span>
                   {r.lastResponseCode !== null && (
                     <span

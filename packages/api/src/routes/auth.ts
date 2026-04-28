@@ -6,6 +6,7 @@ import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
 import { trackEvent, startSession, enrichUserProfile } from '../lib/analytics.js';
+import { attributePartnerOnSignup } from '../lib/partner-attribution.js';
 import { verifyGoogleIdToken } from '../lib/google-auth.js';
 import { Resend } from 'resend';
 
@@ -411,6 +412,19 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       await saveAcquisitionSource(user.id, acquisition).catch((err) => {
         console.warn('[auth] saveAcquisitionSource failed:', (err as Error).message);
       });
+    }
+
+    // Partner attribution: resolve utm_source → partners.slug, persist
+    // partner_id + partner_click_id on the user row, and fire the
+    // `install` conversion. No-op for organic users or when the
+    // referrer is past the attribution window.
+    if (user?.id && !isDemoUser(user.id)) {
+      attributePartnerOnSignup({
+        userId: user.id,
+        isNewUser,
+        acquisition: acquisition ?? null,
+        req,
+      }).catch(() => {});
     }
 
     const sessionId = await createSession(user.id);

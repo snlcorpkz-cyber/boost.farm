@@ -63,6 +63,7 @@ app.use(errorHandler);
 
 import { runPushCron } from './cron/push-cron.js';
 import { runAnalyticsRollup } from './cron/analytics-rollup.js';
+import { runPartnerPostbackCron } from './cron/partner-postback-cron.js';
 import { runCapiDispatch } from './workers/capiWorker.js';
 import { isCapiEnabled } from './meta/env.js';
 import { runAppsFlyerS2SDispatch } from './workers/appsflyerS2SWorker.js';
@@ -151,6 +152,21 @@ app.listen(PORT, () => {
   } else {
     console.log('[af-s2s] Disabled (APPSFLYER_S2S_ENABLED!=true or creds/allow-list missing)');
   }
+
+  // Partner postback dispatcher. Drains `partner_postbacks_out` every
+  // 30 seconds with exponential backoff per row. Always-on: when no
+  // partners are active or there's nothing queued, the tick is a
+  // single indexed SELECT that returns zero rows.
+  const PARTNER_POSTBACK_INTERVAL = 30 * 1000;
+  setTimeout(() => {
+    runPartnerPostbackCron().catch((err) =>
+      console.error('[partner-postback-cron] initial run error:', err),
+    );
+    setInterval(() => {
+      runPartnerPostbackCron().catch((err) => console.error('[partner-postback-cron]', err));
+    }, PARTNER_POSTBACK_INTERVAL);
+  }, 60 * 1000);
+  console.log('[partner-postback-cron] Scheduled every 30s (first run in 60s)');
 });
 
 export default app;

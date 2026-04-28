@@ -4,6 +4,7 @@ const STYLES: Record<string, string> = {
   paid:      'bg-emerald-50 text-emerald-700 ring-emerald-200',
   rejected:  'bg-rose-50 text-rose-700 ring-rose-200',
   duplicate: 'bg-gray-100 text-gray-600 ring-gray-300',
+  reversed:  'bg-rose-50 text-rose-800 ring-rose-300 line-through',
 
   queued:    'bg-amber-50 text-amber-700 ring-amber-200',
   sent:      'bg-emerald-50 text-emerald-700 ring-emerald-200',

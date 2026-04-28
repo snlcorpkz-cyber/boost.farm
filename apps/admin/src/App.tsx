@@ -15,11 +15,14 @@ import { CohortUsersPage } from '@/pages/CohortUsersPage';
 import { HealthPage } from '@/pages/HealthPage';
 import { AdsPage } from '@/pages/AdsPage';
 import { AcquisitionPage } from '@/pages/AcquisitionPage';
+import { PartnersPage } from '@/pages/PartnersPage';
+import { PartnerDetailPage } from '@/pages/PartnerDetailPage';
 
 const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
   { to: '/ads', label: 'Ads', icon: '💰' },
   { to: '/acquisition', label: 'Acquisition', icon: '🚀' },
+  { to: '/partners', label: 'Partners', icon: '🤝' },
   { to: '/retention', label: 'Retention', icon: '📈' },
   { to: '/users', label: 'Users', icon: '👥' },
   { to: '/offers', label: 'Offers', icon: '🎮' },
@@ -132,6 +135,8 @@ export default function App() {
             <Route path="/acquisition" element={<AcquisitionPage />} />
             <Route path="/retention" element={<RetentionPage />} />
             <Route path="/retention/cohort" element={<CohortUsersPage />} />
+            <Route path="/partners" element={<PartnersPage />} />
+            <Route path="/partners/:id" element={<PartnerDetailPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserDetailPage />} />
             <Route path="/offers" element={<OffersPage />} />

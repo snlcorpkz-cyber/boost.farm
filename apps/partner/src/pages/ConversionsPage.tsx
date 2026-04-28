@@ -9,8 +9,10 @@ interface ConversionRow {
   id: string;
   clickId: string | null;
   eventType: string;
+  countryCode: string | null;
   payoutCents: number;
   status: string;
+  fraudReason: string | null;
   holdUntil: string | null;
   createdAt: string;
   userIdHash: string;
@@ -91,6 +93,7 @@ export function ConversionsPage() {
           <option value="paid">Paid</option>
           <option value="rejected">Rejected</option>
           <option value="duplicate">Duplicate</option>
+          <option value="reversed">Reversed (fraud)</option>
         </select>
         <select
           value={event}
@@ -99,8 +102,7 @@ export function ConversionsPage() {
         >
           <option value="">All events</option>
           <option value="install">Install</option>
-          <option value="first_play">First play</option>
-          <option value="stage_reached">Stage reached</option>
+          <option value="stage_4">Stage 4</option>
           <option value="harvest">Harvest</option>
         </select>
       </div>
@@ -123,8 +125,10 @@ export function ConversionsPage() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Click ID</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">User (hashed)</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Event</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Country</th>
                   <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Payout</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Fraud reason</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -134,8 +138,16 @@ export function ConversionsPage() {
                     <td className="px-4 py-2 font-mono text-xs text-gray-600">{r.clickId ?? '—'}</td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-400">{r.userIdHash}</td>
                     <td className="px-4 py-2 font-medium text-gray-700">{r.eventType}</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-semibold text-gray-900">{formatUsd(r.payoutCents)}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{r.countryCode ?? '—'}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-semibold text-gray-900">
+                      {r.payoutCents === 0 ? (
+                        <span className="text-gray-400 font-normal">informational</span>
+                      ) : (
+                        formatUsd(r.payoutCents)
+                      )}
+                    </td>
                     <td className="px-4 py-2"><StatusBadge status={r.status} /></td>
+                    <td className="px-4 py-2 text-xs text-rose-700 font-mono">{r.fraudReason ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

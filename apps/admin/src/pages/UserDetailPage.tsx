@@ -47,6 +47,11 @@ export function UserDetailPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'user', id] }); },
   });
 
+  const forceHarvest = useMutation({
+    mutationFn: () => api(`/users/${id}/force-harvest`, { method: 'POST' }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'user', id] }); },
+  });
+
   if (isPending) return <div className="text-gray-500">Loading user...</div>;
   if (!user) return <div className="text-red-600">User not found</div>;
 
@@ -115,6 +120,67 @@ export function UserDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Partner attribution */}
+      {user.partner_id && (
+        <div className="rounded-xl border border-gray-200 bg-white p-5 mb-6">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Partner attribution</h3>
+          <div className="grid gap-3 sm:grid-cols-3 text-sm">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Partner</p>
+              <Link to={`/partners/${user.partner_id}`} className="text-blue-600 hover:underline font-mono text-xs break-all">
+                {user.partner_id}
+              </Link>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Click ID</p>
+              <p className="font-mono text-xs text-gray-700 break-all">
+                {user.partner_click_id ?? <span className="text-gray-400">organic</span>}
+              </p>
+              {user.partner_click_id?.startsWith('tb_test_') && (
+                <span className="inline-block mt-1 text-xs font-bold rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">
+                  SANDBOX
+                </span>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Attributed at</p>
+              <p className="text-xs text-gray-700">
+                {user.partner_attributed_at ? new Date(user.partner_attributed_at).toLocaleString() : '—'}
+              </p>
+            </div>
+          </div>
+
+          {(user.partner_click_id?.startsWith('tb_test_') || import.meta.env.DEV) && !user.harvested && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-xs text-gray-500 mb-2">
+                Sandbox testing: instantly complete this user's farm and fire stage_4 + harvest postbacks
+                through the standard pipeline. Restricted to <span className="font-mono">tb_test_*</span> click_ids
+                in production.
+              </p>
+              <button
+                onClick={() => {
+                  if (confirm('Force-harvest this user? This is irreversible — only use on sandbox accounts.')) {
+                    forceHarvest.mutate();
+                  }
+                }}
+                disabled={forceHarvest.isPending}
+                className="bg-amber-600 text-white text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              >
+                {forceHarvest.isPending ? 'Harvesting…' : '⚡ Force harvest (sandbox)'}
+              </button>
+              {forceHarvest.isSuccess && (
+                <p className="mt-2 text-xs text-emerald-700">
+                  Harvested. Postbacks are queued; check the partner's "Outbound postback log".
+                </p>
+              )}
+              {forceHarvest.isError && (
+                <p className="mt-2 text-xs text-rose-700">{(forceHarvest.error as Error).message}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Friends */}
       {user.friends?.length > 0 && (

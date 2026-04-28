@@ -58,16 +58,18 @@ partnerConversionsRouter.get('/', async (req: Request, res: Response) => {
     id: string;
     click_id: string | null;
     event_type: string;
+    country_code: string | null;
     payout_cents: number;
     status: string;
+    fraud_reason: string | null;
     hold_until: string | null;
     created_at: string;
     approved_at: string | null;
     paid_at: string | null;
     user_id_hash: string;
   }>(
-    `SELECT id, click_id, event_type, payout_cents,
-            status, hold_until, created_at, approved_at, paid_at,
+    `SELECT id, click_id, event_type, country_code, payout_cents,
+            status, fraud_reason, hold_until, created_at, approved_at, paid_at,
             substr(md5(user_id::text), 1, 16) AS user_id_hash
      FROM partner_conversions
      WHERE ${where}
@@ -86,8 +88,10 @@ partnerConversionsRouter.get('/', async (req: Request, res: Response) => {
         id: r.id,
         clickId: r.click_id,
         eventType: r.event_type,
+        countryCode: r.country_code,
         payoutCents: r.payout_cents,
         status: r.status,
+        fraudReason: r.fraud_reason,
         holdUntil: r.hold_until,
         createdAt: r.created_at,
         approvedAt: r.approved_at,
@@ -119,12 +123,14 @@ partnerConversionsRouter.get('/export.csv', async (req: Request, res: Response) 
     created_at: string;
     click_id: string | null;
     event_type: string;
+    country_code: string | null;
     payout_cents: number;
     status: string;
+    fraud_reason: string | null;
     user_id_hash: string;
   }>(
-    `SELECT created_at, click_id, event_type, payout_cents, status,
-            substr(md5(user_id::text), 1, 16) AS user_id_hash
+    `SELECT created_at, click_id, event_type, country_code, payout_cents, status,
+            fraud_reason, substr(md5(user_id::text), 1, 16) AS user_id_hash
      FROM partner_conversions
      WHERE ${clauses.join(' AND ')}
      ORDER BY created_at ASC
@@ -141,15 +147,17 @@ partnerConversionsRouter.get('/export.csv', async (req: Request, res: Response) 
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
-  res.write('timestamp,click_id,event_type,payout_usd,status,user_hash\n');
+  res.write('timestamp,click_id,event_type,country,payout_usd,status,fraud_reason,user_hash\n');
   for (const r of rows) {
     res.write(
       [
         escape(r.created_at),
         escape(r.click_id ?? ''),
         escape(r.event_type),
+        escape(r.country_code ?? ''),
         (r.payout_cents / 100).toFixed(2),
         escape(r.status),
+        escape(r.fraud_reason ?? ''),
         escape(r.user_id_hash),
       ].join(',') + '\n',
     );

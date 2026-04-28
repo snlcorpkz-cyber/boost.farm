@@ -10,6 +10,7 @@ import { adminHealthRouter } from './health.js';
 import { adminAdsRouter } from './ads.js';
 import { adminAnalyticsRouter } from './analytics.js';
 import { adminAcquisitionRouter } from './acquisition.js';
+import { adminPartnersRouter } from './partners.js';
 
 export const adminRouter = Router();
 
@@ -25,3 +26,4 @@ adminRouter.use('/health', adminHealthRouter);
 adminRouter.use('/ads', adminAdsRouter);
 adminRouter.use('/analytics', adminAnalyticsRouter);
 adminRouter.use('/acquisition', adminAcquisitionRouter);
+adminRouter.use('/partners', adminPartnersRouter);

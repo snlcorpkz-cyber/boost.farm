@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { query, queryOne, execute } from '../../lib/db.js';
+import { recordPartnerConversion } from '../../lib/partner-conversions.js';
+import { loadUserPartnerAttribution } from '../../lib/partner-attribution.js';
 
 export const adminUsersRouter = Router();
 
@@ -419,5 +421,140 @@ adminUsersRouter.post('/:id/toggle-admin', async (req, res) => {
   } catch (err) {
     console.error('[admin/users/toggle-admin]', err);
     res.status(500).json({ error: 'Failed' });
+  }
+});
+
+/**
+ * Force-harvest sandbox endpoint.
+ *
+ * Designed for partner end-to-end integration tests. A real harvest
+ * takes ~40 days at 1× nutrition; partners would never see live
+ * postbacks during onboarding without this. Pushes the user's active
+ * farm to 100 % growth, stage 6, and `harvested=true`, then fires the
+ * `stage_4` (if the user hadn't already crossed it) and `harvest`
+ * partner conversions in the standard pipeline.
+ *
+ * Hard guards (any one fails → 403):
+ *   1. The user must have `partner_click_id` starting with `tb_test_`,
+ *      OR the env var `FORCE_HARVEST_ENABLED=true` is set (dev only).
+ *   2. The user must have an active (non-harvested) farm.
+ *
+ * The first guard is the production gate: TimeBucks register a small
+ * set of `tb_test_*` clickids on their side; we register installs from
+ * those clicks as test traffic; admin then fires this endpoint to make
+ * the user "win" instantly. No real user can be force-harvested by
+ * accident because they can't have a `tb_test_` clickid.
+ */
+adminUsersRouter.post('/:id/force-harvest', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const envOverride = String(process.env.FORCE_HARVEST_ENABLED || '').trim() === 'true';
+
+    const user = await queryOne<{
+      id: string;
+      partner_id: string | null;
+      partner_click_id: string | null;
+    }>(
+      `SELECT id, partner_id, partner_click_id FROM users WHERE id = $1`,
+      [userId],
+    );
+    if (!user) { res.status(404).json({ error: 'User not found' }); return; }
+
+    const isTestClick = user.partner_click_id?.startsWith('tb_test_') ?? false;
+    if (!isTestClick && !envOverride) {
+      res.status(403).json({
+        error:
+          'force-harvest is restricted to users with a tb_test_* click_id (or FORCE_HARVEST_ENABLED=true in dev). Refusing to mutate a real production farm.',
+      });
+      return;
+    }
+
+    const farm = await queryOne<{
+      id: string;
+      product_id: string;
+      current_stage: number;
+      growth_percent: number;
+      harvested: boolean;
+    }>(
+      `SELECT id, product_id, current_stage, growth_percent, harvested
+         FROM farms
+        WHERE user_id = $1 AND harvested = false
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [userId],
+    );
+    if (!farm) {
+      res.status(404).json({ error: 'No active farm to force-harvest' });
+      return;
+    }
+
+    const stageWasBelow4 = farm.current_stage < 4;
+
+    await execute(
+      `UPDATE farms
+          SET growth_percent = 100,
+              current_stage  = 6,
+              harvested      = true
+        WHERE id = $1`,
+      [farm.id],
+    );
+
+    // Mirror /water's coupon side-effect so the user lands in the
+    // same end-state a real harvest produces. Skipped silently if
+    // products row is gone (shouldn't happen but defensive).
+    const product = await queryOne<{ coupon_validity_days: number }>(
+      `SELECT coupon_validity_days FROM products WHERE id = $1`,
+      [farm.product_id],
+    );
+    if (product) {
+      const couponCode = `TEST-${Date.now().toString(36).toUpperCase()}`;
+      const expiresAt = new Date(Date.now() + product.coupon_validity_days * 24 * 60 * 60 * 1000);
+      await execute(
+        `INSERT INTO coupons (user_id, product_id, code, expires_at) VALUES ($1, $2, $3, $4)`,
+        [userId, farm.product_id, couponCode, expiresAt.toISOString()],
+      );
+    }
+
+    // Fire the partner conversions through the same pipeline a real
+    // harvest would. recordPartnerConversion is a no-op if the user
+    // is organic, the partner is in 'draft', or the event isn't in
+    // the partner's allow-list — exactly what we want.
+    const attr = await loadUserPartnerAttribution(userId);
+    let stageRecorded: { recorded: boolean; skippedReason?: string } | null = null;
+    let harvestRecorded: { recorded: boolean; skippedReason?: string } | null = null;
+    if (attr) {
+      if (stageWasBelow4) {
+        stageRecorded = await recordPartnerConversion({
+          partnerId: attr.partnerId,
+          userId,
+          clickId: attr.clickId,
+          eventType: 'stage_4',
+          countryCode: attr.country,
+          metadata: { source: 'force-harvest', product_id: farm.product_id },
+        });
+      }
+      harvestRecorded = await recordPartnerConversion({
+        partnerId: attr.partnerId,
+        userId,
+        clickId: attr.clickId,
+        eventType: 'harvest',
+        countryCode: attr.country,
+        metadata: { source: 'force-harvest', product_id: farm.product_id },
+      });
+    }
+
+    res.json({
+      ok: true,
+      farmId: farm.id,
+      partnerAttributed: !!attr,
+      stageConversion: stageRecorded,
+      harvestConversion: harvestRecorded,
+      note: attr
+        ? 'Postbacks will be queued and delivered by the partner-postback-cron worker within 30 seconds.'
+        : 'User has no partner attribution; nothing was sent to TimeBucks. Farm was force-completed locally.',
+    });
+  } catch (err) {
+    console.error('[admin/users/force-harvest]', err);
+    res.status(500).json({ error: 'Failed to force-harvest' });
   }
 });

@@ -19,6 +19,8 @@ import { notify } from '../lib/notify.js';
 import { incrementActivityQuest } from './quests.js';
 import { trackEvent } from '../lib/analytics.js';
 import { maybeMarkEngagedD0 } from '../lib/engagedD0.js';
+import { loadUserPartnerAttribution } from '../lib/partner-attribution.js';
+import { recordPartnerConversion } from '../lib/partner-conversions.js';
 
 export const farmRouter = Router();
 farmRouter.use(requireAuth);
@@ -389,6 +391,40 @@ farmRouter.post(
       // `af_harvest_completed` / `af_harvest_x3` AF events without an
       // extra round-trip. Stays null on non-harvest waters.
       let harvestCount: number | null = null;
+
+      // Partner conversion hooks. We only fire one postback per user
+      // per (partner, event_type) thanks to the unique index on
+      // partner_conversions, so calling this at every stage-up is
+      // safe — it no-ops on subsequent crops. Loaded once per call,
+      // off-the-critical-path (errors are swallowed inside).
+      const stageCrossedTo4 = farm.current_stage < 4 && waterResult.newStage >= 4;
+      if (stageCrossedTo4 || waterResult.harvested) {
+        loadUserPartnerAttribution(userId)
+          .then(async (attr) => {
+            if (!attr) return;
+            if (stageCrossedTo4) {
+              await recordPartnerConversion({
+                partnerId: attr.partnerId,
+                userId,
+                clickId: attr.clickId,
+                eventType: 'stage_4',
+                countryCode: attr.country,
+                metadata: { product_id: farm.product_id },
+              });
+            }
+            if (waterResult.harvested) {
+              await recordPartnerConversion({
+                partnerId: attr.partnerId,
+                userId,
+                clickId: attr.clickId,
+                eventType: 'harvest',
+                countryCode: attr.country,
+                metadata: { product_id: farm.product_id },
+              });
+            }
+          })
+          .catch(() => {});
+      }
 
       if (waterResult.harvested) {
         const couponCode = `ECO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;

@@ -10,3 +10,5 @@ Thumbs.db
 .cursor/
 agent-transcripts/
 terminals/
+*.tsbuildinfo
+uncommitted-diff.txt

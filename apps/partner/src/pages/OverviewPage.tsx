@@ -12,35 +12,24 @@ interface OverviewResponse {
     status: string;
     defaultPayoutCents: number;
     postbackConfigured: boolean;
+    reportTz: string;
+    attributionWindowHours: number;
+    allowedEvents: string[];
   };
   range: { days: number };
   totals: {
     attributedUsers: number;
     conversions: number;
     harvests: number;
+    reversed: number;
     payoutPendingCents: number;
     payoutApprovedCents: number;
     payoutPaidCents: number;
+    payoutReversedCents: number;
   };
-  funnel: Array<{ step: string; users: number; pct: number }>;
+  funnel: Array<{ step: string; label: string; order: number; users: number; pct: number }>;
   daily: Array<{ date: string; installs: number; harvests: number; payoutCents: number }>;
 }
-
-const STEP_LABELS: Record<string, string> = {
-  install: 'Install',
-  register: 'Register',
-  tutorial: 'Tutorial',
-  first_play: 'First play',
-  engaged_d0: 'Engaged D0',
-  d1_return: 'D1 return',
-  stage_2: 'Stage 2',
-  stage_3: 'Stage 3',
-  stage_4: 'Stage 4',
-  stage_5: 'Stage 5',
-  stage_6: 'Stage 6',
-  harvest: 'Harvest',
-  harvest_x3: 'Harvest x3',
-};
 
 function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: 'emerald' | 'amber' | 'blue' | 'gray' }) {
   const border = {
@@ -88,8 +77,12 @@ export function OverviewPage() {
             <StatusBadge status={data.partner.status} />
           </div>
           <p className="mt-1 text-sm text-gray-500">
-            Payout per harvest:{' '}
+            Default payout per harvest:{' '}
             <span className="font-semibold text-gray-700">{formatUsd(data.partner.defaultPayoutCents)}</span>
+            {' · '}
+            Attribution: <span className="font-semibold text-gray-700">{Math.round(data.partner.attributionWindowHours / 24)}d</span>
+            {' · '}
+            Reporting TZ: <span className="font-semibold text-gray-700">{data.partner.reportTz}</span>
           </p>
         </div>
         <div className="inline-flex overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -119,7 +112,7 @@ export function OverviewPage() {
         <Kpi
           label="Installs"
           value={formatInt(data.totals.attributedUsers)}
-          sub={`Past ${data.range.days} days`}
+          sub={`Past ${data.range.days} days · ${data.partner.reportTz}`}
           accent="blue"
         />
         <Kpi
@@ -139,9 +132,15 @@ export function OverviewPage() {
           accent="amber"
         />
         <Kpi
-          label="Avg per harvest"
-          value={data.totals.harvests > 0 ? formatUsd(Math.round(totalPayout / data.totals.harvests)) : '—'}
-          sub="Blended across conversions"
+          label={data.totals.reversed > 0 ? 'Reversed (fraud)' : 'Avg per harvest'}
+          value={
+            data.totals.reversed > 0
+              ? `${formatInt(data.totals.reversed)} · ${formatUsd(data.totals.payoutReversedCents)}`
+              : data.totals.harvests > 0
+                ? formatUsd(Math.round(totalPayout / data.totals.harvests))
+                : '—'
+          }
+          sub={data.totals.reversed > 0 ? 'Net of payout' : 'Blended across conversions'}
           accent="gray"
         />
       </div>
@@ -167,7 +166,7 @@ export function OverviewPage() {
                 return (
                   <div key={f.step}>
                     <div className="flex items-baseline justify-between text-sm">
-                      <span className="font-medium text-gray-700">{STEP_LABELS[f.step] ?? f.step}</span>
+                      <span className="font-medium text-gray-700">{f.label}</span>
                       <span className="tabular-nums text-gray-900">
                         {formatInt(f.users)}{' '}
                         <span className="text-xs font-normal text-gray-400">({f.pct}%)</span>
