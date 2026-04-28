@@ -368,7 +368,27 @@ farmRouter.post(
 
       if (stageUpBonus > 0) {
         await notify(userId, 'stage', 'notif.stage_up', { stage: waterResult.newStage, bonus: stageUpBonus });
+
+        // Marketing funnel signal: user reached a new growth stage. Powers
+        // the partner/agency funnel (partner/overview.ts queries this
+        // event by stage) and gets postbacked to AppsFlyer / Meta as
+        // `af_stage_<N>_reached` for ad optimisation. Fire-and-forget —
+        // never block the water response on analytics.
+        trackEvent(
+          userId,
+          'farm.stage_reached',
+          { stage: waterResult.newStage, product_id: farm.product_id },
+          req,
+          req.user?.sessionId,
+          { placement: 'water_stage_up' },
+        ).catch(() => {});
       }
+
+      // Tracks the harvest cumulative count when this water call closed
+      // a crop. Returned in the response so the web layer can fire the
+      // `af_harvest_completed` / `af_harvest_x3` AF events without an
+      // extra round-trip. Stays null on non-harvest waters.
+      let harvestCount: number | null = null;
 
       if (waterResult.harvested) {
         const couponCode = `ECO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -380,6 +400,44 @@ farmRouter.post(
         );
 
         await notify(userId, 'harvest', 'notif.harvest_complete', { product: farm.products.name_key });
+
+        // Marketing funnel: harvest is THE conversion signal an agency
+        // would want to optimise on (deep-funnel = high LTV correlation).
+        // We also count cumulative harvests so we can fire a
+        // `farm.harvest_x3` milestone — that's the "loyal user" lead
+        // form Meta can target after enough volume builds up.
+        const harvestCountRow = await queryOne<{ n: number }>(
+          `SELECT COUNT(*)::int AS n FROM farms WHERE user_id = $1 AND harvested = true`,
+          [userId],
+        ).catch(() => null);
+        harvestCount = harvestCountRow?.n ?? 0;
+
+        trackEvent(
+          userId,
+          'farm.harvested',
+          {
+            product_id: farm.product_id,
+            harvest_count: harvestCount,
+            coupon_code: couponCode,
+          },
+          req,
+          req.user?.sessionId,
+          { placement: 'water_complete' },
+        ).catch(() => {});
+
+        // Loyalty milestone — fire ONCE when the user crosses 3 harvests.
+        // Single emission is enforced by the equality check (the next
+        // harvest pushes count to 4 and skips).
+        if (harvestCount === 3) {
+          trackEvent(
+            userId,
+            'farm.harvest_x3',
+            { product_id: farm.product_id, harvest_count: harvestCount },
+            req,
+            req.user?.sessionId,
+            { placement: 'water_complete' },
+          ).catch(() => {});
+        }
       }
 
       // EngagedD0 evaluation. Cheap check (one query, no HTTP), fires
@@ -389,7 +447,16 @@ farmRouter.post(
       // the same check from the other side.
       maybeMarkEngagedD0(userId).catch(() => {});
 
-      res.json({ success: true, data: { ...waterResult, stageUpBonus } });
+      res.json({
+        success: true,
+        data: {
+          ...waterResult,
+          stageUpBonus,
+          ...(waterResult.harvested
+            ? { harvestCount: harvestCount ?? 0, productId: farm.product_id }
+            : {}),
+        },
+      });
     } catch (err: any) {
       if (err.message === 'NOT_ENOUGH_WATER') {
         res.status(400).json({ success: false, error: { code: 'NOT_ENOUGH_WATER', message: 'Not enough water in can' } });

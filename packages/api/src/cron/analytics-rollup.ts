@@ -214,11 +214,122 @@ export async function aggregateAdFunnel(): Promise<void> {
 }
 
 /**
+ * Retention milestones — D1 / D3 / D7 returns.
+ *
+ * "Retention" here is operationally simple: a user is "Day-N retained"
+ * when they have ANY tracked event happening at least N×24h after
+ * their first `auth.register` and at most N×24h+72h after (the upper
+ * bound stops us re-firing months after the fact when an old account
+ * is reactivated).
+ *
+ * Why we run this server-side instead of relying on the client:
+ *   • Most retention sessions don't open a fresh WebView load — the
+ *     Android process resumes from background and the JS layer never
+ *     gets a chance to fire an event marking "user is back".
+ *   • We need this signal to flow to AppsFlyer (and via AF → Meta) to
+ *     unlock retention-optimised campaigns. The S2S worker is the
+ *     only reliable transport for that — see `appsflyerS2SWorker.ts`.
+ *
+ * Idempotency is enforced by a partial unique index per milestone
+ * created lazily on first run, mirroring `engagedD0.ts`. Re-running
+ * the rollup never produces duplicates.
+ */
+const RETENTION_DAYS = [1, 3, 7] as const;
+
+let retentionIndexReady = false;
+async function ensureRetentionIndex(): Promise<void> {
+  if (retentionIndexReady) return;
+  for (const d of RETENTION_DAYS) {
+    await execute(
+      `CREATE UNIQUE INDEX IF NOT EXISTS events_retention_d${d}_uniq
+         ON events (user_id)
+         WHERE event_name = 'retention.d${d}_return'`,
+    );
+  }
+  retentionIndexReady = true;
+}
+
+async function emitRetentionForDay(d: number): Promise<number> {
+  const eventName = `retention.d${d}_return`;
+  // Find users who:
+  //   • registered between (d×24h)..(d×24h + 72h) ago
+  //   • have at least one event AFTER registered_at + d days
+  //   • haven't yet received the retention milestone
+  // The date math runs in Postgres so we don't pay for cross-server
+  // clock drift between API replicas.
+  const result = await execute(
+    `INSERT INTO events (user_id, event_name, properties, created_at)
+     SELECT
+       reg.user_id,
+       $1,
+       jsonb_build_object(
+         'computed_at', now()::text,
+         'registered_at', reg.first_register::text,
+         'window_days', $2::int
+       ),
+       now()
+     FROM (
+       SELECT
+         user_id,
+         MIN(created_at) AS first_register
+       FROM events
+       WHERE event_name = 'auth.register'
+       GROUP BY user_id
+     ) AS reg
+     WHERE reg.first_register < now() - ($2 || ' days')::interval
+       AND reg.first_register > now() - ($2::int + 3 || ' days')::interval
+       AND EXISTS (
+         SELECT 1 FROM events e2
+         WHERE e2.user_id = reg.user_id
+           AND e2.created_at >= reg.first_register + ($2 || ' days')::interval
+       )
+     ON CONFLICT (user_id) WHERE event_name = $1 DO NOTHING`,
+    [eventName, String(d)],
+  );
+  return result;
+}
+
+export async function emitRetentionEvents(): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    await ensureRetentionIndex();
+    const counts: Record<string, number> = {};
+    for (const d of RETENTION_DAYS) {
+      try {
+        counts[`d${d}`] = await emitRetentionForDay(d);
+      } catch (err) {
+        console.error(
+          `[analytics-rollup] emitRetentionForDay(${d}) failed:`,
+          (err as Error).message,
+        );
+        counts[`d${d}`] = 0;
+      }
+    }
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total > 0) {
+      console.log(
+        `[analytics-rollup] emitRetentionEvents emitted ${total} (${Object.entries(
+          counts,
+        )
+          .map(([k, v]) => `${k}:${v}`)
+          .join(', ')}) in ${Date.now() - startedAt}ms`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[analytics-rollup] emitRetentionEvents failed:',
+      (err as Error).message,
+    );
+  }
+}
+
+/**
  * Top-level entry point registered next to `runPushCron` in src/index.ts.
  */
 export async function runAnalyticsRollup(): Promise<void> {
   console.log('[analytics-rollup] start');
   await rollupDailyStats();
   await aggregateAdFunnel();
+  await emitRetentionEvents();
   console.log('[analytics-rollup] end');
 }

@@ -28,11 +28,18 @@ interface OverviewResponse {
 
 const STEP_LABELS: Record<string, string> = {
   install: 'Install',
+  register: 'Register',
+  tutorial: 'Tutorial',
   first_play: 'First play',
+  engaged_d0: 'Engaged D0',
+  d1_return: 'D1 return',
   stage_2: 'Stage 2',
+  stage_3: 'Stage 3',
   stage_4: 'Stage 4',
+  stage_5: 'Stage 5',
   stage_6: 'Stage 6',
   harvest: 'Harvest',
+  harvest_x3: 'Harvest x3',
 };
 
 function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: 'emerald' | 'amber' | 'blue' | 'gray' }) {

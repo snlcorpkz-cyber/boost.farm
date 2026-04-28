@@ -2,7 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useRewardToast } from '../components/RewardToast';
 import { haptic } from '../lib/native';
-import { reportBucketCollected, reportFirstWater, reportLevelAchieved } from '../lib/marketing';
+import {
+  reportBucketCollected,
+  reportFirstWater,
+  reportHarvestCompleted,
+  reportHarvestX3,
+  reportLevelAchieved,
+} from '../lib/marketing';
 
 export function useFarm() {
   return useQuery({
@@ -57,6 +63,15 @@ export interface WaterResponse {
   waterConsumed: number;
   harvested: boolean;
   stageUpBonus: number;
+  // Populated only when `harvested === true`. The server stamps both
+  // so the client can fire AF events without an extra round-trip:
+  //   - harvestCount: cumulative count of completed crops across all
+  //     time. Drives the `af_harvest_x3` loyalty milestone.
+  //   - productId: the just-harvested crop's id. Surfaced in AF event
+  //     params so dashboard breakdowns can show "tomatoes harvested"
+  //     vs "carrots harvested" etc.
+  harvestCount?: number;
+  productId?: string;
 }
 
 export function useWater() {
@@ -87,6 +102,21 @@ export function useWater() {
         typeof data.newStage === 'number'
       ) {
         reportLevelAchieved(data.newStage);
+      }
+      // Harvest = deepest in-funnel signal we have. Fired every time;
+      // the x3 milestone fires once per user via marketing-side latch.
+      // Server now returns `harvestCount` and `productId` in the same
+      // /water response payload (the harvest happens DURING a water
+      // call when growth_percent crosses 100), so we can report
+      // without a separate round-trip.
+      if (data?.harvested) {
+        reportHarvestCompleted({
+          productId: data.productId,
+          harvestCount: data.harvestCount,
+        });
+        if (typeof data.harvestCount === 'number' && data.harvestCount >= 3) {
+          reportHarvestX3();
+        }
       }
     },
   });

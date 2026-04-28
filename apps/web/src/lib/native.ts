@@ -335,7 +335,32 @@ export type AfEventName =
   | 'af_ad_watched_rewarded'
   | 'af_offer_completed'
   | 'af_engaged_d0'
-  | 'af_withdrawal_initiated';
+  | 'af_withdrawal_initiated'
+  // Stage-specific funnel events. These exist on top of the
+  // aggregate `af_level_achieved` so Meta / agency partners can
+  // optimise on a SPECIFIC depth of progression, not just "any
+  // level". The aggregate alone collapses to a single column in
+  // Meta's UI; the per-stage events get their own conversion
+  // counts and ML-training signal. Stages 1 is implicit (the
+  // user starts there at install) — we only emit 2..6.
+  | 'af_stage_2_reached'
+  | 'af_stage_3_reached'
+  | 'af_stage_4_reached'
+  | 'af_stage_5_reached'
+  | 'af_stage_6_reached'
+  // Harvest funnel — the gold-standard deep conversion signal
+  // an agency would optimise on. `af_harvest_completed` fires
+  // on every harvest; `af_harvest_x3` fires once per user when
+  // they cross 3 harvests (loyalty / repeat-LTV cohort).
+  | 'af_harvest_completed'
+  | 'af_harvest_x3'
+  // Retention milestones, server-emitted via cron from the
+  // appsflyer S2S worker. The web-side type listing them keeps
+  // the s2s mapping table type-safe even though the web layer
+  // does NOT call them directly.
+  | 'af_d1_return'
+  | 'af_d3_return'
+  | 'af_d7_return';
 
 /**
  * AppsFlyer accepts string / number / boolean parameter values. Anything

@@ -246,6 +246,65 @@ const MAPPINGS: Record<string, (e: InternalEventLike) => MappedAfEvent | null> =
     afEventName: 'af_engaged_d0',
     eventValue: {},
   }),
+  // Stage progression — server-emitted in `/farm/water` whenever a
+  // crop crosses a growth-stage boundary. Mapped to PER-STAGE custom
+  // AF events so Meta / agency partners can optimise on a SPECIFIC
+  // depth (stage 3 = mid-funnel, stage 6 = harvest-imminent). The
+  // generic AF predefined `af_level_achieved` is fired client-side
+  // for the aggregate "any level" optimisation surface (Meta's
+  // Achievement Unlocked column).
+  'farm.stage_reached': (e) => {
+    const props = e.properties ?? {};
+    const stageRaw = props.stage;
+    const stage =
+      typeof stageRaw === 'number'
+        ? stageRaw
+        : typeof stageRaw === 'string'
+          ? Number(stageRaw)
+          : NaN;
+    // Only 2..6 are interesting — stage 1 is the implicit install state.
+    if (!Number.isFinite(stage) || stage < 2 || stage > 6) return null;
+    return {
+      afEventName: `af_stage_${stage}_reached`,
+      eventValue: { stage },
+    };
+  },
+  // Deep-funnel conversion — every completed harvest. Pairs with
+  // `farm.harvest_x3` (single-shot loyalty milestone) below for the
+  // two-tiered optimisation surface an agency would want.
+  'farm.harvested': (e) => {
+    const props = e.properties ?? {};
+    const value: Record<string, string | number | boolean> = {};
+    if (props.product_id != null) value.product_id = String(props.product_id);
+    if (typeof props.harvest_count === 'number') {
+      value.harvest_count = props.harvest_count;
+    }
+    return { afEventName: 'af_harvest_completed', eventValue: value };
+  },
+  'farm.harvest_x3': (e) => {
+    const props = e.properties ?? {};
+    const value: Record<string, string | number | boolean> = {};
+    if (props.product_id != null) value.product_id = String(props.product_id);
+    return { afEventName: 'af_harvest_x3', eventValue: value };
+  },
+  // Retention milestones — server-emitted by analytics-rollup. The
+  // SDK can't fire these reliably (most retention sessions resume an
+  // existing process and never load a fresh JS context), so S2S is
+  // the canonical transport. Enable them in APPSFLYER_S2S_EVENT_NAMES
+  // before the AF dashboard event-mapping is configured, otherwise
+  // the postback will hit a closed door.
+  'retention.d1_return': () => ({
+    afEventName: 'af_d1_return',
+    eventValue: {},
+  }),
+  'retention.d3_return': () => ({
+    afEventName: 'af_d3_return',
+    eventValue: {},
+  }),
+  'retention.d7_return': () => ({
+    afEventName: 'af_d7_return',
+    eventValue: {},
+  }),
   // Server-confirmed offerwall reward. Most likely event for S2S to
   // matter — Everflow postbacks fire while the app is in the
   // background, so the SDK can't reliably log this client-side.

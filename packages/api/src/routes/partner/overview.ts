@@ -100,9 +100,13 @@ partnerOverviewRouter.get('/', async (req: Request, res: Response) => {
   );
 
   // ── Funnel: counts of distinct attributed users who reached each step ──
-  // Ordered install → first_play → stage 2..6 → harvest. Steps with zero
-  // users still render (the UI wants a uniform bar chart), so we LEFT
-  // JOIN on a static step list.
+  // Full progression: install → register → tutorial → first_play →
+  // engaged_d0 → d1_return → stage_2..6 → harvest → harvest_x3.
+  // Steps with zero users still render (UI wants a uniform bar chart),
+  // so we LEFT JOIN on a static step list. Each `farm.stage_reached`
+  // row carries the stage in `properties->>'stage'`; we count DISTINCT
+  // users per stage threshold so the funnel shows monotonic dropoff
+  // (a user who reached stage_5 also counts toward stage_2..4).
   const funnel = await query<{ step: string; users: number }>(
     `WITH
       attributed AS (
@@ -116,29 +120,57 @@ partnerOverviewRouter.get('/', async (req: Request, res: Response) => {
         JOIN attributed a ON a.id = e.user_id
       ),
       per_step AS (
-        SELECT 'install'        AS step, count(*)::int AS users FROM attributed
+        SELECT 'install'         AS step, count(*)::int AS users FROM attributed
         UNION ALL
-        SELECT 'first_play',     count(DISTINCT user_id)::int FROM evt WHERE event_name = 'onboarding.first_farm_tick'
+        SELECT 'register',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'auth.register'
         UNION ALL
-        SELECT 'stage_2',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 2
+        SELECT 'tutorial',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'onboarding.tutorial_finished'
         UNION ALL
-        SELECT 'stage_4',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 4
+        SELECT 'first_play',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'onboarding.first_farm_tick'
         UNION ALL
-        SELECT 'stage_6',        count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 6
+        SELECT 'engaged_d0',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'EngagedD0'
         UNION ALL
-        SELECT 'harvest',        count(DISTINCT user_id)::int FROM (
+        SELECT 'd1_return',       count(DISTINCT user_id)::int FROM evt WHERE event_name = 'retention.d1_return'
+        UNION ALL
+        SELECT 'stage_2',         count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 2
+        UNION ALL
+        SELECT 'stage_3',         count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 3
+        UNION ALL
+        SELECT 'stage_4',         count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 4
+        UNION ALL
+        SELECT 'stage_5',         count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 5
+        UNION ALL
+        SELECT 'stage_6',         count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.stage_reached' AND stage >= 6
+        UNION ALL
+        SELECT 'harvest',         count(DISTINCT user_id)::int FROM (
           SELECT user_id FROM evt WHERE event_name = 'farm.harvested'
           UNION
           SELECT user_id FROM partner_conversions
             WHERE partner_id = $1 AND event_type = 'harvest'
               AND created_at >= now() - ($2 || ' days')::interval
         ) h
+        UNION ALL
+        SELECT 'harvest_x3',      count(DISTINCT user_id)::int FROM evt WHERE event_name = 'farm.harvest_x3'
       )
       SELECT step, users FROM per_step`,
     [partnerId, days],
   );
 
-  const stepOrder = ['install', 'first_play', 'stage_2', 'stage_4', 'stage_6', 'harvest'];
+  const stepOrder = [
+    'install',
+    'register',
+    'tutorial',
+    'first_play',
+    'engaged_d0',
+    'd1_return',
+    'stage_2',
+    'stage_3',
+    'stage_4',
+    'stage_5',
+    'stage_6',
+    'harvest',
+    'harvest_x3',
+  ];
   const byStep = new Map(funnel.map((r) => [r.step, r.users] as const));
   const installs = byStep.get('install') ?? 0;
   const funnelOrdered = stepOrder.map((step) => {

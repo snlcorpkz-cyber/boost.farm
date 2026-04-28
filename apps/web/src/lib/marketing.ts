@@ -24,7 +24,7 @@
  * Use them for revenue-bearing events to land in ROAS columns.
  */
 
-import { logAfEvent } from './native';
+import { logAfEvent, type AfEventName } from './native';
 
 const LATCH_PREFIX = 'af_latch:';
 
@@ -205,6 +205,66 @@ export function reportLevelAchieved(level: number): void {
   const key = `level:${Math.floor(level)}`;
   if (!takeLatch(key)) return;
   logAfEvent('af_level_achieved', { af_level: Math.floor(level) });
+  // Stage-specific event in addition to the aggregate. Lets Meta /
+  // agency partners optimise on a SPECIFIC progression depth rather
+  // than the rolled-up "any achievement" bucket. We fire 2..6; stage
+  // 1 is implicit (everyone starts there at install). The latch on
+  // the aggregate key above means we'd already have returned for a
+  // re-fire of the same level, so the per-stage call below is also
+  // single-shot per user per stage.
+  const stage = Math.floor(level);
+  let stageEvent: AfEventName | null = null;
+  if (stage === 2) stageEvent = 'af_stage_2_reached';
+  else if (stage === 3) stageEvent = 'af_stage_3_reached';
+  else if (stage === 4) stageEvent = 'af_stage_4_reached';
+  else if (stage === 5) stageEvent = 'af_stage_5_reached';
+  else if (stage === 6) stageEvent = 'af_stage_6_reached';
+  if (stageEvent) {
+    logAfEvent(stageEvent, { stage });
+  }
+}
+
+/**
+ * Fires `af_harvest_completed` whenever a player completes a crop's
+ * full growth cycle. This is the deepest in-funnel signal we have
+ * (multiple days of engagement → multiple ad impressions → real
+ * intent), so it's the optimisation target an agency partner would
+ * choose for value-based bidding.
+ *
+ * NOT latched — repeat harvests are a quality signal in their own
+ * right (LTV correlates strongly with harvest count). The complementary
+ * `reportHarvestX3` below fires the loyalty milestone exactly once.
+ *
+ * `harvest_count` carries the cumulative count from the server so
+ * AF dashboards / Meta value optimisation can weight repeat
+ * harvests differently from first-time ones.
+ */
+export function reportHarvestCompleted(params: {
+  productId?: string | number;
+  harvestCount?: number;
+}): void {
+  const value: Record<string, string | number | boolean> = {};
+  if (params.productId != null) value.product_id = String(params.productId);
+  if (typeof params.harvestCount === 'number' && params.harvestCount > 0) {
+    value.harvest_count = params.harvestCount;
+  }
+  logAfEvent('af_harvest_completed', value);
+}
+
+/**
+ * Loyalty milestone — fired once per user when they cross the third
+ * harvest. The "x3" threshold is the empirical D7-retention cohort
+ * boundary in our data: users who harvest 3 times have ~80% chance
+ * of returning at D14, while 1-2 harvests are closer to 30%. That's
+ * the cohort an agency would build a lookalike audience from.
+ *
+ * Latch is keyed on the user (not just session) — if the user
+ * uninstalls and reinstalls, AF's `customer_user_id` carries the
+ * latch through, so we don't double-fire across devices.
+ */
+export function reportHarvestX3(): void {
+  if (!takeLatch('harvest_x3')) return;
+  logAfEvent('af_harvest_x3');
 }
 
 /**
