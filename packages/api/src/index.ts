@@ -111,6 +111,7 @@ import { runCapiDispatch } from './workers/capiWorker.js';
 import { isCapiEnabled } from './meta/env.js';
 import { runAppsFlyerS2SDispatch } from './workers/appsflyerS2SWorker.js';
 import { getAfS2SEnv } from './appsflyer/s2s.js';
+import { runAppsFlyerCostPull, getAfCostPullEnv } from './workers/afCostPullWorker.js';
 
 app.listen(PORT, () => {
   console.log(`[API] Running on http://localhost:${PORT}`);
@@ -194,6 +195,35 @@ app.listen(PORT, () => {
     );
   } else {
     console.log('[af-s2s] Disabled (APPSFLYER_S2S_ENABLED!=true or creds/allow-list missing)');
+  }
+
+  // AppsFlyer cost pull. Daily snapshot of the last 14 days of
+  // partner spend (Cost / Impressions / Clicks / Installs) into
+  // `ad_costs`. AF's aggregated Pull API rate-limits this report at
+  // 24 calls/day for 3+ day ranges, so anything tighter than daily
+  // risks the 400 CallLimit wall — daily gives us 24× headroom even
+  // accounting for one retry on transient failure.
+  //
+  // Off-by-default. AF_COST_PULL_ENABLED + APPSFLYER_PULL_API_TOKEN
+  // must be set; without them this scheduler block is a no-op log
+  // and the retention page falls back to "—" CPI/ROAS columns.
+  const AF_COST_PULL_INTERVAL = 24 * 60 * 60 * 1000;
+  const afCostEnv = getAfCostPullEnv();
+  if (afCostEnv.enabled) {
+    // First run is deferred 4 minutes — give the DB pool a chance
+    // to warm up and other initial workers a head-start, since this
+    // run will issue ~1 request and a small batch of upserts.
+    setTimeout(() => {
+      runAppsFlyerCostPull().catch((err) =>
+        console.error('[af-cost-pull] initial run error:', err),
+      );
+      setInterval(() => {
+        runAppsFlyerCostPull().catch((err) => console.error('[af-cost-pull]', err));
+      }, AF_COST_PULL_INTERVAL);
+    }, 4 * 60 * 1000);
+    console.log('[af-cost-pull] Scheduled daily (first run in 4 min)');
+  } else {
+    console.log('[af-cost-pull] Disabled (AF_COST_PULL_ENABLED!=true or APPSFLYER_PULL_API_TOKEN missing)');
   }
 
   // Partner postback dispatcher. Drains `partner_postbacks_out` every

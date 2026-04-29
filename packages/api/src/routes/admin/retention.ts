@@ -4,21 +4,94 @@ import { query } from '../../lib/db.js';
 export const adminRetentionRouter = Router();
 
 /**
- * Cohort retention analysis.
+ * Cohort retention analysis with cost & ROAS overlay.
  *
  * Query params:
- *   - weeks:      number of cohorts to analyze (default 8, max 20)
- *   - offsets:    comma-separated day offsets to check (default "1,3,7,14,30")
- *   - group_by:   'day' | 'week' (default 'day')
- *   - country:    filter by user country
- *   - platform:   filter by device_platform
- *   - rank:       filter by farm rank_id
- *   - utm_source: filter by utm_source
+ *   - weeks:         number of cohorts to analyze (default 8, max 20)
+ *   - offsets:       comma-separated day offsets to check (default "1,3,7,14,30")
+ *   - group_by:      'day' | 'week' (default 'day')
+ *   - source_filter: 'all' | 'paid' | 'organic' (default 'all')
+ *   - country, platform, rank, utm_source: cohort filters
+ *
+ * Cost / CPI / ROAS:
+ *   When source_filter='paid' we narrow the cohort to users whose
+ *   acquisition_source carries an AppsFlyer media_source other
+ *   than "Organic" (or a Facebook campaign id from the legacy
+ *   Install Referrer path). Cost for that cohort comes from
+ *   `ad_costs.spend_micros` summed across cohort_start day(s).
+ *   ROAS at offset N = cumulative revenue_cents from events
+ *   (event_name in 'ad.revenue', 'econ.offer_completed',
+ *   'econ.purchase') up to and including day cohort_start + N,
+ *   divided by cost. Returns null when cost_cents=0 to avoid
+ *   division by zero (UI renders "—").
  */
+type SourceFilter = 'all' | 'paid' | 'organic';
+
+function parseSourceFilter(raw: unknown): SourceFilter {
+  if (raw === 'paid' || raw === 'organic' || raw === 'all') return raw;
+  return 'all';
+}
+
+/**
+ * Predicate for paid users. We treat a user as paid when their
+ * acquisition_source carries an AppsFlyer media_source other
+ * than "Organic", or a Facebook campaign id (legacy Install
+ * Referrer path before AF was wired up). Empty / null
+ * acquisition_source = organic.
+ *
+ * Returns the SQL fragment plus a flag so the caller can decide
+ * whether to JOIN at all (saves a sequential scan on the rare
+ * "all" path).
+ */
+function sourceFilterSql(filter: SourceFilter): string {
+  if (filter === 'paid') {
+    return `AND u.acquisition_source IS NOT NULL
+            AND (
+              (u.acquisition_source ? 'afMediaSource'
+                AND COALESCE(u.acquisition_source ->> 'afMediaSource', '') NOT IN ('', 'Organic'))
+              OR u.acquisition_source ? 'fbCampaignId'
+              OR u.acquisition_source ? 'utmCampaign'
+            )`;
+  }
+  if (filter === 'organic') {
+    return `AND (
+              u.acquisition_source IS NULL
+              OR (
+                NOT (u.acquisition_source ? 'fbCampaignId')
+                AND NOT (u.acquisition_source ? 'utmCampaign')
+                AND COALESCE(u.acquisition_source ->> 'afMediaSource', 'Organic') IN ('', 'Organic')
+              )
+            )`;
+  }
+  return '';
+}
+
+interface CohortRow {
+  cohort_start: string;
+  cohort_size: number;
+  user_ids: string[];
+}
+
+interface RetentionCell {
+  count: number;
+  pct: number;
+  rev_cents: number;
+  roas_pct: number | null;
+}
+
+interface CohortOut {
+  cohort_start: string;
+  cohort_size: number;
+  cost_cents: number;
+  cpi_cents: number | null;
+  retention: Record<number, RetentionCell | null>;
+}
+
 adminRetentionRouter.get('/cohorts', async (req, res) => {
   try {
     const weeks = Math.min(20, Math.max(1, parseInt(req.query.weeks as string) || 8));
     const groupBy = (req.query.group_by as string) === 'week' ? 'week' : 'day';
+    const sourceFilter = parseSourceFilter(req.query.source_filter);
     const rawOffsets = (req.query.offsets as string) || '1,3,7,14,30';
     const offsets = rawOffsets.split(',')
       .map(s => parseInt(s.trim()))
@@ -58,9 +131,10 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       params.push(req.query.rank);
     }
 
+    const sourceFilterFragment = sourceFilterSql(sourceFilter);
+
     const dateTrunc = groupBy === 'week' ? 'week' : 'day';
     const intervalExpr = groupBy === 'week' ? `($${pi + 1} || ' weeks')::interval` : `($${pi + 1} || ' days')::interval`;
-    const periodParamIdx = pi + 1;
 
     // Get cohorts: group users by their registration date bucket
     const cohortsQuery = `
@@ -72,22 +146,90 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       WHERE u.created_at >= now() - ${intervalExpr}
       ${whereUser}
       ${rankFilter}
+      ${sourceFilterFragment}
       GROUP BY cohort_start
       ORDER BY cohort_start DESC
     `;
 
-    const cohorts = await query(cohortsQuery, [...params, weeks]);
+    const cohorts = await query<CohortRow>(cohortsQuery, [...params, weeks]);
 
-    // For each cohort, for each offset, calculate retained count
-    const result = [];
+    // ── Cost lookup ───────────────────────────────────────────
+    // Single batched query for ALL cohort dates so the cost overlay
+    // costs one round-trip per page render no matter how many
+    // cohorts. For week grouping we sum the 7 days that make up
+    // the week; date_trunc('week', cost_date) groups them
+    // identically to the cohort bucketing above.
+    //
+    // When source_filter='paid' we don't restrict ad_costs further
+    // — Facebook Ads / googleadwords_int are inherently paid, and
+    // organic spend is $0 by definition, so summing every media
+    // source still gives the right number for paid cohorts.
+    // When source_filter='organic' we report cost=0 (organic
+    // cohorts have no spend attributable).
+    const costByCohort = new Map<string, number>();
+    if (sourceFilter !== 'organic' && cohorts.length > 0) {
+      const cohortDates = cohorts.map((c) => c.cohort_start);
+      const costRows = await query<{ cohort_start: string; spend_micros: string }>(
+        groupBy === 'week'
+          ? `SELECT date_trunc('week', cost_date)::date::text AS cohort_start,
+                    sum(spend_micros)::bigint::text AS spend_micros
+               FROM ad_costs
+               WHERE date_trunc('week', cost_date)::date = ANY($1::date[])
+               GROUP BY cohort_start`
+          : `SELECT cost_date::text AS cohort_start,
+                    sum(spend_micros)::bigint::text AS spend_micros
+               FROM ad_costs
+               WHERE cost_date = ANY($1::date[])
+               GROUP BY cost_date`,
+        [cohortDates],
+      );
+      for (const r of costRows) {
+        costByCohort.set(r.cohort_start, Number(BigInt(r.spend_micros) / 10000n));
+      }
+    }
+
+    // ── Per-cohort retention + cumulative revenue ─────────────
+    const result: CohortOut[] = [];
 
     for (const cohort of cohorts) {
       const userIds: string[] = cohort.user_ids;
-      const row: any = {
+      const cohortStartIso = String(cohort.cohort_start).slice(0, 10);
+      const costCents = costByCohort.get(cohortStartIso) ?? 0;
+      const cpiCents = cohort.cohort_size > 0 && costCents > 0
+        ? Math.round(costCents / cohort.cohort_size)
+        : null;
+
+      const out: CohortOut = {
         cohort_start: cohort.cohort_start,
         cohort_size: cohort.cohort_size,
+        cost_cents: costCents,
+        cpi_cents: cpiCents,
         retention: {},
       };
+
+      // Pull cumulative revenue for ALL offsets in one query so we
+      // don't fan out N+1 SQL per cohort × per offset. The lateral
+      // unnest builds a virtual offset table, the LEFT JOIN on
+      // events filters by "<= cohort_start + offset_day" so each
+      // row is a cumulative figure (D3 includes everything up to
+      // and including D3, not just D3 events).
+      const revRows = await query<{ offset_day: number; rev_cents: string | null }>(
+        `SELECT o.offset_day,
+                COALESCE(sum(e.revenue_cents), 0)::bigint::text AS rev_cents
+           FROM unnest($2::int[]) AS o(offset_day)
+           LEFT JOIN events e
+             ON e.user_id = ANY($1::uuid[])
+            AND e.event_name IN ('ad.revenue', 'econ.offer_completed', 'econ.purchase')
+            AND e.revenue_cents IS NOT NULL
+            AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+           GROUP BY o.offset_day
+           ORDER BY o.offset_day`,
+        [userIds, offsets, cohortStartIso],
+      );
+      const revByOffset = new Map<number, number>();
+      for (const r of revRows) {
+        revByOffset.set(r.offset_day, Number(r.rev_cents ?? '0'));
+      }
 
       for (const offset of offsets) {
         // Calendar-day (or calendar-week) retention: a user is retained on
@@ -97,7 +239,7 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
         // at 09:00 the next morning would be missed entirely despite being
         // a textbook D1-retained user. Industry standard (GA / Amplitude /
         // Mixpanel) is calendar-bucket based.
-        const retainedRow = await query(
+        const retainedRow = await query<{ c: number }>(
           groupBy === 'week'
             ? `SELECT count(DISTINCT e.user_id)::int AS c
                FROM events e
@@ -113,19 +255,27 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
           [userIds, offset]
         );
         const retained = retainedRow[0]?.c || 0;
-        row.retention[offset] = {
+        const revCents = revByOffset.get(offset) ?? 0;
+        // ROAS = revenue / cost. Null when cost is missing — UI
+        // renders "—" so analysts don't mistake "no spend data"
+        // for "0% return".
+        const roasPct = costCents > 0 ? Math.round((revCents / costCents) * 1000) / 10 : null;
+        out.retention[offset] = {
           count: retained,
           pct: cohort.cohort_size > 0 ? Math.round((retained / cohort.cohort_size) * 1000) / 10 : 0,
+          rev_cents: revCents,
+          roas_pct: roasPct,
         };
       }
 
-      delete cohort.user_ids;
-      result.push(row);
+      result.push(out);
     }
 
     res.json({
       group_by: groupBy,
       offsets,
+      source_filter: sourceFilter,
+      currency: 'USD',
       cohorts: result,
     });
   } catch (err) {

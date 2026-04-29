@@ -2,21 +2,84 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { usePersistedState } from '@/hooks/usePersistedState';
+
+type SourceFilter = 'all' | 'paid' | 'organic';
+
+/**
+ * Display helpers — keep them outside the component so they're
+ * stable references and don't trigger re-renders just because
+ * the parent re-rendered.
+ */
+function formatCents(cents: number): string {
+  if (!Number.isFinite(cents) || cents === 0) return '$0.00';
+  const dollars = cents / 100;
+  // For sub-dollar values keep two decimals; for whole-dollar
+  // amounts the analyst usually wants the full precision too
+  // (a CPI of $4.32 vs $4.30 matters for break-even calls).
+  return `$${dollars.toFixed(2)}`;
+}
+
+/**
+ * ROAS in the API is a percentage (e.g. 25.0 means rev = 25% of
+ * cost). UI standard is multiplier form ("0.25x" / "1.42x") so
+ * marketers can eyeball "did this cohort pay back yet" — anything
+ * ≥ 1.00x is profitable.
+ */
+function formatRoas(pct: number): string {
+  const x = pct / 100;
+  if (x >= 10) return `${Math.round(x)}x`;
+  return `${x.toFixed(2)}x`;
+}
+
+interface RoasStripe {
+  /** Subtle 1-pixel coloured strip below the retention pct in the cell. */
+  background: string;
+  /** Tinted text for the ROAS multiplier sitting above the strip. */
+  color: string;
+}
+
+/**
+ * Three-band coloring for ROAS:
+ *   red    < 30%   — burning cash
+ *   amber  30-99%  — partial recovery, watch
+ *   green  ≥ 100%  — paid back, scale signal
+ *
+ * Returning a structured object instead of just a colour lets us
+ * keep the cell hover-state consistent (foreground text colour
+ * tracks the stripe so the cell reads as a single unit).
+ */
+function roasPctToStripe(pct: number | null): RoasStripe {
+  if (pct == null) return { background: 'transparent', color: '#9ca3af' };
+  if (pct >= 100) return { background: '#16a34a', color: '#15803d' };
+  if (pct >= 30) return { background: '#d97706', color: '#b45309' };
+  if (pct > 0) return { background: '#dc2626', color: '#991b1b' };
+  return { background: '#e5e7eb', color: '#9ca3af' };
+}
 
 export function RetentionPage() {
-  const [groupBy, setGroupBy] = useState<'day' | 'week'>('day');
-  const [weeks, setWeeks] = useState(14);
-  const [offsets, setOffsets] = useState('1,3,7,14,30');
-  const [country, setCountry] = useState('');
-  const [platform, setPlatform] = useState('');
-  const [rank, setRank] = useState('');
-  const [utmSource, setUtmSource] = useState('');
+  // Cohort controls survive page refreshes — the previous behaviour
+  // (reset to "1,3,7,14,30" every reload) made it impossible to keep
+  // a wider window open across deploys, e.g. analysts who care about
+  // D60 had to retype it every time the React Query cache was cold.
+  const [groupBy, setGroupBy] = usePersistedState<'day' | 'week'>('retention.groupBy', 'day');
+  const [weeks, setWeeks] = usePersistedState<number>('retention.weeks', 14);
+  const [offsets, setOffsets] = usePersistedState<string>('retention.offsets', '1,3,7,14,30');
+  const [country, setCountry] = usePersistedState<string>('retention.country', '');
+  const [platform, setPlatform] = usePersistedState<string>('retention.platform', '');
+  const [rank, setRank] = usePersistedState<string>('retention.rank', '');
+  const [utmSource, setUtmSource] = usePersistedState<string>('retention.utmSource', '');
+  // Default = paid because that's where CPI/ROAS are non-trivially
+  // useful. Organic users have NULL cost so the new columns degrade
+  // to "—" and the analyst loses the headline insight.
+  const [sourceFilter, setSourceFilter] = usePersistedState<SourceFilter>('retention.sourceFilter', 'paid');
   const [activeTab, setActiveTab] = useState<'cohorts' | 'segments'>('cohorts');
 
   const qs = new URLSearchParams({
     weeks: String(weeks),
     group_by: groupBy,
     offsets,
+    source_filter: sourceFilter,
     ...(country ? { country } : {}),
     ...(platform ? { platform } : {}),
     ...(rank ? { rank } : {}),
@@ -59,6 +122,27 @@ export function RetentionPage() {
           {/* Controls */}
           <div className="mt-6 rounded-xl border border-gray-200 bg-white p-4 space-y-4">
             <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Source</label>
+                <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                  {(['all', 'paid', 'organic'] as const).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setSourceFilter(s)}
+                      className={`px-4 py-2 text-sm font-medium capitalize ${sourceFilter === s ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                      title={
+                        s === 'paid'
+                          ? 'Users attributed to a paid campaign (AppsFlyer media_source ≠ Organic). CPI/ROAS columns are populated for this view only.'
+                          : s === 'organic'
+                            ? 'Users with no campaign attribution. Cost = $0, so CPI/ROAS show "—".'
+                            : 'All users regardless of source. CPI/ROAS computed against ALL spend, divided over ALL users — not directly comparable to paid-only.'
+                      }
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Group by</label>
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden">
@@ -141,9 +225,16 @@ export function RetentionPage() {
                       Cohort ({groupBy})
                     </th>
                     <th className="text-right px-3 py-3 font-semibold text-gray-600">Users</th>
+                    <th
+                      className="text-right px-3 py-3 font-semibold text-gray-600"
+                      title="Cost Per Install — total ad spend on this cohort's day divided by the number of new users in the cohort. Source: AppsFlyer Pull API → ad_costs table."
+                    >
+                      CPI
+                    </th>
                     {(cohortData?.offsets || []).map((o: number) => (
                       <th key={o} className="text-center px-3 py-3 font-semibold text-gray-600">
-                        {groupBy === 'week' ? `W${o}` : `D${o}`}
+                        <div>{groupBy === 'week' ? `W${o}` : `D${o}`}</div>
+                        <div className="text-[10px] font-normal text-gray-400 mt-0.5">retention / ROAS</div>
                       </th>
                     ))}
                   </tr>
@@ -184,37 +275,61 @@ export function RetentionPage() {
                               {c.cohort_size}
                             </Link>
                           </td>
+                          <td
+                            className="px-3 py-2.5 text-right text-gray-700 font-mono text-xs"
+                            title={c.cost_cents > 0
+                              ? `Total spend: ${formatCents(c.cost_cents)} / ${c.cohort_size} users`
+                              : 'No cost data — verify AF→Meta cost integration sync (or this is an organic cohort).'}
+                          >
+                            {c.cpi_cents != null ? formatCents(c.cpi_cents) : <span className="text-gray-300">—</span>}
+                          </td>
                           {(cohortData.offsets || []).map((o: number) => {
                             const r = c.retention[o];
                             const pct = r?.pct ?? 0;
                             const count = r?.count || 0;
+                            const roasPct = r?.roas_pct as number | null | undefined;
+                            const revCents = r?.rev_cents || 0;
                             const intensity = Math.min(pct / 50, 1);
                             const bg = pct > 0
                               ? `rgba(37, 99, 235, ${intensity * 0.8})`
                               : 'transparent';
                             const color = intensity > 0.5 ? 'white' : '#374151';
                             const isClickable = count > 0;
+                            const roasStripe = roasPctToStripe(roasPct ?? null);
+                            const cellTitle = `${count} / ${c.cohort_size}`
+                              + (roasPct != null ? ` • ROAS ${formatRoas(roasPct)} (rev ${formatCents(revCents)})` : '');
                             return (
                               <td
                                 key={o}
-                                className="px-0 py-0 text-center text-xs"
+                                className="px-0 py-0 text-center text-xs align-top"
                                 style={{ backgroundColor: bg, color }}
                               >
                                 {isClickable ? (
                                   <Link
                                     to={baseDrill({ offset: String(o) })}
-                                    className="block px-3 py-2.5 hover:underline cursor-pointer"
-                                    title={`${count} / ${c.cohort_size} — click to see retained users`}
+                                    className="block hover:underline cursor-pointer"
+                                    title={cellTitle}
                                     style={{ color }}
                                   >
-                                    {pct}%
+                                    <div className="px-3 py-1.5 leading-tight font-semibold">{pct}%</div>
+                                    <div
+                                      className="px-3 pb-1.5 text-[10px] leading-none font-mono"
+                                      style={{ color: roasStripe.color, opacity: roasPct != null ? 1 : 0.3 }}
+                                    >
+                                      {roasPct != null ? formatRoas(roasPct) : '—'}
+                                    </div>
+                                    <div className="h-1" style={{ background: roasStripe.background }} />
                                   </Link>
                                 ) : (
-                                  <div
-                                    className="px-3 py-2.5"
-                                    title={`${count} / ${c.cohort_size}`}
-                                  >
-                                    -
+                                  <div className="block" title={cellTitle}>
+                                    <div className="px-3 py-1.5 leading-tight">-</div>
+                                    <div
+                                      className="px-3 pb-1.5 text-[10px] leading-none font-mono"
+                                      style={{ color: roasStripe.color, opacity: roasPct != null ? 1 : 0.3 }}
+                                    >
+                                      {roasPct != null ? formatRoas(roasPct) : ''}
+                                    </div>
+                                    <div className="h-1" style={{ background: roasStripe.background }} />
                                   </div>
                                 )}
                               </td>
@@ -230,15 +345,37 @@ export function RetentionPage() {
           </div>
 
           {/* Legend */}
-          <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
-            <span>Retention:</span>
-            <div className="flex gap-0">
-              <div className="w-6 h-4 bg-blue-100"></div>
-              <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.3)' }}></div>
-              <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.5)' }}></div>
-              <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.8)' }}></div>
+          <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-500">
+            <div className="flex items-center gap-2">
+              <span>Retention:</span>
+              <div className="flex gap-0">
+                <div className="w-6 h-4 bg-blue-100"></div>
+                <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.3)' }}></div>
+                <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.5)' }}></div>
+                <div className="w-6 h-4" style={{ background: 'rgba(37, 99, 235, 0.8)' }}></div>
+              </div>
+              <span>low → high</span>
             </div>
-            <span>low → high</span>
+            <div className="flex items-center gap-2">
+              <span>ROAS stripe:</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-1 align-middle" style={{ background: '#dc2626' }} />
+                <span>&lt; 30%</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-1 align-middle" style={{ background: '#d97706' }} />
+                <span>30-100%</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-1 align-middle" style={{ background: '#16a34a' }} />
+                <span>≥ 100% (paid back)</span>
+              </span>
+            </div>
+            {sourceFilter !== 'paid' && (
+              <span className="text-amber-600">
+                CPI/ROAS most meaningful with <strong>Paid</strong> source filter — current view spreads cost across {sourceFilter === 'organic' ? 'organic users (cost=0)' : 'all users'}.
+              </span>
+            )}
           </div>
         </>
       )}
