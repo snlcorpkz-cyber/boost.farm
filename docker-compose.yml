@@ -22,7 +22,12 @@ services:
       - .env
     environment:
       - PORT=3001
-      - CLIENT_URL=http://localhost:3000
+      # Comma-separated allow-list of explicit CORS origins. The *boostfarm.io
+      # family is also allowed implicitly by the regex in api/src/index.ts —
+      # this env var is for non-production hosts (preview deploys, the
+      # publisher's review domain, etc.). Keep `localhost:3000` so the Docker
+      # build's own preview HTTP serving still works.
+      - CLIENT_URL=http://localhost:3000,http://localhost:5173,https://boostfarm.io
     expose:
       - "3001"
     volumes:

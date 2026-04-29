@@ -172,8 +172,12 @@ export default function AuthPage() {
                 </label>
                 <input
                   type="email"
+                  inputMode="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => setEmail(e.target.value.trim().toLowerCase())}
                   placeholder="you@example.com"
                   className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:border-farm-green focus:ring-2 focus:ring-farm-green/20 outline-none transition-all text-sm"
                   onKeyDown={(e) => e.key === 'Enter' && handleSendCode()}

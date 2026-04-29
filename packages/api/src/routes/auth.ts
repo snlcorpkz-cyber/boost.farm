@@ -5,9 +5,10 @@ import { signAccessToken, signRefreshToken, verifyToken } from '../lib/jwt.js';
 import { randomUUID, randomInt } from 'crypto';
 import { REFERRAL_REWARDS } from '@eco-farm/game-engine';
 import { notify, getUserNickname } from '../lib/notify.js';
-import { trackEvent, startSession, enrichUserProfile } from '../lib/analytics.js';
+import { trackEvent, startSession, enrichUserProfile, getIp } from '../lib/analytics.js';
 import { attributePartnerOnSignup } from '../lib/partner-attribution.js';
 import { verifyGoogleIdToken } from '../lib/google-auth.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 import { Resend } from 'resend';
 
 const MAX_NUTRITION = 10000;
@@ -33,8 +34,25 @@ function generateCode(): string {
 
 export const authRouter = Router();
 
+/**
+ * Email normalizer — trims whitespace and lowercases. Mobile keyboards
+ * autocapitalize the first character even with `type="email"` on some
+ * Android skins (Samsung, MIUI), so the same human-typed address can
+ * land in the DB on /send-code as "Adil@gmail.com" but be sent as
+ * "adil@gmail.com" by the Resend recipient or the user's manual retype.
+ * Postgres `=` is case-sensitive on `text`, so without normalisation the
+ * lookup misses the verification_codes row and we return CODE_EXPIRED
+ * even though the code is still valid. Apply this transform on every
+ * auth path (send-code, verify-code, google, telegram).
+ */
+const emailField = z
+  .string()
+  .email()
+  .max(254)
+  .transform((e) => e.trim().toLowerCase());
+
 const sendCodeSchema = z.object({
-  email: z.string().email(),
+  email: emailField,
 });
 
 /**
@@ -57,7 +75,13 @@ const acquisitionSourceSchema = z
     fbAdId: z.string().max(64).optional().nullable(),
     fbAdsetId: z.string().max(64).optional().nullable(),
     fbCampaignId: z.string().max(64).optional().nullable(),
-    raw: z.string().max(2048).optional().nullable(),
+    // Meta Install Referrer URLs after macro expansion can comfortably
+    // run past 2KB (multiple {{campaign.id}} / {{ad.name}} segments,
+    // long ad names, additional click params). A 2048 cap rejected
+    // valid payloads with a 400 VALIDATION error, killing /verify-code
+    // for legitimate users. 8KB is the practical ceiling Play Store
+    // emits and matches what we accept on the JS bridge side.
+    raw: z.string().max(8192).optional().nullable(),
     clickTs: z.number().int().optional().nullable(),
     installTs: z.number().int().optional().nullable(),
     // ─────────────────────────────────────────────────────────
@@ -86,9 +110,9 @@ const acquisitionSourceSchema = z
   .optional();
 
 const verifyCodeSchema = z.object({
-  email: z.string().email(),
-  code: z.string().min(6).max(6),
-  refCode: z.string().optional(),
+  email: emailField,
+  code: z.string().trim().min(6).max(6),
+  refCode: z.string().trim().optional().nullable(),
   acquisition: acquisitionSourceSchema,
 });
 
@@ -275,14 +299,27 @@ function isReviewerAccount(email: string): boolean {
   return REVIEWER_EMAILS.includes(email.trim().toLowerCase());
 }
 
-authRouter.post('/send-code', async (req: Request, res: Response) => {
+/**
+ * Privacy-preserving email mask for logs: "adil@gmail.com" → "ad***@gmail.com".
+ * Just enough to match an inbox the user is asking about, not enough to leak
+ * the address into logfiles wholesale.
+ */
+function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at < 0) return '***';
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${'*'.repeat(Math.max(1, local.length - visible.length))}${domain}`;
+}
+
+authRouter.post('/send-code', rateLimit(10, 60_000), async (req: Request, res: Response) => {
+  const ip = getIp(req) || 'unknown';
   try {
     const { email } = sendCodeSchema.parse(req.body);
 
-    // Reviewer account: pretend we sent a code but skip the email provider
-    // entirely (test@boostfarm.io is not a real mailbox).
     if (isReviewerAccount(email)) {
-      console.log(`[auth] reviewer send-code (no-op) for ${email}`);
+      console.log(`[auth] send-code reviewer email=${maskEmail(email)} ip=${ip}`);
       res.json({ success: true, data: { message: 'Code sent' } });
       return;
     }
@@ -315,29 +352,29 @@ authRouter.post('/send-code', async (req: Request, res: Response) => {
       `,
     });
 
-    console.log(`[auth] Code sent to ${email}`);
+    console.log(`[auth] send-code ok email=${maskEmail(email)} ip=${ip}`);
     res.json({ success: true, data: { message: 'Code sent' } });
   } catch (err) {
     if (err instanceof z.ZodError) {
+      console.warn(`[auth] send-code VALIDATION ip=${ip} issues=${JSON.stringify(err.issues)}`);
       res.status(400).json({ success: false, error: { code: 'VALIDATION', message: err.message } });
       return;
     }
-    console.error('[auth/send-code]', err);
+    console.error(`[auth] send-code SEND_ERROR ip=${ip}`, err);
     res.status(500).json({ success: false, error: { code: 'SEND_ERROR', message: 'Failed to send code' } });
   }
 });
 
-authRouter.post('/verify-code', async (req: Request, res: Response) => {
+authRouter.post('/verify-code', rateLimit(10, 60_000), async (req: Request, res: Response) => {
+  const ip = getIp(req) || 'unknown';
   try {
     const { email, code, refCode, acquisition } = verifyCodeSchema.parse(req.body);
 
     const reviewer = isReviewerAccount(email);
 
-    // Reviewer accounts skip the DB-backed code check entirely and match a
-    // single fixed code. This keeps the email-only flow working for Play Store
-    // review without exposing a back door for real users.
     if (reviewer) {
       if (code !== REVIEWER_CODE) {
+        console.warn(`[auth] verify-code reviewer INVALID_CODE email=${maskEmail(email)}`);
         res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
         return;
       }
@@ -351,12 +388,30 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       );
 
       if (!row) {
+        // Most common real-user failure mode: the code email arrived later
+        // than CODE_TTL_MIN, the user hit "Resend" once and the previous
+        // row got marked used, or they typed a different email casing on
+        // verify than on send. Counting unused codes for this email tells
+        // us which one — log it so support can debug live without
+        // hand-rolling a SQL query each time.
+        const stats = await queryOne<{ total: number; recent: number }>(
+          `SELECT
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '${CODE_TTL_MIN} minutes')::int AS recent
+           FROM verification_codes WHERE email = $1`,
+          [email],
+        );
+        console.warn(
+          `[auth] verify-code CODE_EXPIRED email=${maskEmail(email)} ip=${ip} ` +
+          `total_codes=${stats?.total ?? 0} recent_codes=${stats?.recent ?? 0}`,
+        );
         res.status(400).json({ success: false, error: { code: 'CODE_EXPIRED', message: 'Code expired or not found. Please request a new one.' } });
         return;
       }
 
       if (row.attempts >= MAX_ATTEMPTS) {
         await execute(`UPDATE verification_codes SET used = true WHERE id = $1`, [row.id]);
+        console.warn(`[auth] verify-code TOO_MANY_ATTEMPTS email=${maskEmail(email)} ip=${ip}`);
         res.status(400).json({ success: false, error: { code: 'TOO_MANY_ATTEMPTS', message: 'Too many attempts. Please request a new code.' } });
         return;
       }
@@ -366,6 +421,7 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
           `UPDATE verification_codes SET attempts = attempts + 1 WHERE id = $1`,
           [row.id],
         );
+        console.warn(`[auth] verify-code INVALID_CODE email=${maskEmail(email)} ip=${ip} attempt=${row.attempts + 1}`);
         res.status(400).json({ success: false, error: { code: 'INVALID_CODE', message: 'Invalid code' } });
         return;
       }
@@ -427,9 +483,25 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       }).catch(() => {});
     }
 
-    const sessionId = await createSession(user.id);
+    // createSession used to be the silent-killer of /verify-code: if the
+    // production DB ever lost migration 015 (users.session_id) the UPDATE
+    // throws and the whole route returns 500 AUTH_ERROR — the user has
+    // already been INSERT'd into `users`, so they appear in admin counts
+    // but have no token and bounce back to the auth screen forever.
+    // We isolate the failure now: log it loudly, fall back to a fresh
+    // sessionId without persisting (single-device login still works,
+    // multi-device kick-out is degraded but the user can play).
+    let sessionId: string;
+    try {
+      sessionId = await createSession(user.id);
+    } catch (sessErr) {
+      console.error(
+        `[auth] verify-code createSession FAILED user=${user.id} email=${maskEmail(email)} ip=${ip}:`,
+        (sessErr as Error).message,
+      );
+      sessionId = randomUUID();
+    }
     const tokens = makeTokens(user.id, email, sessionId);
-    // Analytics: record session row (geo/device/ip) and backfill user cohort fields.
     startSession(user.id, sessionId, req).catch(() => {});
     enrichUserProfile(user.id, req).catch(() => {});
     trackEvent(
@@ -444,13 +516,18 @@ authRouter.post('/verify-code', async (req: Request, res: Response) => {
       req,
       sessionId,
     ).catch(() => {});
+    console.log(
+      `[auth] verify-code OK user=${user.id} email=${maskEmail(email)} ip=${ip} ` +
+      `isNewUser=${isNewUser} hasAcquisition=${Boolean(acquisition)}`,
+    );
     res.json({ success: true, data: { ...tokens, user, isNewUser } });
   } catch (err) {
     if (err instanceof z.ZodError) {
+      console.warn(`[auth] verify-code VALIDATION ip=${ip} issues=${JSON.stringify(err.issues)}`);
       res.status(400).json({ success: false, error: { code: 'VALIDATION', message: err.message } });
       return;
     }
-    console.error('[auth/verify-code]', err);
+    console.error(`[auth] verify-code AUTH_ERROR ip=${ip}`, err);
     res.status(500).json({ success: false, error: { code: 'AUTH_ERROR', message: 'Authentication failed' } });
   }
 });

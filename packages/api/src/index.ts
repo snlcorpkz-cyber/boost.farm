@@ -22,19 +22,62 @@ import { globalRateLimit } from './middleware/rate-limit.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.set('trust proxy', 1);
+// We run behind multiple proxies in production: Cloudflare → nginx → api
+// container (the api is `expose: 3001` only, never `ports:` — so the
+// internet cannot bypass the proxy chain). With `trust proxy: 1` Express
+// strips only the rightmost X-Forwarded-For entry (added by nginx), and
+// `req.ip` ends up being the *Cloudflare edge IP*, not the user. Result:
+// every user routed through the same Cloudflare datacenter shares one
+// rate-limit bucket, and during a real Meta campaign that bucket fills
+// in seconds — the next /auth/verify-code request gets a silent 429 and
+// the user sees "Authentication failed" even though they typed the
+// correct code. `true` walks the entire X-Forwarded-For chain back to
+// the original client (this is safe here because the api port isn't
+// reachable from the public internet).
+app.set('trust proxy', true);
 
+// CORS — we accept a comma-separated allow-list via CLIENT_URL plus
+// always allow our production hosts (boostfarm.io and any subdomain).
+// Same-origin requests from the WebView (https://boostfarm.io →
+// https://boostfarm.io/api/...) don't fire CORS at all, but tools like
+// curl, server-side fetches, and admin panels on different subdomains
+// do — and the previous single-origin config (`localhost:3000`) was
+// silently blocking every non-localhost browser-based call.
+const ALLOWED_ORIGINS = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    if (/^https?:\/\/(.+\.)?boostfarm\.(io|com)$/.test(origin)) return cb(null, true);
+    return cb(null, false);
+  },
   credentials: true,
 }));
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '256kb' }));
 
-/** Load / stress tests from one IP: set LOAD_TEST_SECRET and send X-Load-Test-Secret header */
+/**
+ * Bypass the global per-IP rate limiter for endpoints that:
+ *   1. cannot share a bucket with authed in-game traffic — anonymous users
+ *      hitting /auth/send-code & /auth/verify-code never have a userId,
+ *      so they all key on `req.ip`. If even one in-game user behind the
+ *      same NAT/CDN datacenter fills the 120/min budget, the next
+ *      registration silently 429's. These endpoints have their own
+ *      stricter route-level limiters (10/min) so we're not opening abuse.
+ *   2. are health/uptime probes that must NEVER be throttled (otherwise
+ *      orchestrators mark the container unhealthy and restart it under
+ *      load — making the user-facing problem worse).
+ *   3. carry an explicit load-test secret (existing /opt-in path).
+ */
 app.use((req, _res, next) => {
   const secret = (process.env.LOAD_TEST_SECRET || '').trim();
   const header = (req.get('x-load-test-secret') || '').trim();
-  if (secret && header && header === secret) {
+  const isLoadTest = secret && header && header === secret;
+  const isAuthPath = req.path.startsWith('/auth/');
+  const isHealthPath = req.path === '/health';
+  if (isLoadTest || isAuthPath || isHealthPath) {
     (req as Request & { skipGlobalRateLimit?: boolean }).skipGlobalRateLimit = true;
   }
   next();
