@@ -66,22 +66,41 @@ const sendCodeSchema = z.object({
  * event is emitted — giving the CAPI worker the campaign_ids to send
  * back to Meta.
  */
+/**
+ * Lossy string field helper for attribution data. Real Meta ad payloads
+ * stuff fully-expanded creative names + click macros into utm_content /
+ * utm_campaign / af_ad_name, and these can blow past 256 characters
+ * (one prod sample we observed: ad name "Mommy Cooking | UGC #4 (EN-US,
+ * 30s, vertical) | iOS 17 | Adset: Tier 1 | …" → 380+ chars).
+ *
+ * The previous `.max(N)` schema returned a 400 VALIDATION error on
+ * /verify-code for any user whose Install Referrer carried such a
+ * value — meaning the user got the email code, typed it in, and
+ * silently failed to register. Attribution is best-effort metadata;
+ * we *truncate* on the way in and continue rather than abort the user
+ * flow. The truncation cap is much larger than any realistic field so
+ * downstream reports still have full granularity.
+ */
+function attrStr(maxLen: number) {
+  return z
+    .string()
+    .transform((s) => (s.length > maxLen ? s.slice(0, maxLen) : s))
+    .optional()
+    .nullable();
+}
+
 const acquisitionSourceSchema = z
   .object({
-    utmSource: z.string().max(128).optional().nullable(),
-    utmMedium: z.string().max(128).optional().nullable(),
-    utmCampaign: z.string().max(256).optional().nullable(),
-    utmContent: z.string().max(256).optional().nullable(),
-    fbAdId: z.string().max(64).optional().nullable(),
-    fbAdsetId: z.string().max(64).optional().nullable(),
-    fbCampaignId: z.string().max(64).optional().nullable(),
-    // Meta Install Referrer URLs after macro expansion can comfortably
-    // run past 2KB (multiple {{campaign.id}} / {{ad.name}} segments,
-    // long ad names, additional click params). A 2048 cap rejected
-    // valid payloads with a 400 VALIDATION error, killing /verify-code
-    // for legitimate users. 8KB is the practical ceiling Play Store
-    // emits and matches what we accept on the JS bridge side.
-    raw: z.string().max(8192).optional().nullable(),
+    utmSource: attrStr(256),
+    utmMedium: attrStr(256),
+    utmCampaign: attrStr(512),
+    utmContent: attrStr(1024),
+    fbAdId: attrStr(128),
+    fbAdsetId: attrStr(128),
+    fbCampaignId: attrStr(128),
+    // Meta Install Referrer URL after macro expansion routinely runs
+    // past 2KB; 8KB matches Play Store's practical ceiling.
+    raw: attrStr(8192),
     clickTs: z.number().int().optional().nullable(),
     installTs: z.number().int().optional().nullable(),
     // ─────────────────────────────────────────────────────────
@@ -95,16 +114,16 @@ const acquisitionSourceSchema = z
     // de-duped, fraud-filtered view of the same data + works
     // for non-Meta networks too).
     // ─────────────────────────────────────────────────────────
-    afStatus: z.string().max(64).optional().nullable(),
-    afMediaSource: z.string().max(128).optional().nullable(),
-    afCampaign: z.string().max(256).optional().nullable(),
-    afCampaignId: z.string().max(64).optional().nullable(),
-    afAdsetName: z.string().max(256).optional().nullable(),
-    afAdsetId: z.string().max(64).optional().nullable(),
-    afAdName: z.string().max(256).optional().nullable(),
-    afAdId: z.string().max(64).optional().nullable(),
-    afAttributionId: z.string().max(128).optional().nullable(),
-    afAppsflyerId: z.string().max(64).optional().nullable(),
+    afStatus: attrStr(64),
+    afMediaSource: attrStr(256),
+    afCampaign: attrStr(512),
+    afCampaignId: attrStr(128),
+    afAdsetName: attrStr(512),
+    afAdsetId: attrStr(128),
+    afAdName: attrStr(1024),
+    afAdId: attrStr(128),
+    afAttributionId: attrStr(256),
+    afAppsflyerId: attrStr(128),
   })
   .partial()
   .optional();
