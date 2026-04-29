@@ -166,25 +166,40 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
     // source still gives the right number for paid cohorts.
     // When source_filter='organic' we report cost=0 (organic
     // cohorts have no spend attributable).
+    //
+    // Wrapped in try/catch so the retention table continues to
+    // work even when migration 026 (ad_costs) hasn't been applied
+    // yet — the only consequence is empty CPI/ROAS columns. We'd
+    // rather show partial data than 500 the entire page.
     const costByCohort = new Map<string, number>();
     if (sourceFilter !== 'organic' && cohorts.length > 0) {
-      const cohortDates = cohorts.map((c) => c.cohort_start);
-      const costRows = await query<{ cohort_start: string; spend_micros: string }>(
-        groupBy === 'week'
-          ? `SELECT date_trunc('week', cost_date)::date::text AS cohort_start,
-                    sum(spend_micros)::bigint::text AS spend_micros
-               FROM ad_costs
-               WHERE date_trunc('week', cost_date)::date = ANY($1::date[])
-               GROUP BY cohort_start`
-          : `SELECT cost_date::text AS cohort_start,
-                    sum(spend_micros)::bigint::text AS spend_micros
-               FROM ad_costs
-               WHERE cost_date = ANY($1::date[])
-               GROUP BY cost_date`,
-        [cohortDates],
-      );
-      for (const r of costRows) {
-        costByCohort.set(r.cohort_start, Number(BigInt(r.spend_micros) / 10000n));
+      try {
+        const cohortDates = cohorts.map((c) => c.cohort_start);
+        const costRows = await query<{ cohort_start: string; spend_micros: string }>(
+          groupBy === 'week'
+            ? `SELECT date_trunc('week', cost_date)::date::text AS cohort_start,
+                      sum(spend_micros)::bigint::text AS spend_micros
+                 FROM ad_costs
+                 WHERE date_trunc('week', cost_date)::date = ANY($1::date[])
+                 GROUP BY cohort_start`
+            : `SELECT cost_date::text AS cohort_start,
+                      sum(spend_micros)::bigint::text AS spend_micros
+                 FROM ad_costs
+                 WHERE cost_date = ANY($1::date[])
+                 GROUP BY cost_date`,
+          [cohortDates],
+        );
+        for (const r of costRows) {
+          // spend_micros (USD micros) → cents: divide by 10_000.
+          costByCohort.set(r.cohort_start, Number(BigInt(r.spend_micros) / 10000n));
+        }
+      } catch (costErr) {
+        const msg = (costErr as Error).message ?? '';
+        if (/relation .*ad_costs.* does not exist/i.test(msg)) {
+          console.warn('[admin/retention/cohorts] ad_costs table missing — apply migration 026. CPI/ROAS will be empty.');
+        } else {
+          console.warn('[admin/retention/cohorts] cost lookup failed:', msg);
+        }
       }
     }
 
@@ -213,22 +228,30 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       // events filters by "<= cohort_start + offset_day" so each
       // row is a cumulative figure (D3 includes everything up to
       // and including D3, not just D3 events).
-      const revRows = await query<{ offset_day: number; rev_cents: string | null }>(
-        `SELECT o.offset_day,
-                COALESCE(sum(e.revenue_cents), 0)::bigint::text AS rev_cents
-           FROM unnest($2::int[]) AS o(offset_day)
-           LEFT JOIN events e
-             ON e.user_id = ANY($1::uuid[])
-            AND e.event_name IN ('ad.revenue', 'econ.offer_completed', 'econ.purchase')
-            AND e.revenue_cents IS NOT NULL
-            AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
-           GROUP BY o.offset_day
-           ORDER BY o.offset_day`,
-        [userIds, offsets, cohortStartIso],
-      );
+      //
+      // Defensive: any failure here (e.g. unexpected event_name
+      // filter, missing column) falls through to "no revenue
+      // overlay" rather than 500-ing the entire retention page.
       const revByOffset = new Map<number, number>();
-      for (const r of revRows) {
-        revByOffset.set(r.offset_day, Number(r.rev_cents ?? '0'));
+      try {
+        const revRows = await query<{ offset_day: number; rev_cents: string | null }>(
+          `SELECT o.offset_day,
+                  COALESCE(sum(e.revenue_cents), 0)::bigint::text AS rev_cents
+             FROM unnest($2::int[]) AS o(offset_day)
+             LEFT JOIN events e
+               ON e.user_id = ANY($1::uuid[])
+              AND e.event_name IN ('ad.revenue', 'econ.offer_completed', 'econ.purchase')
+              AND e.revenue_cents IS NOT NULL
+              AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+             GROUP BY o.offset_day
+             ORDER BY o.offset_day`,
+          [userIds, offsets, cohortStartIso],
+        );
+        for (const r of revRows) {
+          revByOffset.set(r.offset_day, Number(r.rev_cents ?? '0'));
+        }
+      } catch (revErr) {
+        console.warn('[admin/retention/cohorts] revenue lookup failed for cohort', cohortStartIso, ':', (revErr as Error).message);
       }
 
       for (const offset of offsets) {
