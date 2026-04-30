@@ -148,10 +148,18 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
     const dateTrunc = groupBy === 'week' ? 'week' : 'day';
     const intervalExpr = groupBy === 'week' ? `($${pi + 1} || ' weeks')::interval` : `($${pi + 1} || ' days')::interval`;
 
-    // Get cohorts: group users by their registration date bucket
+    // Get cohorts: group users by their registration date bucket.
+    //
+    // We cast cohort_start to ::text in PG (yielding 'YYYY-MM-DD')
+    // instead of leaving it as date (which node-postgres parses to
+    // a JS Date in local TZ, where `String(d).slice(0,10)` yields
+    // garbage like "Thu Apr 23"). The downstream queries that take
+    // cohortStartIso as a $::date param and the cost lookup join
+    // (cost_date = ANY($1::date[])) both accept ISO strings, and
+    // PG's implicit text→date cast handles them correctly.
     const cohortsQuery = `
       SELECT
-        date_trunc('${dateTrunc}', u.created_at)::date AS cohort_start,
+        date_trunc('${dateTrunc}', u.created_at)::date::text AS cohort_start,
         count(*)::int AS cohort_size,
         array_agg(u.id) AS user_ids
       FROM users u
@@ -220,7 +228,9 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
 
     for (const cohort of cohorts) {
       const userIds: string[] = cohort.user_ids;
-      const cohortStartIso = String(cohort.cohort_start).slice(0, 10);
+      // cohort_start is now an ISO 'YYYY-MM-DD' string (cast in
+      // SQL above). Keep the alias for clarity at call sites.
+      const cohortStartIso = String(cohort.cohort_start);
       const costCents = costByCohort.get(cohortStartIso) ?? 0;
       const cpiCents = cohort.cohort_size > 0 && costCents > 0
         ? Math.round(costCents / cohort.cohort_size)
@@ -276,9 +286,16 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       // falls back to a zero map so the rest of the page renders.
       const adsByOffset = new Map<number, number>();
       try {
+        // COUNT(e.event_name) instead of COUNT(*) — with a
+        // LEFT JOIN over an unnest()'d offset_day virtual table,
+        // unmatched rows still produce one NULL-padded row per
+        // offset, which COUNT(*) would erroneously count as 1.
+        // Counting a non-nullable column from the right side
+        // skips those placeholder rows, returning 0 when no
+        // events match (the truthful answer).
         const adsRows = await query<{ offset_day: number; ads: number }>(
           `SELECT o.offset_day,
-                  COUNT(*)::int AS ads
+                  COUNT(e.event_name)::int AS ads
              FROM unnest($2::int[]) AS o(offset_day)
              LEFT JOIN events e
                ON e.user_id = ANY($1::uuid[])
