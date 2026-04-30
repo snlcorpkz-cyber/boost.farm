@@ -253,10 +253,25 @@ async function emitRetentionForDay(d: number): Promise<number> {
   const eventName = `retention.d${d}_return`;
   // Find users who:
   //   • registered between (d×24h)..(d×24h + 72h) ago
-  //   • have at least one event AFTER registered_at + d days
+  //   • have at least one REAL (non-synthetic) event on calendar
+  //     day registered_at::date + d  — the emitted milestone
+  //     should mirror an actual return, not just "ever active
+  //     after D-N".
   //   • haven't yet received the retention milestone
-  // The date math runs in Postgres so we don't pay for cross-server
-  // clock drift between API replicas.
+  //
+  // We stamp `created_at` at calendar day register::date + d
+  // (UTC midnight) so the row lands on the SAME date the
+  // retention SQL groups on. Earlier impl used now() which made
+  // the synthetic event drift forward depending on when the cron
+  // happened to run — and worse, the retention SQL (which counts
+  // any event on register+N) ended up self-matching this very
+  // event for the WRONG offset (e.g. a D3 event stamped on D5
+  // got counted as D5 retention).
+  //
+  // The `event_name NOT LIKE 'retention.%'` predicate inside the
+  // EXISTS guards against retention.* events being treated as
+  // "real return activity" — defense in depth even though the
+  // upstream /cohorts SQL also filters them out (Phase A.2).
   const result = await execute(
     `INSERT INTO events (user_id, event_name, properties, created_at)
      SELECT
@@ -267,7 +282,7 @@ async function emitRetentionForDay(d: number): Promise<number> {
          'registered_at', reg.first_register::text,
          'window_days', $2::int
        ),
-       now()
+       (reg.first_register::date + $2::int)::timestamptz
      FROM (
        SELECT
          user_id,
@@ -281,7 +296,9 @@ async function emitRetentionForDay(d: number): Promise<number> {
        AND EXISTS (
          SELECT 1 FROM events e2
          WHERE e2.user_id = reg.user_id
-           AND e2.created_at >= reg.first_register + ($2 || ' days')::interval
+           AND e2.created_at::date = (reg.first_register::date + $2::int)
+           AND e2.event_name NOT LIKE 'retention.%'
+           AND e2.event_name NOT LIKE 'system.%'
        )
      ON CONFLICT (user_id) WHERE event_name = $1 DO NOTHING`,
     [eventName, String(d)],

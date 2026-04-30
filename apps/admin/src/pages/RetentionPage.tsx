@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { usePersistedState } from '@/hooks/usePersistedState';
 
 type SourceFilter = 'all' | 'paid' | 'organic';
+type RevenueMode = 'theoretical' | 'real';
 
 /**
  * Display helpers — keep them outside the component so they're
@@ -49,6 +50,37 @@ interface RoasStripe {
  * keep the cell hover-state consistent (foreground text colour
  * tracks the stripe so the cell reads as a single unit).
  */
+/**
+ * Theoretical revenue projection for a single cohort × offset cell:
+ *
+ *   projected_revenue_cents
+ *     = ads_requested / 1000 × CPM_dollars × 100         (rewarded ad arpu)
+ *     + offer_plays × payout_cents                        (offerwall arpu)
+ *
+ * Both ads and offers are CUMULATIVE through end-of-D-N, so the
+ * projection rolls up — D7 includes everything D1..D7. Returns
+ * cents (rounded) to keep currency math integer-clean downstream.
+ */
+function projectedRevenueCents(
+  adsRequested: number,
+  offerPlays: number,
+  cpmDollars: number,
+  offerPayoutCents: number,
+): number {
+  const adRevCents = (adsRequested / 1000) * cpmDollars * 100;
+  const offerRevCents = offerPlays * offerPayoutCents;
+  return Math.round(adRevCents + offerRevCents);
+}
+
+/**
+ * Theoretical cost = cohort_size × CPI_dollars × 100. Same number
+ * for every offset of a given cohort because the CPI input is a
+ * single per-install assumption, not a per-day cost curve.
+ */
+function theoreticalCohortCostCents(cohortSize: number, cpiDollars: number): number {
+  return Math.round(cohortSize * cpiDollars * 100);
+}
+
 function roasPctToStripe(pct: number | null): RoasStripe {
   if (pct == null) return { background: 'transparent', color: '#9ca3af' };
   if (pct >= 100) return { background: '#16a34a', color: '#15803d' };
@@ -73,6 +105,22 @@ export function RetentionPage() {
   // useful. Organic users have NULL cost so the new columns degrade
   // to "—" and the analyst loses the headline insight.
   const [sourceFilter, setSourceFilter] = usePersistedState<SourceFilter>('retention.sourceFilter', 'paid');
+
+  // Theoretical mode is the default because real cost data from
+  // AppsFlyer→Meta is currently not flowing (integration shows
+  // Active but spend syncs at $0.0000). Theoretical mode lets the
+  // analyst plug in assumed CPM / offer payout / CPI and see what
+  // ROAS this cohort *would* produce — purely client-side math
+  // over the real ad.requested + offer_completions counts.
+  const [revenueMode, setRevenueMode] = usePersistedState<RevenueMode>('retention.revenueMode', 'theoretical');
+  // Three calculator knobs. CPM and CPI are in dollars (UX: those
+  // are the units marketers think in); offer payout is in cents
+  // because typical reward-app offer payouts are < $1 and we want
+  // 1c granularity without fighting floats.
+  const [calcCpmDollars, setCalcCpmDollars] = usePersistedState<number>('retention.calc.cpm', 5);
+  const [calcOfferPayoutCents, setCalcOfferPayoutCents] = usePersistedState<number>('retention.calc.offer', 30);
+  const [calcCpiDollars, setCalcCpiDollars] = usePersistedState<number>('retention.calc.cpi', 0.5);
+
   const [activeTab, setActiveTab] = useState<'cohorts' | 'segments'>('cohorts');
 
   const qs = new URLSearchParams({
@@ -143,6 +191,26 @@ export function RetentionPage() {
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Revenue mode</label>
+                <div className="flex border border-gray-300 rounded-lg overflow-hidden">
+                  {(['theoretical', 'real'] as const).map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setRevenueMode(m)}
+                      className={`px-4 py-2 text-sm font-medium capitalize ${revenueMode === m ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                      title={
+                        m === 'theoretical'
+                          ? 'Project revenue from REAL cohort engagement (ads, offers) × your CPM/payout/CPI assumptions. Use while AF→Meta cost sync is still being verified.'
+                          : 'Use REAL revenue from events.revenue_cents (ad.revenue/econ.offer_completed/econ.purchase) and REAL cost from ad_costs (AppsFlyer Pull API). Falls back to "—" when cost not synced.'
+                      }
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Group by</label>
                 <div className="flex border border-gray-300 rounded-lg overflow-hidden">
@@ -215,6 +283,98 @@ export function RetentionPage() {
             </div>
           </div>
 
+          {/* Theoretical-mode calculator card. Hidden when mode=real
+              because real-mode draws from events.revenue_cents +
+              ad_costs and the inputs become decorative. */}
+          {revenueMode === 'theoretical' && cohortData?.cohorts?.length > 0 && (() => {
+            // Aggregate projection across the full visible table.
+            // We project at the LARGEST visible offset because it
+            // captures the most cumulative revenue — analysts use
+            // this number to answer "if my assumptions hold, what
+            // does the whole window earn?". Smaller offsets would
+            // under-state the projection.
+            const offsetsList: number[] = cohortData.offsets || [];
+            const maxOffset = offsetsList.length > 0 ? Math.max(...offsetsList) : 0;
+            let totalProjRev = 0;
+            let totalAssumedCost = 0;
+            for (const c of cohortData.cohorts) {
+              const cell = c.retention?.[maxOffset];
+              const ads = cell?.ads_requested ?? 0;
+              const offers = cell?.offer_plays ?? 0;
+              totalProjRev += projectedRevenueCents(ads, offers, calcCpmDollars, calcOfferPayoutCents);
+              totalAssumedCost += theoreticalCohortCostCents(c.cohort_size, calcCpiDollars);
+            }
+            const aggRoasPct = totalAssumedCost > 0
+              ? Math.round((totalProjRev / totalAssumedCost) * 1000) / 10
+              : null;
+            return (
+              <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50/40 p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-[280px]">
+                    <div className="text-sm font-semibold text-gray-800">Theoretical revenue calculator</div>
+                    <div className="mt-1 text-xs text-gray-500 max-w-md">
+                      These are <em>assumptions</em>. Real revenue + cost will replace this once AppsFlyer→Meta cost integration starts syncing spend (status currently shows Active but $0 in the AF dashboard).
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1" title="Theoretical eCPM — revenue earned per 1,000 ad requests. Industry baseline for rewarded video is $5-15.">
+                        CPM ($)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={calcCpmDollars}
+                        onChange={e => setCalcCpmDollars(Math.max(0, Number(e.target.value)))}
+                        className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1" title="Average payout per UNIQUE offer-play (one user × one offer). 30c is a reasonable mid-market guess for offerwall apps.">
+                        Offer payout (¢)
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={calcOfferPayoutCents}
+                        onChange={e => setCalcOfferPayoutCents(Math.max(0, Math.round(Number(e.target.value))))}
+                        className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1" title="Theoretical Cost Per Install in dollars. Multiply by cohort size to get assumed total spend.">
+                        CPI ($)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={calcCpiDollars}
+                        onChange={e => setCalcCpiDollars(Math.max(0, Number(e.target.value)))}
+                        className="w-24 rounded-lg border border-gray-300 px-2 py-1.5 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
+                    <div className="text-[11px] text-gray-500">Σ projected revenue (D{maxOffset})</div>
+                    <div className="font-semibold text-gray-900 mt-0.5">{formatCents(totalProjRev)}</div>
+                  </div>
+                  <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
+                    <div className="text-[11px] text-gray-500">Σ assumed cost</div>
+                    <div className="font-semibold text-gray-900 mt-0.5">{formatCents(totalAssumedCost)}</div>
+                  </div>
+                  <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
+                    <div className="text-[11px] text-gray-500">Aggregate ROAS</div>
+                    <div className="font-semibold mt-0.5" style={{ color: roasPctToStripe(aggRoasPct).color }}>
+                      {aggRoasPct != null ? `${formatRoas(aggRoasPct)} (${aggRoasPct}%)` : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Cohort heatmap table */}
           <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="overflow-x-auto">
@@ -227,25 +387,44 @@ export function RetentionPage() {
                     <th className="text-right px-3 py-3 font-semibold text-gray-600">Users</th>
                     <th
                       className="text-right px-3 py-3 font-semibold text-gray-600"
-                      title="Cost Per Install — total ad spend on this cohort's day divided by the number of new users in the cohort. Source: AppsFlyer Pull API → ad_costs table."
+                      title={revenueMode === 'theoretical'
+                        ? `Theoretical Cost Per Install — your CPI input ($${calcCpiDollars.toFixed(2)}) applied uniformly to every cohort. Replace with real CPI by switching mode to Real once AF→Meta cost sync is live.`
+                        : 'Real Cost Per Install — total ad spend on this cohort\'s day divided by the number of new users in the cohort. Source: AppsFlyer Pull API → ad_costs table. Shows "—" if no spend synced yet.'}
                     >
                       CPI
+                    </th>
+                    <th
+                      className="text-right px-3 py-3 font-semibold text-gray-600"
+                      title="Cumulative ad.requested events from cohort users through the largest offset in view. Drives theoretical-mode revenue projection."
+                    >
+                      Ads
+                    </th>
+                    <th
+                      className="text-right px-3 py-3 font-semibold text-gray-600"
+                      title="Cumulative DISTINCT (user, offer) plays through the largest offset in view. One unique offer per user counts once even if they hit multiple milestones on it."
+                    >
+                      Offers
                     </th>
                     {(cohortData?.offsets || []).map((o: number) => (
                       <th key={o} className="text-center px-3 py-3 font-semibold text-gray-600">
                         <div>{groupBy === 'week' ? `W${o}` : `D${o}`}</div>
-                        <div className="text-[10px] font-normal text-gray-400 mt-0.5">retention / ROAS</div>
+                        <div className="text-[10px] font-normal text-gray-400 mt-0.5">retention / {revenueMode === 'theoretical' ? 'proj. ROAS' : 'ROAS'}</div>
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {cohortsPending ? (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-500">Computing cohorts...</td></tr>
-                  ) : !cohortData?.cohorts?.length ? (
-                    <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-500">No cohort data</td></tr>
-                  ) : (
-                    cohortData.cohorts.map((c: any) => {
+                  {(() => {
+                    const offsetsList: number[] = cohortData?.offsets || [];
+                    const totalCols = 5 + offsetsList.length; // Cohort, Users, CPI, Ads, Offers + offsets
+                    const maxOffset = offsetsList.length > 0 ? Math.max(...offsetsList) : 0;
+                    if (cohortsPending) {
+                      return <tr><td colSpan={totalCols} className="px-4 py-8 text-center text-gray-500">Computing cohorts...</td></tr>;
+                    }
+                    if (!cohortData?.cohorts?.length) {
+                      return <tr><td colSpan={totalCols} className="px-4 py-8 text-center text-gray-500">No cohort data</td></tr>;
+                    }
+                    return cohortData.cohorts.map((c: any) => {
                       // Filters propagate into the drill-down URL so the
                       // per-cell user list matches what was counted on
                       // the cohort row (same country/platform/rank/utm).
@@ -275,29 +454,82 @@ export function RetentionPage() {
                               {c.cohort_size}
                             </Link>
                           </td>
+                          {(() => {
+                            // CPI column adapts to mode. In theoretical mode it
+                            // renders the calculator's CPI input applied to
+                            // every cohort uniformly (single number, no real
+                            // data). In real mode it shows ad_costs / cohort_size
+                            // and degrades to "—" when spend hasn't synced.
+                            if (revenueMode === 'theoretical') {
+                              const theoreticalCpiCents = Math.round(calcCpiDollars * 100);
+                              return (
+                                <td
+                                  className="px-3 py-2.5 text-right text-blue-700 font-mono text-xs"
+                                  title={`Theoretical CPI from calculator: $${calcCpiDollars.toFixed(2)} × ${c.cohort_size} users = ${formatCents(theoreticalCpiCents * c.cohort_size)} assumed spend on this cohort.`}
+                                >
+                                  {formatCents(theoreticalCpiCents)}
+                                </td>
+                              );
+                            }
+                            return (
+                              <td
+                                className="px-3 py-2.5 text-right text-gray-700 font-mono text-xs"
+                                title={c.cost_cents > 0
+                                  ? `Total spend: ${formatCents(c.cost_cents)} / ${c.cohort_size} users`
+                                  : 'No cost data — verify AF→Meta cost integration sync (or this is an organic cohort).'}
+                              >
+                                {c.cpi_cents != null ? formatCents(c.cpi_cents) : <span className="text-gray-300">—</span>}
+                              </td>
+                            );
+                          })()}
+                          {/* Ads + Offers columns — cumulative through the largest visible offset. */}
                           <td
                             className="px-3 py-2.5 text-right text-gray-700 font-mono text-xs"
-                            title={c.cost_cents > 0
-                              ? `Total spend: ${formatCents(c.cost_cents)} / ${c.cohort_size} users`
-                              : 'No cost data — verify AF→Meta cost integration sync (or this is an organic cohort).'}
+                            title={`Cumulative ad.requested through ${groupBy === 'week' ? 'W' : 'D'}${maxOffset} for this cohort.`}
                           >
-                            {c.cpi_cents != null ? formatCents(c.cpi_cents) : <span className="text-gray-300">—</span>}
+                            {(c.retention?.[maxOffset]?.ads_requested ?? 0).toLocaleString()}
+                          </td>
+                          <td
+                            className="px-3 py-2.5 text-right text-gray-700 font-mono text-xs"
+                            title={`Cumulative DISTINCT (user, offer) plays through ${groupBy === 'week' ? 'W' : 'D'}${maxOffset} for this cohort.`}
+                          >
+                            {(c.retention?.[maxOffset]?.offer_plays ?? 0).toLocaleString()}
                           </td>
                           {(cohortData.offsets || []).map((o: number) => {
                             const r = c.retention[o];
                             const pct = r?.pct ?? 0;
                             const count = r?.count || 0;
-                            const roasPct = r?.roas_pct as number | null | undefined;
-                            const revCents = r?.rev_cents || 0;
+                            const ads = r?.ads_requested ?? 0;
+                            const offers = r?.offer_plays ?? 0;
+
+                            // Per-mode revenue + ROAS:
+                            //   real        → rev_cents / roas_pct from API
+                            //                 (drawn from events.revenue_cents
+                            //                 and ad_costs).
+                            //   theoretical → projected on the client from
+                            //                 cohort engagement × calculator
+                            //                 inputs. Cost is cohort_size × CPI.
+                            let revCents: number;
+                            let roasPct: number | null;
+                            if (revenueMode === 'theoretical') {
+                              revCents = projectedRevenueCents(ads, offers, calcCpmDollars, calcOfferPayoutCents);
+                              const cost = theoreticalCohortCostCents(c.cohort_size, calcCpiDollars);
+                              roasPct = cost > 0 ? Math.round((revCents / cost) * 1000) / 10 : null;
+                            } else {
+                              revCents = r?.rev_cents || 0;
+                              roasPct = (r?.roas_pct as number | null | undefined) ?? null;
+                            }
+
                             const intensity = Math.min(pct / 50, 1);
                             const bg = pct > 0
                               ? `rgba(37, 99, 235, ${intensity * 0.8})`
                               : 'transparent';
                             const color = intensity > 0.5 ? 'white' : '#374151';
                             const isClickable = count > 0;
-                            const roasStripe = roasPctToStripe(roasPct ?? null);
+                            const roasStripe = roasPctToStripe(roasPct);
+                            const roasLabel = revenueMode === 'theoretical' ? 'proj. ROAS' : 'ROAS';
                             const cellTitle = `${count} / ${c.cohort_size}`
-                              + (roasPct != null ? ` • ROAS ${formatRoas(roasPct)} (rev ${formatCents(revCents)})` : '');
+                              + (roasPct != null ? ` • ${roasLabel} ${formatRoas(roasPct)} (rev ${formatCents(revCents)})` : '');
                             return (
                               <td
                                 key={o}
@@ -337,8 +569,8 @@ export function RetentionPage() {
                           })}
                         </tr>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

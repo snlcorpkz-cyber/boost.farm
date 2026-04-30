@@ -77,6 +77,18 @@ interface RetentionCell {
   pct: number;
   rev_cents: number;
   roas_pct: number | null;
+  /**
+   * Cumulative ad.requested events from the cohort up to and
+   * including this offset day. Drives the "Theoretical mode"
+   * revenue projection on the client (ads/1000 × CPM input).
+   */
+  ads_requested: number;
+  /**
+   * Cumulative DISTINCT (user_id, offer_id) plays sourced from
+   * `offer_completions`. One entry per "unique game per user"
+   * regardless of how many milestones they hit on it.
+   */
+  offer_plays: number;
 }
 
 interface CohortOut {
@@ -254,6 +266,65 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
         console.warn('[admin/retention/cohorts] revenue lookup failed for cohort', cohortStartIso, ':', (revErr as Error).message);
       }
 
+      // Cumulative ad.requested events per offset. Drives the
+      // Theoretical mode revenue projection on the client
+      // (ads / 1000 * CPM input). Same lateral-unnest shape as the
+      // revenue query above so D-N is "ads through end of day N",
+      // not "ads on D-N specifically".
+      //
+      // Defensive: a missing column / malformed properties shape
+      // falls back to a zero map so the rest of the page renders.
+      const adsByOffset = new Map<number, number>();
+      try {
+        const adsRows = await query<{ offset_day: number; ads: number }>(
+          `SELECT o.offset_day,
+                  COUNT(*)::int AS ads
+             FROM unnest($2::int[]) AS o(offset_day)
+             LEFT JOIN events e
+               ON e.user_id = ANY($1::uuid[])
+              AND e.event_name = 'ad.requested'
+              AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+             GROUP BY o.offset_day
+             ORDER BY o.offset_day`,
+          [userIds, offsets, cohortStartIso],
+        );
+        for (const r of adsRows) {
+          adsByOffset.set(r.offset_day, r.ads ?? 0);
+        }
+      } catch (adsErr) {
+        console.warn('[admin/retention/cohorts] ads lookup failed for cohort', cohortStartIso, ':', (adsErr as Error).message);
+      }
+
+      // Cumulative DISTINCT (user_id, offer_id) plays per offset
+      // sourced from `offer_completions`. The DISTINCT pair
+      // collapses multiple-milestone completions on the same offer
+      // by the same user into ONE "play" — matching the user's
+      // requested "unique games per cohort" semantics ("не в кол-во
+      // постбеков, а уникальных игр").
+      //
+      // The table is created in migration 012_offers.sql; if it's
+      // missing (e.g. fresh dev DB without the offer system), the
+      // catch logs once and the page still renders.
+      const offerPlaysByOffset = new Map<number, number>();
+      try {
+        const playsRows = await query<{ offset_day: number; plays: number }>(
+          `SELECT o.offset_day,
+                  COUNT(DISTINCT (oc.user_id, oc.offer_id))::int AS plays
+             FROM unnest($2::int[]) AS o(offset_day)
+             LEFT JOIN offer_completions oc
+               ON oc.user_id = ANY($1::uuid[])
+              AND oc.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+             GROUP BY o.offset_day
+             ORDER BY o.offset_day`,
+          [userIds, offsets, cohortStartIso],
+        );
+        for (const r of playsRows) {
+          offerPlaysByOffset.set(r.offset_day, r.plays ?? 0);
+        }
+      } catch (playsErr) {
+        console.warn('[admin/retention/cohorts] offer plays lookup failed for cohort', cohortStartIso, ':', (playsErr as Error).message);
+      }
+
       for (const offset of offsets) {
         // Calendar-day (or calendar-week) retention: a user is retained on
         // day/week N if they have any event whose date_trunc matches the
@@ -262,18 +333,31 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
         // at 09:00 the next morning would be missed entirely despite being
         // a textbook D1-retained user. Industry standard (GA / Amplitude /
         // Mixpanel) is calendar-bucket based.
+        //
+        // Synthetic events filter (`retention.%`, `system.%`):
+        // server-side rollups emit milestone events on the user's
+        // behalf (analytics-rollup.ts → retention.dN_return). Letting
+        // those count as "real activity" creates a self-fulfilling
+        // loop — a D3 retention event on day register+3 would mark
+        // its own user as D3-retained even when nothing else
+        // happened that day. Filter them out so the heatmap reflects
+        // genuine product engagement only.
         const retainedRow = await query<{ c: number }>(
           groupBy === 'week'
             ? `SELECT count(DISTINCT e.user_id)::int AS c
                FROM events e
                JOIN users u ON u.id = e.user_id
                WHERE e.user_id = ANY($1::uuid[])
+                 AND e.event_name NOT LIKE 'retention.%'
+                 AND e.event_name NOT LIKE 'system.%'
                  AND date_trunc('week', e.created_at)::date
                      = date_trunc('week', u.created_at)::date + ($2::int * 7)`
             : `SELECT count(DISTINCT e.user_id)::int AS c
                FROM events e
                JOIN users u ON u.id = e.user_id
                WHERE e.user_id = ANY($1::uuid[])
+                 AND e.event_name NOT LIKE 'retention.%'
+                 AND e.event_name NOT LIKE 'system.%'
                  AND e.created_at::date = u.created_at::date + $2::int`,
           [userIds, offset]
         );
@@ -288,6 +372,8 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
           pct: cohort.cohort_size > 0 ? Math.round((retained / cohort.cohort_size) * 1000) / 10 : 0,
           rev_cents: revCents,
           roas_pct: roasPct,
+          ads_requested: adsByOffset.get(offset) ?? 0,
+          offer_plays: offerPlaysByOffset.get(offset) ?? 0,
         };
       }
 
@@ -410,13 +496,22 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
       // Aggregate events-per-user on the retention day so we can both
       // filter (retained only) and show a signal of "how actively they
       // came back" in the UI.
+      //
+      // Synthetic events (`retention.%`, `system.%`) are excluded so
+      // the drill-down user list matches the cohort heatmap count
+      // exactly — without the filter we'd surface users who only
+      // "appear" retained because the rollup wrote a milestone event
+      // for them on D-N.
       retentionJoin = `
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS events_on_day,
                  min(e.created_at) AS first_event_on_day,
                  max(e.created_at) AS last_event_on_day
           FROM events e
-          WHERE e.user_id = u.id AND ${retentionPred}
+          WHERE e.user_id = u.id
+            AND e.event_name NOT LIKE 'retention.%'
+            AND e.event_name NOT LIKE 'system.%'
+            AND ${retentionPred}
         ) ev ON true`;
       retentionWhere = 'AND ev.events_on_day > 0';
     }
