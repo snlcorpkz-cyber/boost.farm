@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../../lib/db.js';
+import { REPORTING_TZ } from '../../lib/reporting-tz.js';
 
 export const adminRetentionRouter = Router();
 
@@ -148,18 +149,26 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
     const dateTrunc = groupBy === 'week' ? 'week' : 'day';
     const intervalExpr = groupBy === 'week' ? `($${pi + 1} || ' weeks')::interval` : `($${pi + 1} || ' days')::interval`;
 
-    // Get cohorts: group users by their registration date bucket.
+    // Get cohorts: group users by their registration date bucket
+    // IN REPORTING_TZ. Why TZ matters here: the operator compares
+    // these numbers daily against Facebook Ads Manager / AppsFlyer
+    // dashboard, both of which bucket on the AF account TZ. If we
+    // bucketed in UTC instead, a user registering at 22:00 Almaty
+    // (= 17:00 UTC) would land on the "wrong" calendar date
+    // relative to FB and we'd chase a phantom 30%+ daily drift.
     //
-    // We cast cohort_start to ::text in PG (yielding 'YYYY-MM-DD')
-    // instead of leaving it as date (which node-postgres parses to
-    // a JS Date in local TZ, where `String(d).slice(0,10)` yields
-    // garbage like "Thu Apr 23"). The downstream queries that take
-    // cohortStartIso as a $::date param and the cost lookup join
-    // (cost_date = ANY($1::date[])) both accept ISO strings, and
-    // PG's implicit text→date cast handles them correctly.
+    // The TZ is injected as a literal because PG's `AT TIME ZONE`
+    // takes a literal name, not a runtime expression. The value
+    // comes from REPORTING_TIMEZONE env var (default Asia/Almaty)
+    // and is read once at boot — no SQL-injection surface.
+    //
+    // We cast cohort_start to ::text so node-postgres returns
+    // 'YYYY-MM-DD' verbatim instead of parsing it into a JS Date
+    // (where `String(d).slice(0,10)` yields garbage like
+    // "Thu Apr 23"). Downstream `$::date` casts accept the string.
     const cohortsQuery = `
       SELECT
-        date_trunc('${dateTrunc}', u.created_at)::date::text AS cohort_start,
+        date_trunc('${dateTrunc}', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date::text AS cohort_start,
         count(*)::int AS cohort_size,
         array_agg(u.id) AS user_ids
       FROM users u
@@ -264,7 +273,7 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
                ON e.user_id = ANY($1::uuid[])
               AND e.event_name IN ('ad.revenue', 'econ.offer_completed', 'econ.purchase')
               AND e.revenue_cents IS NOT NULL
-              AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+              AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
              GROUP BY o.offset_day
              ORDER BY o.offset_day`,
           [userIds, offsets, cohortStartIso],
@@ -300,7 +309,7 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
              LEFT JOIN events e
                ON e.user_id = ANY($1::uuid[])
               AND e.event_name = 'ad.requested'
-              AND e.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+              AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
              GROUP BY o.offset_day
              ORDER BY o.offset_day`,
           [userIds, offsets, cohortStartIso],
@@ -330,7 +339,7 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
              FROM unnest($2::int[]) AS o(offset_day)
              LEFT JOIN offer_completions oc
                ON oc.user_id = ANY($1::uuid[])
-              AND oc.created_at::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
+              AND (oc.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
              GROUP BY o.offset_day
              ORDER BY o.offset_day`,
           [userIds, offsets, cohortStartIso],
@@ -367,15 +376,16 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
                WHERE e.user_id = ANY($1::uuid[])
                  AND e.event_name NOT LIKE 'retention.%'
                  AND e.event_name NOT LIKE 'system.%'
-                 AND date_trunc('week', e.created_at)::date
-                     = date_trunc('week', u.created_at)::date + ($2::int * 7)`
+                 AND date_trunc('week', e.created_at AT TIME ZONE '${REPORTING_TZ}')::date
+                     = date_trunc('week', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + ($2::int * 7)`
             : `SELECT count(DISTINCT e.user_id)::int AS c
                FROM events e
                JOIN users u ON u.id = e.user_id
                WHERE e.user_id = ANY($1::uuid[])
                  AND e.event_name NOT LIKE 'retention.%'
                  AND e.event_name NOT LIKE 'system.%'
-                 AND e.created_at::date = u.created_at::date + $2::int`,
+                 AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date
+                     = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + $2::int`,
           [userIds, offset]
         );
         const retained = retainedRow[0]?.c || 0;
@@ -416,15 +426,22 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
  */
 adminRetentionRouter.get('/summary', async (_req, res) => {
   try {
+    // All date_trunc'd in REPORTING_TZ so admin /summary numbers
+    // mirror the /cohorts heatmap and the AppsFlyer dashboard.
+    // Synthetic retention.* / system.* events excluded so the
+    // returned counts reflect real user activity (see Phase A
+    // defense-in-depth in retention bug fix).
     const rows = await query(
       `SELECT
-        date_trunc('day', u.created_at)::date AS day,
+        date_trunc('day', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date AS day,
         count(*)::int AS new_users,
-        count(DISTINCT CASE WHEN e.created_at::date = (u.created_at + interval '1 day')::date THEN e.user_id END)::int AS d1,
-        count(DISTINCT CASE WHEN e.created_at::date = (u.created_at + interval '7 days')::date THEN e.user_id END)::int AS d7,
-        count(DISTINCT CASE WHEN e.created_at::date = (u.created_at + interval '30 days')::date THEN e.user_id END)::int AS d30
+        count(DISTINCT CASE WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 1 THEN e.user_id END)::int AS d1,
+        count(DISTINCT CASE WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 7 THEN e.user_id END)::int AS d7,
+        count(DISTINCT CASE WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 30 THEN e.user_id END)::int AS d30
        FROM users u
        LEFT JOIN events e ON e.user_id = u.id
+        AND e.event_name NOT LIKE 'retention.%'
+        AND e.event_name NOT LIKE 'system.%'
        WHERE u.created_at >= now() - interval '30 days'
        GROUP BY day
        ORDER BY day DESC`
@@ -477,7 +494,12 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
     }
 
     const params: any[] = [date];
-    const filters: string[] = [`date_trunc('${groupBy}', u.created_at)::date = $1::date`];
+    // Same TZ-aware bucketing as /cohorts so click-through from a
+    // cohort row lands on the same calendar bucket the operator
+    // saw — without TZ alignment a user clicked at "Apr 30" cell
+    // could surface users with `created_at` 22:00 UTC Apr 30
+    // (= 03:00 May 1 Almaty) who actually belong to May 1.
+    const filters: string[] = [`date_trunc('${groupBy}', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date = $1::date`];
     let pi = 1;
 
     if (req.query.country) {
@@ -508,8 +530,8 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
       pi++;
       params.push(offset);
       const retentionPred = groupBy === 'week'
-        ? `date_trunc('week', e.created_at)::date = date_trunc('week', u.created_at)::date + ($${pi}::int * 7)`
-        : `e.created_at::date = u.created_at::date + $${pi}::int`;
+        ? `date_trunc('week', e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = date_trunc('week', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + ($${pi}::int * 7)`
+        : `(e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + $${pi}::int`;
       // Aggregate events-per-user on the retention day so we can both
       // filter (retained only) and show a signal of "how actively they
       // came back" in the UI.
@@ -589,18 +611,25 @@ adminRetentionRouter.get('/segments', async (req, res) => {
       return;
     }
 
+    // TZ-bucketed in REPORTING_TZ to match /cohorts + /summary,
+    // and synthetic events excluded so D1/D7 reflect real return
+    // visits (not the rollup writing milestones on the user's
+    // behalf). Without these two filters /segments would disagree
+    // with the cohort table on the same dataset.
     const rows = await query(
       `SELECT
         coalesce(${col}, 'unknown') AS segment,
         count(DISTINCT u.id)::int AS total_users,
         count(DISTINCT CASE
-          WHEN e.created_at::date = u.created_at::date + 1
+          WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 1
           THEN u.id END)::int AS d1,
         count(DISTINCT CASE
-          WHEN e.created_at::date = u.created_at::date + 7
+          WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 7
           THEN u.id END)::int AS d7
        FROM users u
        LEFT JOIN events e ON e.user_id = u.id
+        AND e.event_name NOT LIKE 'retention.%'
+        AND e.event_name NOT LIKE 'system.%'
        WHERE u.created_at >= now() - interval '30 days'
        GROUP BY segment
        ORDER BY total_users DESC

@@ -32,6 +32,7 @@
  */
 
 import { execute } from '../lib/db.js';
+import { REPORTING_TZ } from '../lib/reporting-tz.js';
 import {
   AppsFlyerPullError,
   fetchPartnersByDate,
@@ -68,13 +69,27 @@ export function _resetAfCostPullEnvCache(): void {
  *  reconciliation horizon (Meta normally settles within 72h). */
 const BACKFILL_DAYS = 14;
 
+/**
+ * Format a Date as YYYY-MM-DD in REPORTING_TZ. We can't just
+ * reach for `getUTCDate()` because the worker's `from`/`to`
+ * window has to match the TZ AF will bucket the report on — if
+ * we asked AF for "from=May 1" in UTC at 10pm UTC, that's already
+ * May 2 in Almaty, and AF would return data for May 2 instead.
+ *
+ * Intl.DateTimeFormat does the heavy lifting (handles DST and the
+ * full IANA db), then we re-assemble the YYYY-MM-DD form AF
+ * expects.
+ */
 function ymd(d: Date): string {
-  // UTC because AF returns dates in the report's configured tz, and we
-  // compare cost_date to event timestamps which are stored UTC.
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: REPORTING_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 /**
@@ -174,14 +189,15 @@ export async function runAppsFlyerCostPull(
       fromDate,
       toDate,
       currency: 'USD',
-      // Force AF to bucket spend by UTC calendar days. Without this
-      // the report uses the AF *account* timezone (configured in AF
-      // dashboard, often the operator's local TZ), which puts a
-      // single Meta charge on a different `cost_date` than the
-      // matching `users.created_at::date` UTC bucket. Empirically
-      // observed up to a 38% discrepancy on launch days. With UTC
-      // both sides line up and CPI math becomes exact.
-      timezone: 'UTC',
+      // Bucket spend on the same business-facing calendar that the
+      // retention SQL groups users on (REPORTING_TZ, default
+      // Asia/Almaty). Aligning AF + our cohorts to the same TZ
+      // also makes our admin numbers match Facebook Ads Manager
+      // cell-for-cell — they both report in the AF account TZ.
+      // Without this AF defaults to whatever the AF account is
+      // configured to and we'd risk silent drift if that ever
+      // changed.
+      timezone: REPORTING_TZ,
     });
   } catch (err) {
     if (err instanceof AppsFlyerPullError) {
