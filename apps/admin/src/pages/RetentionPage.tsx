@@ -82,6 +82,124 @@ function theoreticalCohortCostCents(cohortSize: number, cpiDollars: number): num
 }
 
 /**
+ * Unit-economics aggregator. Walks every cohort × every offset
+ * we have data for and produces the totals the panel renders.
+ *
+ * `atOffset` is the "snapshot day" — usually the largest visible
+ * offset, since LTV / payback math wants the freshest cumulative
+ * figure. For payback we instead iterate the full offsets array
+ * separately (see `findPaybackOffset`).
+ *
+ * Defensive against missing cells (sparse data on young cohorts):
+ * a cohort that has no entry for `atOffset` contributes its
+ * cohort_size and cost but zero engagement / revenue. This is the
+ * mathematically honest read — pretending those users had average
+ * activity would inflate the result.
+ */
+interface UnitEconAggregates {
+  totalUsers: number;
+  totalCostCents: number;
+  totalAds: number;
+  totalOfferPlays: number;
+  totalRevCents: number;
+  /**
+   * Sum of retained users across every visible offset for the
+   * cohort window. Approximates "active user-days" when divided
+   * across the offset gaps — used as the ARPDAU denominator.
+   */
+  totalRetainedAcrossOffsets: number;
+  /**
+   * Span of days the offset list covers (max offset). Used as the
+   * "lifetime so far" horizon for ARPDAU and LTV.
+   */
+  windowDays: number;
+}
+
+function aggregateAcrossCohorts(cohortData: any, atOffset: number, offsetsList: number[]): UnitEconAggregates {
+  let totalUsers = 0;
+  let totalCostCents = 0;
+  let totalAds = 0;
+  let totalOfferPlays = 0;
+  let totalRevCents = 0;
+  let totalRetainedAcrossOffsets = 0;
+  for (const c of cohortData?.cohorts ?? []) {
+    totalUsers += c.cohort_size ?? 0;
+    totalCostCents += c.cost_cents ?? 0;
+    const cell = c.retention?.[atOffset];
+    if (cell) {
+      totalAds += cell.ads_requested ?? 0;
+      totalOfferPlays += cell.offer_plays ?? 0;
+      totalRevCents += cell.rev_cents ?? 0;
+    }
+    for (const o of offsetsList) {
+      totalRetainedAcrossOffsets += c.retention?.[o]?.count ?? 0;
+    }
+  }
+  return {
+    totalUsers,
+    totalCostCents,
+    totalAds,
+    totalOfferPlays,
+    totalRevCents,
+    totalRetainedAcrossOffsets,
+    windowDays: atOffset,
+  };
+}
+
+/**
+ * Approximate active user-days over the cohort window via
+ * trapezoidal integration of the retention curve. For offsets
+ * [0, 1, 3, 7, 14, 30] and retained counts [N0=cohort_size, N1,
+ * N3, N7, N14, N30]:
+ *
+ *   AUD ≈ Σ (gap_i × (N_{i-1} + N_i) / 2)
+ *
+ * It's an approximation — we only know the curve at the explicit
+ * offsets, so days in between are assumed to interpolate
+ * linearly. Good enough for ARPDAU back-of-envelope; if the
+ * operator needs precision they can add D2/D5/D10 etc to the
+ * offsets input.
+ */
+function approxActiveUserDays(cohortData: any, offsetsList: number[]): number {
+  let aud = 0;
+  for (const c of cohortData?.cohorts ?? []) {
+    const sortedOffsets = [0, ...offsetsList].slice().sort((a, b) => a - b);
+    let prevOffset = 0;
+    let prevCount = c.cohort_size ?? 0;
+    for (let i = 1; i < sortedOffsets.length; i++) {
+      const o = sortedOffsets[i];
+      const cnt = c.retention?.[o]?.count ?? 0;
+      const gap = o - prevOffset;
+      aud += gap * ((prevCount + cnt) / 2);
+      prevOffset = o;
+      prevCount = cnt;
+    }
+  }
+  return aud;
+}
+
+/** Format a multiplier "0.45x" / "1.20x" / "12x". */
+function formatMultiplier(x: number): string {
+  if (!Number.isFinite(x)) return '—';
+  if (x >= 10) return `${Math.round(x)}x`;
+  return `${x.toFixed(2)}x`;
+}
+
+/** "+18%" / "−42%" — used for the Real vs Hypothesis delta column. */
+function formatDeltaPct(realVal: number, hypoVal: number): { text: string; color: string } {
+  if (!Number.isFinite(realVal) || !Number.isFinite(hypoVal) || hypoVal === 0) {
+    return { text: '—', color: '#9ca3af' };
+  }
+  const diff = ((realVal - hypoVal) / Math.abs(hypoVal)) * 100;
+  const sign = diff >= 0 ? '+' : '−';
+  const text = `${sign}${Math.abs(diff).toFixed(0)}%`;
+  // For revenue/LTV: real > hypo is good (green). For cost/CPI:
+  // real > hypo is bad (red). Caller decides which polarity to
+  // pass — we just colour by sign relative to a preference flag.
+  return { text, color: diff >= 0 ? '#16a34a' : '#dc2626' };
+}
+
+/**
  * "5m ago" / "2h ago" / "3d ago" relative formatting for the
  * cost-pull last-ingested-at timestamp. We deliberately avoid
  * pulling a date library for this one place — the formatter is
@@ -696,6 +814,279 @@ export function RetentionPage() {
               </table>
             </div>
           </div>
+
+          {/* Unit Economics — Real vs Hypothesis side-by-side. The
+              entire panel is a pure derivation from `cohortData` +
+              the calculator inputs already in scope; no new API
+              call. We hide it when there are no cohorts (avoids
+              showing nonsense like "ARPU = NaN" on an empty
+              dataset) and surface a one-line warning when source
+              filter is "all" since LTV/CAC is only meaningful
+              against paid acquisition spend. */}
+          {cohortData?.cohorts?.length > 0 && (() => {
+            const offsetsList: number[] = cohortData.offsets ?? [];
+            const maxOffset = offsetsList.length > 0 ? Math.max(...offsetsList) : 0;
+
+            const agg = aggregateAcrossCohorts(cohortData, maxOffset, offsetsList);
+            const aud = approxActiveUserDays(cohortData, offsetsList);
+
+            // ── REAL metrics (drawn from observed engagement & cost) ──
+            const realCpiCents = agg.totalUsers > 0 && agg.totalCostCents > 0
+              ? agg.totalCostCents / agg.totalUsers
+              : null;
+            const adsPerUser = agg.totalUsers > 0 ? agg.totalAds / agg.totalUsers : 0;
+            const offerPlaysPerUser = agg.totalUsers > 0 ? agg.totalOfferPlays / agg.totalUsers : 0;
+            const realArpuCents = agg.totalUsers > 0 ? agg.totalRevCents / agg.totalUsers : 0;
+            const realArpdauCents = aud > 0 ? agg.totalRevCents / aud : 0;
+            const realLtvCents = realArpuCents; // cumulative ARPU at max offset = LTV(N)
+            const realLtvCac = realCpiCents != null && realCpiCents > 0
+              ? realLtvCents / realCpiCents
+              : null;
+            // First offset at which cumulative real revenue per
+            // install matches CPI. Walks every visible offset in
+            // order and returns the smallest hit; null when the
+            // window doesn't cover payback yet (UI shows "> Dmax").
+            const realPaybackOffsetClean = (() => {
+              if (realCpiCents == null || realCpiCents <= 0) return null;
+              for (const o of offsetsList.slice().sort((a, b) => a - b)) {
+                let users = 0;
+                let revSum = 0;
+                for (const c of cohortData.cohorts) {
+                  users += c.cohort_size ?? 0;
+                  revSum += c.retention?.[o]?.rev_cents ?? 0;
+                }
+                if (users > 0 && revSum / users >= realCpiCents) return o;
+              }
+              return null;
+            })();
+
+            // ── HYPOTHESIS metrics (calculator inputs × real engagement) ──
+            // Important: hypothesis revenue is computed against
+            // the REAL ad/offer engagement counts, not made up
+            // from thin air. The "what if" is purely on the
+            // monetisation lever (CPM, payout) — NOT on whether
+            // users played any ads at all. This keeps the
+            // hypothesis grounded in actual product behaviour.
+            const hypoCpiCents = Math.round(calcCpiDollars * 100);
+            const hypoTotalCostCents = agg.totalUsers * hypoCpiCents;
+            const hypoAdRevCents = (agg.totalAds / 1000) * calcCpmDollars * 100;
+            const hypoOfferRevCents = agg.totalOfferPlays * calcOfferPayoutCents;
+            const hypoTotalRevCents = Math.round(hypoAdRevCents + hypoOfferRevCents);
+            const hypoArpuCents = agg.totalUsers > 0 ? hypoTotalRevCents / agg.totalUsers : 0;
+            const hypoArpdauCents = aud > 0 ? hypoTotalRevCents / aud : 0;
+            const hypoLtvCents = hypoArpuCents;
+            const hypoLtvCac = hypoCpiCents > 0 ? hypoLtvCents / hypoCpiCents : null;
+            const hypoPaybackOffset = (() => {
+              if (hypoCpiCents <= 0) return null;
+              for (const o of offsetsList.slice().sort((a, b) => a - b)) {
+                let users = 0;
+                let projRev = 0;
+                for (const c of cohortData.cohorts) {
+                  users += c.cohort_size ?? 0;
+                  const cell = c.retention?.[o];
+                  if (!cell) continue;
+                  const ads = cell.ads_requested ?? 0;
+                  const offers = cell.offer_plays ?? 0;
+                  projRev += projectedRevenueCents(ads, offers, calcCpmDollars, calcOfferPayoutCents);
+                }
+                if (users > 0 && projRev / users >= hypoCpiCents) return o;
+              }
+              return null;
+            })();
+
+            // Verdict colours/labels — simple bands per industry
+            // convention. < 1.0 = unprofitable, 1.0-3.0 = marginal,
+            // ≥ 3.0 = healthy. Surfaced in the headline card so
+            // operators can read the page in 2 seconds.
+            const verdictForRatio = (ratio: number | null): { label: string; color: string; bg: string } => {
+              if (ratio == null) return { label: 'no data', color: '#6b7280', bg: '#f3f4f6' };
+              if (ratio >= 3) return { label: 'healthy', color: '#15803d', bg: '#dcfce7' };
+              if (ratio >= 1) return { label: 'marginal', color: '#b45309', bg: '#fef3c7' };
+              return { label: 'unprofitable', color: '#991b1b', bg: '#fee2e2' };
+            };
+            const realVerdict = verdictForRatio(realLtvCac);
+            const hypoVerdict = verdictForRatio(hypoLtvCac);
+
+            // Row helper to keep the JSX scannable.
+            const Row = ({
+              label,
+              real,
+              hypo,
+              tooltip,
+              deltaSign,
+              hideHypo,
+            }: {
+              label: string;
+              real: string;
+              hypo: string;
+              tooltip?: string;
+              /** 'higher_is_better' (revenue, LTV) or 'lower_is_better' (cost, CPI). */
+              deltaSign?: 'higher_is_better' | 'lower_is_better';
+              hideHypo?: boolean;
+            }) => {
+              // Parse leading numbers out of the formatted strings
+              // for the delta calculation. Cheap & cheerful — every
+              // formatted real/hypo string here starts with a
+              // currency / multiplier / count value the regex can
+              // pick up.
+              const parseNum = (s: string): number => {
+                const m = s.match(/-?\d[\d,]*(?:\.\d+)?/);
+                return m ? Number(m[0].replace(/,/g, '')) : NaN;
+              };
+              const r = parseNum(real);
+              const h = parseNum(hypo);
+              const delta = (!hideHypo && deltaSign && Number.isFinite(r) && Number.isFinite(h))
+                ? formatDeltaPct(r, h)
+                : null;
+              // Invert colour when lower-is-better (e.g. CPI: real
+              // higher than hypothesis is BAD for us, render red).
+              const deltaColor = delta && deltaSign === 'lower_is_better'
+                ? (delta.text.startsWith('+') ? '#dc2626' : '#16a34a')
+                : delta?.color;
+              return (
+                <tr className="border-t border-gray-100">
+                  <td className="px-3 py-2 text-gray-700" title={tooltip}>{label}</td>
+                  <td className="px-3 py-2 text-right font-mono text-gray-900">{real}</td>
+                  <td className="px-3 py-2 text-right font-mono text-blue-700">{hideHypo ? '—' : hypo}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: deltaColor ?? '#9ca3af' }}>
+                    {delta?.text ?? '—'}
+                  </td>
+                </tr>
+              );
+            };
+
+            return (
+              <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800">Unit Economics</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      Cohort window: {cohortData.cohorts.length} cohorts, snapshot at {groupBy === 'week' ? 'W' : 'D'}{maxOffset}
+                      {sourceFilter !== 'paid' && (
+                        <span className="ml-2 text-amber-600">
+                          (Source = {sourceFilter} — LTV/CAC is most meaningful with Paid filter)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Verdict cards — at-a-glance "are we profitable?". */}
+                  <div className="flex gap-2">
+                    <div className="rounded-lg px-3 py-2 text-xs font-medium" style={{ background: realVerdict.bg, color: realVerdict.color }} title="Verdict for the REAL LTV / CAC ratio. ≥3.0 healthy; 1-3 marginal; <1 unprofitable.">
+                      Real {formatMultiplier(realLtvCac ?? NaN)} <span className="opacity-70">· {realVerdict.label}</span>
+                    </div>
+                    <div className="rounded-lg px-3 py-2 text-xs font-medium" style={{ background: hypoVerdict.bg, color: hypoVerdict.color }} title="Verdict for the HYPOTHESIS LTV / CAC ratio (your calculator inputs). Same bands.">
+                      Hypothesis {formatMultiplier(hypoLtvCac ?? NaN)} <span className="opacity-70">· {hypoVerdict.label}</span>
+                    </div>
+                  </div>
+                </div>
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-white">
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Metric</th>
+                      <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Real</th>
+                      <th className="text-right px-3 py-2 text-xs font-semibold text-blue-600 uppercase tracking-wide">Hypothesis</th>
+                      <th className="text-right px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Real vs hypothesis (% diff). Green = real is better than your assumption; red = real is worse.">Δ vs hypo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Row
+                      label="Users in window"
+                      real={agg.totalUsers.toLocaleString()}
+                      hypo={agg.totalUsers.toLocaleString()}
+                      tooltip="Sum of cohort_size across the visible cohorts. Same number used as both real and hypothesis denominator."
+                    />
+                    <Row
+                      label="Total spend"
+                      real={formatCents(agg.totalCostCents)}
+                      hypo={formatCents(hypoTotalCostCents)}
+                      tooltip="Real = sum of ad_costs.spend for cohort dates (Source filter applied). Hypothesis = users × CPI input."
+                      deltaSign="lower_is_better"
+                    />
+                    <Row
+                      label="CPI (cost per install)"
+                      real={realCpiCents != null ? formatCents(realCpiCents) : '—'}
+                      hypo={formatCents(hypoCpiCents)}
+                      tooltip="Real = total spend / total users. Hypothesis = your CPI input. Lower is better — green when real beats your assumption."
+                      deltaSign="lower_is_better"
+                    />
+                    <Row
+                      label="Avg ad requests / user"
+                      real={adsPerUser.toFixed(1)}
+                      hypo=""
+                      hideHypo
+                      tooltip="Cumulative ad.requested events through D{max} divided by cohort size. Pure engagement metric — no hypothesis variant because we don't speculate about user behaviour, only monetisation rates."
+                    />
+                    <Row
+                      label="Avg unique offer plays / user"
+                      real={offerPlaysPerUser.toFixed(2)}
+                      hypo=""
+                      hideHypo
+                      tooltip="DISTINCT (user, offer) plays through D{max} / cohort size. Multiple postbacks for the same user×offer count once — matches what we'd actually monetise."
+                    />
+                    <Row
+                      label={`Total revenue (${groupBy === 'week' ? 'W' : 'D'}${maxOffset})`}
+                      real={formatCents(agg.totalRevCents)}
+                      hypo={formatCents(hypoTotalRevCents)}
+                      tooltip="Real = sum of events.revenue_cents for ad.revenue + econ.offer_completed + econ.purchase. Hypothesis = (ads/1000 × CPM × 100) + (offer_plays × payout_cents)."
+                      deltaSign="higher_is_better"
+                    />
+                    <Row
+                      label={`ARPU (${groupBy === 'week' ? 'W' : 'D'}${maxOffset})`}
+                      real={formatCents(realArpuCents)}
+                      hypo={formatCents(hypoArpuCents)}
+                      tooltip="Average revenue per user across the cohort window. = total_revenue / total_users."
+                      deltaSign="higher_is_better"
+                    />
+                    <Row
+                      label="ARPDAU (avg)"
+                      real={formatCents(realArpdauCents)}
+                      hypo={formatCents(hypoArpdauCents)}
+                      tooltip="Daily average. Approximates active user-days via trapezoidal interpolation of the retention curve at the offsets you have selected. For higher precision, add more offsets (e.g. 2,5,10) to the offsets input."
+                      deltaSign="higher_is_better"
+                    />
+                    <Row
+                      label={`LTV / install (${groupBy === 'week' ? 'W' : 'D'}${maxOffset})`}
+                      real={formatCents(realLtvCents)}
+                      hypo={formatCents(hypoLtvCents)}
+                      tooltip="Equal to cumulative ARPU at the snapshot offset. The longer your offsets window, the closer this gets to true lifetime value."
+                      deltaSign="higher_is_better"
+                    />
+                    <Row
+                      label="LTV / CAC ratio"
+                      real={formatMultiplier(realLtvCac ?? NaN)}
+                      hypo={formatMultiplier(hypoLtvCac ?? NaN)}
+                      tooltip="The headline number. ≥3.0 = scale aggressively; 1-3 = optimise then scale; <1 = stop or reduce CPI / increase monetisation."
+                      deltaSign="higher_is_better"
+                    />
+                    <Row
+                      label="Payback offset"
+                      real={realPaybackOffsetClean != null ? `${groupBy === 'week' ? 'W' : 'D'}${realPaybackOffsetClean}` : `> ${groupBy === 'week' ? 'W' : 'D'}${maxOffset}`}
+                      hypo={hypoPaybackOffset != null ? `${groupBy === 'week' ? 'W' : 'D'}${hypoPaybackOffset}` : `> ${groupBy === 'week' ? 'W' : 'D'}${maxOffset}`}
+                      tooltip="The first offset where cumulative revenue per install meets/exceeds CPI. '> Dmax' means it didn't pay back inside the visible window — extend the offsets to find the real payback day."
+                    />
+                  </tbody>
+                </table>
+                {/* What-to-do-about-it footer. Plain English so it
+                    reads quickly during a daily standup. The
+                    suggestions are derived live from which side of
+                    the equation is dragging the ratio down. */}
+                <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 text-xs text-gray-600 leading-relaxed">
+                  <strong className="text-gray-800">How to read this:</strong>{' '}
+                  {realLtvCac == null ? (
+                    <>No real cost data yet — verify cost sync above. Until then the Real column is incomplete and only Hypothesis is actionable.</>
+                  ) : realLtvCac >= 3 ? (
+                    <>Real LTV/CAC is healthy ({formatMultiplier(realLtvCac)}). Scale aggressively and re-check this number weekly as the cohort matures and revenue accumulates beyond {groupBy === 'week' ? 'W' : 'D'}{maxOffset}.</>
+                  ) : realLtvCac >= 1 ? (
+                    <>Real LTV/CAC is marginal ({formatMultiplier(realLtvCac)}). Two main levers: (a) lower CPI (better targeting / cheaper sources), (b) increase ARPU (more rewarded ads served, more offer placements visible to high-LTV users).</>
+                  ) : (
+                    <>Real LTV/CAC is below 1x ({formatMultiplier(realLtvCac)}) — the campaign is currently losing money on every install. To reach 1x you'd need {realCpiCents != null ? formatCents(Math.round(realCpiCents - realLtvCents)) : '—'} more LTV per install, or to drop CPI by ~{realCpiCents != null && realLtvCents > 0 ? Math.round((1 - realLtvCents / realCpiCents) * 100) : '—'}%. Pause / narrow targeting and revisit when monetisation improves.</>
+                  )}
+                  {' '}
+                  Hypothesis is currently {formatMultiplier(hypoLtvCac ?? NaN)}{hypoLtvCac != null && realLtvCac != null && hypoLtvCac > realLtvCac ? ' — your assumptions are more optimistic than reality.' : hypoLtvCac != null && realLtvCac != null && hypoLtvCac < realLtvCac ? ' — reality is beating your assumptions.' : ''}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Legend */}
           <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-gray-500">
