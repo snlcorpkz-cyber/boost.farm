@@ -1032,6 +1032,42 @@ export function RetentionPage() {
                   </div>
                 </div>
 
+                {/* Implied retention curve preview — sanity check.
+                    Operators set D1 and D30, but the model
+                    extrapolates to the full horizon via power
+                    law. Showing the implied values at D7 / D14 /
+                    D60 / D90 lets the operator catch a bad fit
+                    immediately ("our real D60 is 6% but the model
+                    says 12% — the curve shape is too gentle"). */}
+                <div className="px-4 py-3 border-b border-gray-100 bg-blue-50/30">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Implied retention curve (model fit)</div>
+                    <span
+                      className="text-[10px] text-gray-400 cursor-help"
+                      title="The curve r(d) = r1 · d^(-b) is fitted from your D1 and D30 inputs and projected to the full horizon. If a projected point looks wrong vs your real measurements (e.g. D60), nudge D1 or D30 until it lines up."
+                    >
+                      ⓘ how
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 font-mono text-xs">
+                    {[1, 7, 14, 30, 60, 90].filter(d => d <= fcHorizonDays).map(d => {
+                      const pct = rFn(d) * 100;
+                      const isAnchor = d === 1 || d === 30;
+                      return (
+                        <span key={d} className={isAnchor ? 'text-blue-700 font-semibold' : 'text-gray-600'}>
+                          D{d}: {pct.toFixed(1)}%
+                          {isAnchor && <span className="text-[9px] text-blue-500 ml-1">(anchor)</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-2">
+                    Sum of curve over D0–D{fcHorizonDays} = <strong className="text-gray-800">{activeDays.toFixed(2)} active days per install</strong>.
+                    {' '}Of those, ~<strong>{activeDaysOverHorizon(rFn, Math.min(30, fcHorizonDays)).toFixed(1)}</strong> happen in the first 30 days
+                    {fcHorizonDays > 30 && <> and ~<strong>{(activeDays - activeDaysOverHorizon(rFn, 30)).toFixed(1)}</strong> in the long tail D31–D{fcHorizonDays}</>}.
+                  </div>
+                </div>
+
                 {/* Step-by-step derivation */}
                 <div className="px-4 py-4 border-b border-gray-100">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Step-by-step derivation</div>
@@ -1048,10 +1084,13 @@ export function RetentionPage() {
                     <li className="flex items-start gap-2">
                       <span className="font-mono text-gray-400 w-8 shrink-0">②</span>
                       <span className="flex-1 text-gray-700">
-                        <strong>Active days through D{fcHorizonDays}</strong> = sum of fitted retention curve r(d) = r{fcRetD1Pct.toFixed(0)}%·d^(-b) where b solves r30={fcRetD30Pct.toFixed(0)}%
+                        <strong>Expected active days per install</strong> over D0–D{fcHorizonDays} = Σ r(d), the fitted curve r(d) = r{fcRetD1Pct.toFixed(0)}%·d^(-b)
                         <span className="font-mono text-gray-500 ml-2">
-                          = <strong className="text-gray-900">{activeDays.toFixed(2)} days</strong>
+                          = <strong className="text-gray-900">{activeDays.toFixed(2)} active-days</strong>
                         </span>
+                        <div className="text-[11px] text-gray-400 mt-0.5">
+                          (not consecutive lifespan — sum of "% still active" over every day in the horizon)
+                        </div>
                       </span>
                     </li>
                     <li className="flex items-start gap-2">
