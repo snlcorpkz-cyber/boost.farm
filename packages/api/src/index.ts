@@ -197,17 +197,20 @@ app.listen(PORT, () => {
     console.log('[af-s2s] Disabled (APPSFLYER_S2S_ENABLED!=true or creds/allow-list missing)');
   }
 
-  // AppsFlyer cost pull. Daily snapshot of the last 14 days of
-  // partner spend (Cost / Impressions / Clicks / Installs) into
-  // `ad_costs`. AF's aggregated Pull API rate-limits this report at
-  // 24 calls/day for 3+ day ranges, so anything tighter than daily
-  // risks the 400 CallLimit wall — daily gives us 24× headroom even
-  // accounting for one retry on transient failure.
+  // AppsFlyer cost pull. Snapshot of the last 14 days of partner
+  // spend (Cost / Impressions / Clicks / Installs) into `ad_costs`.
+  // AF's aggregated Pull API rate-limits this report at 24 calls/
+  // day for 3+ day ranges; we run every 6h (= 4 calls/day, 6× under
+  // the cap) so yesterday's still-reconciling spend gets re-pulled
+  // multiple times until Meta's 24-48h restate window settles. The
+  // earlier daily schedule meant a single mid-day pull captured a
+  // half-finished day and we had to wait 24h for the next chance —
+  // observed yielding ~45% of the real spend on launch days.
   //
   // Off-by-default. AF_COST_PULL_ENABLED + APPSFLYER_PULL_API_TOKEN
   // must be set; without them this scheduler block is a no-op log
   // and the retention page falls back to "—" CPI/ROAS columns.
-  const AF_COST_PULL_INTERVAL = 24 * 60 * 60 * 1000;
+  const AF_COST_PULL_INTERVAL = 6 * 60 * 60 * 1000;
   const afCostEnv = getAfCostPullEnv();
   if (afCostEnv.enabled) {
     // First run is deferred 4 minutes — give the DB pool a chance
@@ -221,7 +224,7 @@ app.listen(PORT, () => {
         runAppsFlyerCostPull().catch((err) => console.error('[af-cost-pull]', err));
       }, AF_COST_PULL_INTERVAL);
     }, 4 * 60 * 1000);
-    console.log('[af-cost-pull] Scheduled daily (first run in 4 min)');
+    console.log('[af-cost-pull] Scheduled every 6h (first run in 4 min)');
   } else {
     console.log('[af-cost-pull] Disabled (AF_COST_PULL_ENABLED!=true or APPSFLYER_PULL_API_TOKEN missing)');
   }

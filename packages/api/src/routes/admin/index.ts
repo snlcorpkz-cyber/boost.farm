@@ -11,6 +11,7 @@ import { adminAdsRouter } from './ads.js';
 import { adminAnalyticsRouter } from './analytics.js';
 import { adminAcquisitionRouter } from './acquisition.js';
 import { adminPartnersRouter } from './partners.js';
+import { adminJobsRouter } from './jobs.js';
 
 export const adminRouter = Router();
 
@@ -27,3 +28,4 @@ adminRouter.use('/ads', adminAdsRouter);
 adminRouter.use('/analytics', adminAnalyticsRouter);
 adminRouter.use('/acquisition', adminAcquisitionRouter);
 adminRouter.use('/partners', adminPartnersRouter);
+adminRouter.use('/jobs', adminJobsRouter);

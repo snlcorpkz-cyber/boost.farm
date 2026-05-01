@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -81,6 +81,28 @@ function theoreticalCohortCostCents(cohortSize: number, cpiDollars: number): num
   return Math.round(cohortSize * cpiDollars * 100);
 }
 
+/**
+ * "5m ago" / "2h ago" / "3d ago" relative formatting for the
+ * cost-pull last-ingested-at timestamp. We deliberately avoid
+ * pulling a date library for this one place — the formatter is
+ * 8 lines and the result is human-readable enough for ops.
+ */
+function relativeTimeFromIso(iso: string | null | undefined): string {
+  if (!iso) return 'never';
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return 'unknown';
+  const diff = Date.now() - then;
+  if (diff < 0) return 'in the future';
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ${min % 60}m ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ${hr % 24}h ago`;
+}
+
 function roasPctToStripe(pct: number | null): RoasStripe {
   if (pct == null) return { background: 'transparent', color: '#9ca3af' };
   if (pct >= 100) return { background: '#16a34a', color: '#15803d' };
@@ -138,6 +160,33 @@ export function RetentionPage() {
     queryKey: ['admin', 'retention', 'cohorts', qs],
     queryFn: () => api(`/retention/cohorts?${qs}`),
     enabled: activeTab === 'cohorts',
+  });
+
+  // Cost-pull status (worker health + freshness). Polled every 30s
+  // so the timestamp the operator sees is reasonably current
+  // without being chatty. Errors fall back to a static "unknown"
+  // rather than fetching forever — the UI panel reads `data ?? {}`.
+  const queryClient = useQueryClient();
+  const { data: costPullStatus } = useQuery({
+    queryKey: ['admin', 'jobs', 'af-cost-pull', 'status'],
+    queryFn: () => api('/jobs/af-cost-pull/status'),
+    enabled: activeTab === 'cohorts',
+    refetchInterval: 30_000,
+  });
+
+  // Manual cost-pull trigger. The `truncate_range` flag is exposed
+  // as a separate code path so the operator can pick "just refresh
+  // (additive)" vs "wipe & re-pull (post-TZ recovery)" — these have
+  // different blast radii and shouldn't be a single button.
+  const costPullMutation = useMutation({
+    mutationFn: (truncateRange: boolean) =>
+      api('/jobs/af-cost-pull', { method: 'POST', body: { truncate_range: truncateRange } }),
+    onSuccess: () => {
+      // Status panel + cohort table both depend on ad_costs — bust
+      // both caches so the operator sees the new data immediately.
+      queryClient.invalidateQueries({ queryKey: ['admin', 'jobs', 'af-cost-pull', 'status'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'retention', 'cohorts'] });
+    },
   });
 
   const clearFilters = () => {
@@ -280,6 +329,78 @@ export function RetentionPage() {
                     className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Cost-data sync panel — shows AppsFlyer Pull worker
+              health and lets the operator force an immediate
+              re-pull without SSHing into the API container. The
+              "Refresh + retruncate" path additionally wipes the
+              14-day window in `ad_costs` first, used after a TZ
+              change so orphan rows under the now-invalid cost_date
+              can't bias sums. */}
+          <div className="mt-6 rounded-xl border border-gray-200 bg-white p-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cost sync</span>
+              {(() => {
+                const status = costPullStatus as { enabled?: boolean; configured?: boolean; last_ingested_at?: string | null; total_rows?: number; table_error?: string } | undefined;
+                if (!status) return <span className="text-gray-400">checking…</span>;
+                if (status.table_error) {
+                  return <span className="text-red-600 text-xs">ad_costs missing — apply migration 026</span>;
+                }
+                if (!status.enabled) {
+                  return <span className="text-amber-600 text-xs">worker disabled (set AF_COST_PULL_ENABLED + APPSFLYER_PULL_API_TOKEN, then restart API)</span>;
+                }
+                return (
+                  <span className="text-gray-700">
+                    last sync <strong>{relativeTimeFromIso(status.last_ingested_at)}</strong>
+                    {typeof status.total_rows === 'number' && status.total_rows > 0 && (
+                      <span className="text-gray-400 ml-2">· {status.total_rows.toLocaleString()} rows</span>
+                    )}
+                  </span>
+                );
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              {costPullMutation.isPending && (
+                <span className="text-xs text-blue-600 animate-pulse">pulling from AppsFlyer…</span>
+              )}
+              {costPullMutation.isError && (
+                <span className="text-xs text-red-600" title={(costPullMutation.error as Error)?.message}>
+                  failed: {(costPullMutation.error as Error)?.message?.slice(0, 60)}
+                </span>
+              )}
+              {costPullMutation.isSuccess && !costPullMutation.isPending && (() => {
+                const r = (costPullMutation.data as { result?: { fetched: number; upserted: number; zeroCost: boolean } } | undefined)?.result;
+                if (!r) return null;
+                return (
+                  <span className="text-xs text-green-700">
+                    {r.zeroCost
+                      ? `pulled ${r.fetched} rows, all spend=0 (Meta integration not synced)`
+                      : `pulled ${r.upserted}/${r.fetched} rows`}
+                  </span>
+                );
+              })()}
+              <button
+                onClick={() => costPullMutation.mutate(false)}
+                disabled={costPullMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                title="Pull the last 14 days from AppsFlyer and UPSERT into ad_costs. Safe to click — additive only, never deletes."
+              >
+                Refresh now
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('Wipe the last 14 days of ad_costs and re-pull from AppsFlyer? Use this after switching the AF Pull API timezone — old rows under the previous timezone will leave orphans otherwise.')) {
+                    costPullMutation.mutate(true);
+                  }
+                }}
+                disabled={costPullMutation.isPending}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                title="DELETE every row in ad_costs whose cost_date is within the last 14 days, then re-pull. Required after a timezone shift to clear orphan rows under the old cost_date."
+              >
+                Refresh + retruncate
+              </button>
             </div>
           </div>
 

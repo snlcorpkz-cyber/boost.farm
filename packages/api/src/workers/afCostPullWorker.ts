@@ -130,7 +130,23 @@ export interface AfCostPullResult {
   skipped: boolean;
 }
 
-export async function runAppsFlyerCostPull(): Promise<AfCostPullResult> {
+export interface RunAppsFlyerCostPullOpts {
+  /**
+   * If true, DELETE every row in `ad_costs` whose cost_date falls
+   * inside the 14-day backfill window before re-inserting. Use
+   * sparingly — it's the right move when AF starts reporting in a
+   * different timezone (cost_date keys shift by ±1 day so the
+   * UPSERT can leave orphan rows under the old date) or when
+   * operations need to force-resync a stale window. Off by default
+   * for the scheduled cron path so we don't churn fully-correct
+   * historical rows.
+   */
+  truncateRange?: boolean;
+}
+
+export async function runAppsFlyerCostPull(
+  opts: RunAppsFlyerCostPullOpts = {},
+): Promise<AfCostPullResult> {
   const env = getAfCostPullEnv();
   const today = new Date();
   const from = new Date(today);
@@ -158,6 +174,14 @@ export async function runAppsFlyerCostPull(): Promise<AfCostPullResult> {
       fromDate,
       toDate,
       currency: 'USD',
+      // Force AF to bucket spend by UTC calendar days. Without this
+      // the report uses the AF *account* timezone (configured in AF
+      // dashboard, often the operator's local TZ), which puts a
+      // single Meta charge on a different `cost_date` than the
+      // matching `users.created_at::date` UTC bucket. Empirically
+      // observed up to a 38% discrepancy on launch days. With UTC
+      // both sides line up and CPI math becomes exact.
+      timezone: 'UTC',
     });
   } catch (err) {
     if (err instanceof AppsFlyerPullError) {
@@ -174,6 +198,22 @@ export async function runAppsFlyerCostPull(): Promise<AfCostPullResult> {
     }
     console.error('[af-cost-pull] unexpected error:', (err as Error).message);
     return skel;
+  }
+
+  // Optional clean-slate step: when the operator triggers a manual
+  // re-pull after a TZ change (or any other "old rows might be
+  // stale" scenario), wipe the window first so orphans under the
+  // old (Almaty) cost_date can't linger and inflate sums.
+  if (opts.truncateRange) {
+    try {
+      const deleted = await execute(
+        `DELETE FROM ad_costs WHERE cost_date BETWEEN $1::date AND $2::date`,
+        [fromDate, toDate],
+      );
+      console.log(`[af-cost-pull] truncated ${deleted} ad_costs rows in [${fromDate}..${toDate}] before re-pull`);
+    } catch (delErr) {
+      console.error('[af-cost-pull] truncate failed (continuing with upsert):', (delErr as Error).message);
+    }
   }
 
   let upserted = 0;
