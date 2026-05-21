@@ -4,6 +4,10 @@ import { REPORTING_TZ } from '../../lib/reporting-tz.js';
 
 export const adminRetentionRouter = Router();
 
+// See admin/users.ts — same UUID guard for the partner_id filter so an
+// invalid value gets a 400 instead of a Postgres 22P02.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Cohort retention analysis with cost & ROAS overlay.
  *
@@ -13,6 +17,9 @@ export const adminRetentionRouter = Router();
  *   - group_by:      'day' | 'week' (default 'day')
  *   - source_filter: 'all' | 'paid' | 'organic' (default 'all')
  *   - country, platform, rank, utm_source: cohort filters
+ *   - partner_id:    'organic' | 'any' | <uuid> — split paid (partner) vs
+ *                    organic traffic in the cohort. Critical once affiliate
+ *                    networks (TimeBucks, etc.) start mixing into the funnel.
  *
  * Cost / CPI / ROAS:
  *   When source_filter='paid' we narrow the cohort to users whose
@@ -132,6 +139,21 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
       pi++;
       filters.push(`u.utm_source = $${pi}`);
       params.push(req.query.utm_source);
+    }
+
+    const partnerIdRaw = String(req.query.partner_id ?? '').trim().toLowerCase();
+    if (partnerIdRaw === 'organic') {
+      filters.push('u.partner_id IS NULL');
+    } else if (partnerIdRaw === 'any') {
+      filters.push('u.partner_id IS NOT NULL');
+    } else if (partnerIdRaw) {
+      if (!UUID_RE.test(partnerIdRaw)) {
+        res.status(400).json({ error: 'Invalid partner_id (expected UUID, "organic", or "any")' });
+        return;
+      }
+      pi++;
+      filters.push(`u.partner_id = $${pi}::uuid`);
+      params.push(partnerIdRaw);
     }
 
     const whereUser = filters.length ? `AND ${filters.join(' AND ')}` : '';
@@ -522,6 +544,20 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
       filters.push(`EXISTS (SELECT 1 FROM farms rf WHERE rf.user_id = u.id AND rf.rank_id = $${pi})`);
       params.push(req.query.rank);
     }
+    const partnerIdRaw = String(req.query.partner_id ?? '').trim().toLowerCase();
+    if (partnerIdRaw === 'organic') {
+      filters.push('u.partner_id IS NULL');
+    } else if (partnerIdRaw === 'any') {
+      filters.push('u.partner_id IS NOT NULL');
+    } else if (partnerIdRaw) {
+      if (!UUID_RE.test(partnerIdRaw)) {
+        res.status(400).json({ error: 'Invalid partner_id (expected UUID, "organic", or "any")' });
+        return;
+      }
+      pi++;
+      filters.push(`u.partner_id = $${pi}::uuid`);
+      params.push(partnerIdRaw);
+    }
 
     // Retention-day predicate. Same calendar-bucket logic as /cohorts.
     let retentionJoin = '';
@@ -566,6 +602,9 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
          u.country,
          u.device_platform,
          u.utm_source,
+         u.partner_id,
+         p.slug AS partner_slug,
+         p.name AS partner_name,
          u.created_at,
          u.last_active_at,
          (SELECT rank_id FROM farms WHERE user_id = u.id LIMIT 1) AS rank_id,
@@ -573,6 +612,7 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
            ? 'ev.events_on_day, ev.first_event_on_day, ev.last_event_on_day'
            : 'NULL::int AS events_on_day, NULL::timestamptz AS first_event_on_day, NULL::timestamptz AS last_event_on_day'}
        FROM users u
+       LEFT JOIN partners p ON p.id = u.partner_id
        ${retentionJoin}
        WHERE ${filters.join(' AND ')}
        ${retentionWhere}
@@ -596,18 +636,67 @@ adminRetentionRouter.get('/cohort-users', async (req, res) => {
 
 /**
  * Segment breakdown: compare retention across different segments.
+ *
+ * Supports `dimension=partner` which groups by attribution partner
+ * (organic vs each named partner). This is the cleanest way to spot
+ * if affiliate traffic — TimeBucks etc. — has materially different
+ * retention than our paid Meta / AppsFlyer cohorts. The grouping
+ * uses partners.name (falls back to slug, then 'organic') so admins
+ * see "TimeBucks" rather than a UUID.
  */
 adminRetentionRouter.get('/segments', async (req, res) => {
   try {
     const dimension = (req.query.dimension as string) || 'country';
-    const allowedDims: Record<string, string> = {
+    // Simple-column dimensions live on `users` directly. The 'partner'
+    // dimension needs a JOIN, so we handle it as a separate branch below.
+    const simpleDims: Record<string, string> = {
       country: 'u.country',
       platform: 'u.device_platform',
       utm_source: 'u.utm_source',
     };
-    const col = allowedDims[dimension];
+
+    if (dimension === 'partner') {
+      // TZ-bucketed + synthetic-event filter to match the simple-dim
+      // branch below (and the cohort heatmap). Without this the
+      // partner segment view would over-count "retained" users by
+      // including retention.dN_return rollup events.
+      const rows = await query(
+        `SELECT
+          coalesce(p.name, p.slug, 'organic') AS segment,
+          count(DISTINCT u.id)::int AS total_users,
+          count(DISTINCT CASE
+            WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 1
+            THEN u.id END)::int AS d1,
+          count(DISTINCT CASE
+            WHEN (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + 7
+            THEN u.id END)::int AS d7
+         FROM users u
+         LEFT JOIN partners p ON p.id = u.partner_id
+         LEFT JOIN events e ON e.user_id = u.id
+          AND e.event_name NOT LIKE 'retention.%'
+          AND e.event_name NOT LIKE 'system.%'
+         WHERE u.created_at >= now() - interval '30 days'
+         GROUP BY segment
+         ORDER BY total_users DESC
+         LIMIT 20`
+      );
+
+      const result = rows.map((r: any) => ({
+        segment: r.segment,
+        total_users: r.total_users,
+        d1_count: r.d1,
+        d7_count: r.d7,
+        d1_pct: r.total_users > 0 ? Math.round((r.d1 / r.total_users) * 1000) / 10 : 0,
+        d7_pct: r.total_users > 0 ? Math.round((r.d7 / r.total_users) * 1000) / 10 : 0,
+      }));
+
+      res.json({ dimension, segments: result });
+      return;
+    }
+
+    const col = simpleDims[dimension];
     if (!col) {
-      res.status(400).json({ error: 'Invalid dimension. Allowed: country, platform, utm_source' });
+      res.status(400).json({ error: 'Invalid dimension. Allowed: country, platform, utm_source, partner' });
       return;
     }
 

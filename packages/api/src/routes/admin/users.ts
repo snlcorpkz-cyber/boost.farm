@@ -22,6 +22,11 @@ const USERS_SORT_COLUMNS: Record<string, string> = {
   total_water_this_month: 'f.total_water_this_month',
 };
 
+// Cheap UUID guard for the `partner_id` filter — Postgres would also reject
+// a malformed UUID with a 22P02 error, but failing in JS gives us a friendlier
+// 400 + lets us keep the IN-list / IS NULL / IS NOT NULL branches symmetrical.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 adminUsersRouter.get('/', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -34,6 +39,9 @@ adminUsersRouter.get('/', async (req, res) => {
     const activeWithin = parseInt(req.query.activeWithin as string) || 0;
     const hasAds = req.query.hasAds === '1' || req.query.hasAds === 'true';
     const hasOffers = req.query.hasOffers === '1' || req.query.hasOffers === 'true';
+    // Source filter: 'organic' = no partner, 'any' = any partner attached,
+    // or a UUID = exactly that partner. Empty/missing = no filter.
+    const partnerIdRaw = String(req.query.partner_id ?? '').trim().toLowerCase();
 
     const sortByRaw = (req.query.sortBy as string) || 'created_at';
     const sortColumn = USERS_SORT_COLUMNS[sortByRaw] ?? USERS_SORT_COLUMNS.created_at;
@@ -74,6 +82,19 @@ adminUsersRouter.get('/', async (req, res) => {
     if (hasOffers) {
       where += ` AND EXISTS (SELECT 1 FROM offer_completions oc2 WHERE oc2.user_id = u.id)`;
     }
+    if (partnerIdRaw === 'organic') {
+      where += ' AND u.partner_id IS NULL';
+    } else if (partnerIdRaw === 'any') {
+      where += ' AND u.partner_id IS NOT NULL';
+    } else if (partnerIdRaw) {
+      if (!UUID_RE.test(partnerIdRaw)) {
+        res.status(400).json({ error: 'Invalid partner_id (expected UUID, "organic", or "any")' });
+        return;
+      }
+      pi++;
+      where += ` AND u.partner_id = $${pi}::uuid`;
+      params.push(partnerIdRaw);
+    }
 
     const countRow = await queryOne(
       `SELECT count(*)::int AS c FROM users u LEFT JOIN farms f ON f.user_id = u.id AND f.harvested = false ${where}`,
@@ -84,12 +105,17 @@ adminUsersRouter.get('/', async (req, res) => {
     // us sort by computed columns like `total_ad_views` without wrapping in
     // a subquery. `NULLS LAST` keeps users with no activity at the bottom on
     // DESC sorts, which matches what admins expect.
+    //
+    // Partner JOIN is a LEFT JOIN so organic users still come back (with
+    // partner_name = NULL). Cheap one-row lookup per user since users.partner_id
+    // is uuid-indexed (021_partners.sql).
     const rows = await query(
       `SELECT
         u.id, u.nickname, u.email, u.avatar_id, u.is_admin,
         u.created_at, u.last_login_at, u.last_active_at,
         u.registration_source, u.device_platform, u.country,
-        u.telegram_id,
+        u.telegram_id, u.utm_source,
+        u.partner_id, p.slug AS partner_slug, p.name AS partner_name,
         f.rank_id, f.current_stage, f.growth_percent, f.water_in_can,
         f.nutrition, f.total_water_this_month,
         (SELECT count(*)::int FROM friends fr WHERE fr.user_id = u.id) AS friends_count,
@@ -98,6 +124,7 @@ adminUsersRouter.get('/', async (req, res) => {
         (SELECT max(started_at) FROM sessions s WHERE s.user_id = u.id) AS last_session_at
        FROM users u
        LEFT JOIN farms f ON f.user_id = u.id AND f.harvested = false
+       LEFT JOIN partners p ON p.id = u.partner_id
        ${where}
        ORDER BY ${sortColumn} ${sortDir} NULLS LAST, u.id ${sortDir}
        LIMIT $${pi + 1} OFFSET $${pi + 2}`,

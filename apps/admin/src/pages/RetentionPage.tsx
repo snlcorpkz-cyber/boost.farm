@@ -188,6 +188,10 @@ export function RetentionPage() {
   const [platform, setPlatform] = usePersistedState<string>('retention.platform', '');
   const [rank, setRank] = usePersistedState<string>('retention.rank', '');
   const [utmSource, setUtmSource] = usePersistedState<string>('retention.utmSource', '');
+  // Acquisition-partner filter: '' (no filter) / 'organic' / 'any' /
+  // <partner-uuid>. Persisted alongside the other cohort filters so
+  // a "TimeBucks only" view survives page reloads.
+  const [partnerId, setPartnerId] = usePersistedState<string>('retention.partnerId', '');
   // Default = paid because that's where CPI/ROAS are non-trivially
   // useful. Organic users have NULL cost so the new columns degrade
   // to "—" and the analyst loses the headline insight.
@@ -224,6 +228,14 @@ export function RetentionPage() {
 
   const [activeTab, setActiveTab] = useState<'cohorts' | 'segments'>('cohorts');
 
+  // Partner list for the Source dropdown — same shape as UsersPage.
+  const { data: partnersData } = useQuery<{ partners: Array<{ id: string; name: string; slug: string }> }>({
+    queryKey: ['admin', 'partners', 'list-for-filter'],
+    queryFn: () => api('/partners'),
+    staleTime: 60_000,
+  });
+  const partners = partnersData?.partners ?? [];
+
   const qs = new URLSearchParams({
     weeks: String(weeks),
     group_by: groupBy,
@@ -233,6 +245,7 @@ export function RetentionPage() {
     ...(platform ? { platform } : {}),
     ...(rank ? { rank } : {}),
     ...(utmSource ? { utm_source: utmSource } : {}),
+    ...(partnerId ? { partner_id: partnerId } : {}),
   }).toString();
 
   const { data: cohortData, isPending: cohortsPending } = useQuery({
@@ -269,10 +282,10 @@ export function RetentionPage() {
   });
 
   const clearFilters = () => {
-    setCountry(''); setPlatform(''); setRank(''); setUtmSource('');
+    setCountry(''); setPlatform(''); setRank(''); setUtmSource(''); setPartnerId('');
   };
 
-  const hasFilters = country || platform || rank || utmSource;
+  const hasFilters = country || platform || rank || utmSource || partnerId;
 
   return (
     <div>
@@ -376,7 +389,7 @@ export function RetentionPage() {
                   <button onClick={clearFilters} className="text-xs text-red-500 hover:text-red-700">Clear filters</button>
                 )}
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Country</label>
                   <input value={country} onChange={e => setCountry(e.target.value)} placeholder="e.g. KZ"
@@ -406,6 +419,23 @@ export function RetentionPage() {
                   <label className="block text-xs text-gray-500 mb-1">UTM Source</label>
                   <input value={utmSource} onChange={e => setUtmSource(e.target.value)}
                     className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Source</label>
+                  <select value={partnerId} onChange={e => setPartnerId(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                    title="Acquisition source (organic / partner)">
+                    <option value="">All sources</option>
+                    <option value="organic">Organic only</option>
+                    <option value="any">Any partner</option>
+                    {partners.length > 0 && (
+                      <optgroup label="Specific partner">
+                        {partners.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
                 </div>
               </div>
             </div>
@@ -636,6 +666,7 @@ export function RetentionPage() {
                           ...(platform ? { platform } : {}),
                           ...(rank ? { rank } : {}),
                           ...(utmSource ? { utm_source: utmSource } : {}),
+                          ...(partnerId ? { partner_id: partnerId } : {}),
                           ...extra,
                         });
                         return `/retention/cohort?${p.toString()}`;
@@ -1263,16 +1294,24 @@ export function RetentionPage() {
 }
 
 function SegmentsView() {
-  const [dimension, setDimension] = useState<'country' | 'platform' | 'utm_source'>('country');
+  const [dimension, setDimension] = useState<'country' | 'platform' | 'utm_source' | 'partner'>('country');
   const { data, isPending } = useQuery({
     queryKey: ['admin', 'retention', 'segments', dimension],
     queryFn: () => api(`/retention/segments?dimension=${dimension}`),
   });
 
+  // Pretty labels — keep in sync with backend dim allow-list (admin/retention.ts).
+  const dimLabels: Record<typeof dimension, string> = {
+    country: 'Country',
+    platform: 'Platform',
+    utm_source: 'UTM Source',
+    partner: 'Partner',
+  };
+
   return (
     <div className="mt-6">
       <div className="flex gap-2 mb-4">
-        {(['country', 'platform', 'utm_source'] as const).map(d => (
+        {(['country', 'platform', 'utm_source', 'partner'] as const).map(d => (
           <button
             key={d}
             onClick={() => setDimension(d)}
@@ -1280,7 +1319,7 @@ function SegmentsView() {
               dimension === d ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            {d === 'utm_source' ? 'UTM Source' : d.charAt(0).toUpperCase() + d.slice(1)}
+            {dimLabels[d]}
           </button>
         ))}
       </div>

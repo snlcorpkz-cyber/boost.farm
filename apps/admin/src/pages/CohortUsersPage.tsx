@@ -63,6 +63,7 @@ export function CohortUsersPage() {
   const platform = searchParams.get('platform') || '';
   const rank = searchParams.get('rank') || '';
   const utmSource = searchParams.get('utm_source') || '';
+  const partnerId = searchParams.get('partner_id') || '';
 
   const qs = new URLSearchParams({
     date,
@@ -72,6 +73,7 @@ export function CohortUsersPage() {
     ...(platform ? { platform } : {}),
     ...(rank ? { rank } : {}),
     ...(utmSource ? { utm_source: utmSource } : {}),
+    ...(partnerId ? { partner_id: partnerId } : {}),
   }).toString();
 
   const { data, isPending, error } = useQuery<any>({
@@ -95,13 +97,26 @@ export function CohortUsersPage() {
     ...(platform ? { platform } : {}),
     ...(rank ? { rank } : {}),
     ...(utmSource ? { utm_source: utmSource } : {}),
+    ...(partnerId ? { partner_id: partnerId } : {}),
   }).toString();
+
+  // Friendly label for the partner chip — 'organic'/'any' get a verbose
+  // name, a UUID is shown via the first row's partner_name (if present)
+  // and otherwise truncated to keep the chip compact.
+  let partnerChipLabel: string | null = null;
+  if (partnerId === 'organic') partnerChipLabel = 'Organic only';
+  else if (partnerId === 'any') partnerChipLabel = 'Any partner';
+  else if (partnerId) {
+    const fromRow = users.find((u) => u.partner_id === partnerId);
+    partnerChipLabel = fromRow?.partner_name || `${partnerId.slice(0, 8)}…`;
+  }
 
   const filterChips: Array<{ label: string; value: string }> = [
     country ? { label: 'Country', value: country } : null,
     platform ? { label: 'Platform', value: platform } : null,
     rank ? { label: 'Rank', value: rank } : null,
     utmSource ? { label: 'UTM', value: utmSource } : null,
+    partnerChipLabel ? { label: 'Source', value: partnerChipLabel } : null,
   ].filter(Boolean) as Array<{ label: string; value: string }>;
 
   if (!date) {
@@ -214,9 +229,15 @@ export function CohortUsersPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs">
                       {[u.country, u.device_platform].filter(Boolean).join(' · ') || '-'}
-                      {u.utm_source && (
+                      {u.partner_name ? (
+                        <div className="mt-0.5">
+                          <span className="inline-block rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold">
+                            {u.partner_name}
+                          </span>
+                        </div>
+                      ) : u.utm_source ? (
                         <div className="text-[10px] text-gray-400">utm: {u.utm_source}</div>
-                      )}
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs" title={new Date(u.created_at).toLocaleString()}>
                       {formatDateTime(u.created_at)}

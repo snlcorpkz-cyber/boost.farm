@@ -71,6 +71,11 @@ function SortHeader({
   );
 }
 
+// Source filter: 'organic' = no partner, 'any' = any partner attached,
+// '' = no filter, otherwise exact partner UUID. The backend understands
+// the same vocabulary (admin/users.ts).
+type SourceFilter = '' | 'organic' | 'any' | (string & {});
+
 export function UsersPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -80,8 +85,20 @@ export function UsersPage() {
   const [activeWithin, setActiveWithin] = useState<number>(0); // 0 = all time
   const [hasAds, setHasAds] = useState(false);
   const [hasOffers, setHasOffers] = useState(false);
+  const [source, setSource] = useState<SourceFilter>('');
   const [sortBy, setSortBy] = useState<SortKey>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Lightweight partner list for the Source dropdown. Cached separately
+  // from the user list so we don't refetch it on every keystroke. The
+  // /partners endpoint is admin-only and returns a small array, so we
+  // can keep the full payload around — we just need {id, name, slug}.
+  const { data: partnersData } = useQuery<{ partners: Array<{ id: string; name: string; slug: string }> }>({
+    queryKey: ['admin', 'partners', 'list-for-filter'],
+    queryFn: () => api('/partners'),
+    staleTime: 60_000,
+  });
+  const partners = partnersData?.partners ?? [];
 
   const qs = new URLSearchParams({
     search,
@@ -96,6 +113,7 @@ export function UsersPage() {
   if (activeWithin) qs.set('activeWithin', String(activeWithin));
   if (hasAds) qs.set('hasAds', '1');
   if (hasOffers) qs.set('hasOffers', '1');
+  if (source) qs.set('partner_id', source);
 
   const { data, isPending } = useQuery({
     queryKey: ['admin', 'users', qs.toString()],
@@ -125,13 +143,14 @@ export function UsersPage() {
     setActiveWithin(0);
     setHasAds(false);
     setHasOffers(false);
+    setSource('');
     setSortBy('created_at');
     setSortDir('desc');
     setPage(1);
   }
 
   const hasAnyFilter =
-    !!search || !!rank || !!platform || !!country || activeWithin > 0 || hasAds || hasOffers;
+    !!search || !!rank || !!platform || !!country || activeWithin > 0 || hasAds || hasOffers || !!source;
 
   return (
     <div>
@@ -174,6 +193,23 @@ export function UsersPage() {
           onChange={(e) => { setCountry(e.target.value.toUpperCase().slice(0, 4)); setPage(1); }}
           className="w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        <select
+          value={source}
+          onChange={(e) => { setSource(e.target.value as SourceFilter); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          title="Acquisition source (organic / partner)"
+        >
+          <option value="">All sources</option>
+          <option value="organic">Organic only</option>
+          <option value="any">Any partner</option>
+          {partners.length > 0 && (
+            <optgroup label="Specific partner">
+              {partners.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </optgroup>
+          )}
+        </select>
         <select
           value={activeWithin}
           onChange={(e) => { setActiveWithin(Number(e.target.value)); setPage(1); }}
@@ -225,6 +261,7 @@ export function UsersPage() {
               <tr>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">User</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Email</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600">Source</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Rank</th>
                 <SortHeader label="Stage" col="current_stage" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Growth" col="growth_percent" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -238,9 +275,9 @@ export function UsersPage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {isPending ? (
-                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={12} className="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
               ) : users.length === 0 ? (
-                <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-500">No users found</td></tr>
+                <tr><td colSpan={12} className="px-4 py-8 text-center text-gray-500">No users found</td></tr>
               ) : (
                 users.map((u: any) => (
                   <tr key={u.id} className="hover:bg-blue-50/50">
@@ -254,6 +291,25 @@ export function UsersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{u.email}</td>
+                    <td className="px-4 py-3">
+                      {u.partner_name ? (
+                        <span
+                          className="inline-block rounded-full bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200 px-2 py-0.5 text-[11px] font-semibold"
+                          title={u.partner_slug}
+                        >
+                          {u.partner_name}
+                        </span>
+                      ) : u.utm_source ? (
+                        <span
+                          className="inline-block rounded-full bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200 px-2 py-0.5 text-[11px] font-medium"
+                          title="utm_source (no partner attribution)"
+                        >
+                          {u.utm_source}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-gray-400">organic</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><RankBadge rank={u.rank_id || 'novice'} /></td>
                     <td className="px-4 py-3 text-gray-700">{u.current_stage ?? '-'}</td>
                     <td
