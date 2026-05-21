@@ -30,10 +30,22 @@ const upload = multer({
 
 adminOffersRouter.get('/', async (_req, res) => {
   try {
+    // "Installs" — completions of the first milestone (lowest sort_order) of
+    // each offer. That milestone represents the install / first event in the
+    // Everflow funnel; later milestones are deeper conversions.
     const offers = await query(
       `SELECT o.*,
         (SELECT count(*)::int FROM offer_milestones m WHERE m.offer_id = o.id) AS milestone_count,
-        (SELECT count(*)::int FROM offer_completions c WHERE c.offer_id = o.id) AS completions_count
+        (SELECT count(*)::int FROM offer_completions c WHERE c.offer_id = o.id) AS completions_count,
+        (SELECT count(*)::int FROM offer_completions c
+           WHERE c.offer_id = o.id
+             AND c.milestone_id = (
+               SELECT m2.id FROM offer_milestones m2
+                WHERE m2.offer_id = o.id
+                ORDER BY m2.sort_order, m2.event_name
+                LIMIT 1
+             )
+        ) AS installs_count
        FROM offers o ORDER BY o.sort_order, o.created_at DESC`
     );
     res.json(offers);

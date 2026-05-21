@@ -40,16 +40,17 @@ export function OffersPage() {
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Reward</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">EF Offer ID</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Milestones</th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600">Completions</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600" title="Completions of the first milestone (first event in the funnel)">Installs</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600" title="All milestone completions across the offer">Completions</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Status</th>
                 <th className="text-left px-4 py-3 font-semibold text-gray-600">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {isPending ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-500">Loading...</td></tr>
               ) : offers.length === 0 ? (
-                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No offers yet</td></tr>
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-500">No offers yet</td></tr>
               ) : (
                 offers.map((o: any) => (
                   <tr key={o.id} className="hover:bg-gray-50">
@@ -68,6 +69,7 @@ export function OffersPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-600 font-mono text-xs">{o.everflow_offer_id}</td>
                     <td className="px-4 py-3 text-gray-700">{o.milestone_count}</td>
+                    <td className="px-4 py-3 text-gray-700 font-medium">{o.installs_count ?? 0}</td>
                     <td className="px-4 py-3 text-gray-700">{o.completions_count}</td>
                     <td className="px-4 py-3">
                       <button
