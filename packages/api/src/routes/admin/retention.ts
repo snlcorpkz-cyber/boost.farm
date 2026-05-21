@@ -109,7 +109,13 @@ interface CohortOut {
 
 adminRetentionRouter.get('/cohorts', async (req, res) => {
   try {
-    const weeks = Math.min(20, Math.max(1, parseInt(req.query.weeks as string) || 8));
+    // Up to 365 buckets — operator's choice. For group_by=day that's
+    // a full year of cohorts; for group_by=week it covers 7 years
+    // (effectively "show everything we have"). The actual number of
+    // cohorts returned is naturally capped by how much history is
+    // in `users` — if there are only 30 days of data, weeks=365
+    // returns 30 cohorts, not 365 empty rows.
+    const weeks = Math.min(365, Math.max(1, parseInt(req.query.weeks as string) || 14));
     const groupBy = (req.query.group_by as string) === 'week' ? 'week' : 'day';
     const sourceFilter = parseSourceFilter(req.query.source_filter);
     const rawOffsets = (req.query.offsets as string) || '1,3,7,14,30';
