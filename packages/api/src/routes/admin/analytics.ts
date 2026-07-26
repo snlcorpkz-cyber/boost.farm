@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { query, queryOne } from '../../lib/db.js';
+import { tzExpr, REPORTING_TZ } from '../../lib/reporting-tz.js';
 
 export const adminAnalyticsRouter = Router();
+
+// Calendar-day bucketing in REPORTING_TZ — same axis as /admin/retention.
+const DAY = (col: string) => `${tzExpr(col)}::date`;
+const TODAY = `(now() AT TIME ZONE '${REPORTING_TZ}')::date`;
 
 function parseDays(raw: unknown, def = 30): number {
   const n = Number(raw);
@@ -20,8 +25,8 @@ adminAnalyticsRouter.get('/stickiness', async (req, res) => {
     const rows = await query<any>(
       `WITH day_series AS (
          SELECT generate_series(
-           (current_date - ($1 || ' days')::interval)::date,
-           current_date,
+           (${TODAY} - ($1 || ' days')::interval)::date,
+           ${TODAY},
            interval '1 day'
          )::date AS day
        )
@@ -29,11 +34,11 @@ adminAnalyticsRouter.get('/stickiness', async (req, res) => {
          ds.day::text AS day,
          (SELECT count(DISTINCT user_id)::int
             FROM events e
-           WHERE e.created_at::date = ds.day) AS dau,
+           WHERE ${DAY('e.created_at')} = ds.day) AS dau,
          (SELECT count(DISTINCT user_id)::int
             FROM events e
-           WHERE e.created_at >= ds.day - interval '29 days'
-             AND e.created_at::date <= ds.day) AS mau
+           WHERE ${DAY('e.created_at')} > ds.day - 30
+             AND ${DAY('e.created_at')} <= ds.day) AS mau
        FROM day_series ds
        ORDER BY ds.day`,
       [days],

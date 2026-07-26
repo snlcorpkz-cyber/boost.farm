@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { query, queryOne } from '../../lib/db.js';
+import { tzExpr, REPORTING_TZ } from '../../lib/reporting-tz.js';
 
 export const adminAdsRouter = Router();
+
+// Calendar-day bucketing in REPORTING_TZ — same axis as /admin/retention.
+const DAY = (col: string) => `${tzExpr(col)}::date`;
+const TODAY = `(now() AT TIME ZONE '${REPORTING_TZ}')::date`;
 
 /**
  * Window helpers. Every endpoint accepts `?days=N` (default 7, max 90)
@@ -88,7 +93,7 @@ adminAdsRouter.get('/funnel', async (req, res) => {
     // throwing 42803.
     const rows = await query<any>(
       `SELECT
-         e.created_at::date::text AS stat_date,
+         ${DAY('e.created_at')}::text AS stat_date,
          coalesce(e.platform, e.device->>'platform', 'unknown') AS platform,
          coalesce(nullif(e.placement, ''), 'unknown') AS placement,
          'rewarded'::text AS ad_unit,
@@ -107,10 +112,11 @@ adminAdsRouter.get('/funnel', async (req, res) => {
          count(*) FILTER (WHERE e.event_name = 'ad.server_granted')::int AS rewards_paid,
          count(*) FILTER (WHERE e.event_name = 'ad.failed')::int         AS sdk_errors,
          count(DISTINCT e.user_id)::int AS unique_users,
-         (e.created_at::date = current_date) AS today
+         (${DAY('e.created_at')} = ${TODAY}) AS today
        FROM events e
        WHERE e.event_name LIKE 'ad.%'
-         AND e.created_at >= (current_date - ($1 || ' days')::interval)::date
+         AND e.created_at >= now() - (($1::int + 1) || ' days')::interval
+         AND ${DAY('e.created_at')} > ${TODAY} - ($1::int + 1)
        GROUP BY 1, 2, 3, today
        HAVING coalesce(nullif(e.placement, ''), 'unknown') <> 'unknown'
           AND count(*) FILTER (
@@ -262,7 +268,7 @@ adminAdsRouter.get('/revenue', async (req, res) => {
       ),
       query<{ stat_date: string; impressions: number; revenue_cents: number }>(
         `SELECT
-           created_at::date::text AS stat_date,
+           ${DAY('created_at')}::text AS stat_date,
            count(*)::int AS impressions,
            coalesce(sum(revenue_cents), 0)::bigint AS revenue_cents
          FROM events

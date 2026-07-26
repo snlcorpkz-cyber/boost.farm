@@ -1,14 +1,16 @@
 import { Router } from 'express';
 import { query, queryOne } from '../../lib/db.js';
+import { tzExpr, REPORTING_TZ } from '../../lib/reporting-tz.js';
 
 export const adminDashboardRouter = Router();
 
+// All calendar-day bucketing below uses REPORTING_TZ (same axis as
+// /admin/retention) so the dashboard and cohort pages agree on "today".
+const DAY = (col: string) => `${tzExpr(col)}::date`;
+const TODAY = `(now() AT TIME ZONE '${REPORTING_TZ}')::date`;
+
 adminDashboardRouter.get('/stats', async (_req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-
     const [
       totalUsers,
       newUsersToday,
@@ -24,12 +26,14 @@ adminDashboardRouter.get('/stats', async (_req, res) => {
       recentUsers,
     ] = await Promise.all([
       queryOne(`SELECT count(*)::int AS c FROM users`),
-      queryOne(`SELECT count(*)::int AS c FROM users WHERE created_at::date = $1`, [today]),
+      queryOne(`SELECT count(*)::int AS c FROM users WHERE ${DAY('created_at')} = ${TODAY}`),
       queryOne(`SELECT count(*)::int AS c FROM farms WHERE harvested = false`),
-      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE created_at::date = $1`, [today]),
-      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE created_at >= $1`, [weekAgo]),
-      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE created_at >= $1`, [monthAgo]),
-      queryOne(`SELECT coalesce(sum(count), 0)::int AS c FROM ad_views WHERE view_date = $1`, [today]),
+      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE ${DAY('created_at')} = ${TODAY}`),
+      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE ${DAY('created_at')} >= ${TODAY} - 6`),
+      queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE ${DAY('created_at')} >= ${TODAY} - 29`),
+      // ad_views.view_date is written as a UTC date by farm.ts (it backs the
+      // per-phase gameplay limit, not reporting) — compare on the same axis.
+      queryOne(`SELECT coalesce(sum(count), 0)::int AS c FROM ad_views WHERE view_date = (now() AT TIME ZONE 'UTC')::date`),
       queryOne(`SELECT coalesce(sum(count), 0)::int AS c FROM ad_views`),
       queryOne(`SELECT coalesce(avg(water_in_can), 0)::float AS v FROM farms WHERE harvested = false`),
       query(`SELECT rank_id, count(*)::int AS c FROM farms WHERE harvested = false GROUP BY rank_id ORDER BY c DESC`),
@@ -43,8 +47,7 @@ adminDashboardRouter.get('/stats', async (_req, res) => {
 
     let dauYesterday = 0;
     try {
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const r = await queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE created_at::date = $1`, [yesterday]);
+      const r = await queryOne(`SELECT count(DISTINCT user_id)::int AS c FROM events WHERE ${DAY('created_at')} = ${TODAY} - 1`);
       dauYesterday = r?.c || 0;
     } catch { /* events table may be empty */ }
 
@@ -73,7 +76,7 @@ adminDashboardRouter.get('/chart/dau', async (req, res) => {
   try {
     const days = Math.min(parseInt(req.query.days as string) || 30, 90);
     const rows = await query(
-      `SELECT created_at::date AS day, count(DISTINCT user_id)::int AS dau
+      `SELECT ${DAY('created_at')}::text AS day, count(DISTINCT user_id)::int AS dau
        FROM events
        WHERE created_at >= now() - ($1 || ' days')::interval
        GROUP BY day ORDER BY day`,
@@ -90,7 +93,7 @@ adminDashboardRouter.get('/chart/new-users', async (req, res) => {
   try {
     const days = Math.min(parseInt(req.query.days as string) || 30, 90);
     const rows = await query(
-      `SELECT created_at::date AS day, count(*)::int AS new_users
+      `SELECT ${DAY('created_at')}::text AS day, count(*)::int AS new_users
        FROM users
        WHERE created_at >= now() - ($1 || ' days')::interval
        GROUP BY day ORDER BY day`,

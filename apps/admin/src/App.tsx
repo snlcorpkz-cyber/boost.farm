@@ -17,9 +17,11 @@ import { AdsPage } from '@/pages/AdsPage';
 import { AcquisitionPage } from '@/pages/AcquisitionPage';
 import { PartnersPage } from '@/pages/PartnersPage';
 import { PartnerDetailPage } from '@/pages/PartnerDetailPage';
+import { ReportPage } from '@/pages/ReportPage';
 
 const nav: { to: string; label: string; icon: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
+  { to: '/report', label: 'Insights', icon: '📑' },
   { to: '/ads', label: 'Ads', icon: '💰' },
   { to: '/acquisition', label: 'Acquisition', icon: '🚀' },
   { to: '/partners', label: 'Partners', icon: '🤝' },
@@ -128,9 +130,13 @@ export default function App() {
           </button>
           <span className="font-semibold text-gray-900">Admin</span>
         </header>
-        <main className="flex-1 overflow-auto p-4 md:p-8">
+        {/* No overflow-auto here: the document must stay the scroll
+            container so position:sticky (Insights filter bar) works.
+            Wide tables handle their own overflow-x-auto locally. */}
+        <main className="flex-1 p-4 md:p-8">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/report" element={<ReportPage />} />
             <Route path="/ads" element={<AdsPage />} />
             <Route path="/acquisition" element={<AcquisitionPage />} />
             <Route path="/retention" element={<RetentionPage />} />

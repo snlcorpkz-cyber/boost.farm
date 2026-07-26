@@ -1,7 +1,15 @@
 import { Router } from 'express';
 import { query } from '../../lib/db.js';
+import { tzExpr } from '../../lib/reporting-tz.js';
 
 export const adminAcquisitionRouter = Router();
+
+// Calendar-day bucketing in REPORTING_TZ — same axis as /admin/retention,
+// so D1 here matches D1 on the cohort page for the same users.
+const DAY = (col: string) => `${tzExpr(col)}::date`;
+// Synthetic server-side milestones (analytics-rollup) must never count as
+// "real return activity" — mirrors the exclusion in admin/retention.ts.
+const REAL_EVENTS = `e.event_name NOT LIKE 'retention.%' AND e.event_name NOT LIKE 'system.%'`;
 
 function parseDays(raw: unknown, def = 30): number {
   const n = Number(raw);
@@ -33,11 +41,11 @@ adminAcquisitionRouter.get('/by-utm', async (req, res) => {
            WHEN e.event_name = 'EngagedD0' THEN u.id
          END)::int                                AS engaged_d0,
          count(DISTINCT CASE
-           WHEN e.created_at::date = u.created_at::date + 1
+           WHEN ${DAY('e.created_at')} = ${DAY('u.created_at')} + 1
            THEN u.id
          END)::int                                AS d1_retained
        FROM users u
-       LEFT JOIN events e ON e.user_id = u.id
+       LEFT JOIN events e ON e.user_id = u.id AND ${REAL_EVENTS}
        WHERE u.created_at >= now() - ($1 || ' days')::interval
        GROUP BY utm_source, utm_medium, utm_campaign, utm_content
        ORDER BY users DESC
@@ -108,11 +116,11 @@ adminAcquisitionRouter.get('/by-creative', async (req, res) => {
            WHEN e.event_name = 'EngagedD0' THEN u.id
          END)::int                                        AS engaged_d0,
          count(DISTINCT CASE
-           WHEN e.created_at::date = u.created_at::date + 1
+           WHEN ${DAY('e.created_at')} = ${DAY('u.created_at')} + 1
            THEN u.id
          END)::int                                        AS d1_retained
        FROM users u
-       LEFT JOIN events e ON e.user_id = u.id
+       LEFT JOIN events e ON e.user_id = u.id AND ${REAL_EVENTS}
        WHERE u.created_at >= now() - ($1 || ' days')::interval
          AND (u.acquisition_source IS NOT NULL OR u.utm_campaign IS NOT NULL)
        GROUP BY media_source, utm_campaign, utm_content,
@@ -150,11 +158,11 @@ adminAcquisitionRouter.get('/by-geo', async (req, res) => {
          coalesce(u.country, 'unknown') AS country,
          count(DISTINCT u.id)::int      AS users,
          count(DISTINCT CASE
-           WHEN e.created_at::date = u.created_at::date + 1
+           WHEN ${DAY('e.created_at')} = ${DAY('u.created_at')} + 1
            THEN u.id
          END)::int AS d1_retained
        FROM users u
-       LEFT JOIN events e ON e.user_id = u.id
+       LEFT JOIN events e ON e.user_id = u.id AND ${REAL_EVENTS}
        WHERE u.created_at >= now() - ($1 || ' days')::interval
        GROUP BY country
        ORDER BY users DESC
@@ -214,7 +222,7 @@ adminAcquisitionRouter.get('/cohort-quality', async (req, res) => {
     const rows = await query<any>(
       `WITH week_users AS (
          SELECT
-           date_trunc('week', u.created_at)::date AS cohort_week,
+           date_trunc('week', ${tzExpr('u.created_at')})::date AS cohort_week,
            u.id,
            u.created_at
          FROM users u
@@ -224,16 +232,16 @@ adminAcquisitionRouter.get('/cohort-quality', async (req, res) => {
          wu.cohort_week::text AS cohort_week,
          count(DISTINCT wu.id)::int AS cohort_size,
          count(DISTINCT CASE
-           WHEN e.created_at::date = wu.created_at::date + 1
+           WHEN ${DAY('e.created_at')} = ${DAY('wu.created_at')} + 1
            THEN wu.id END)::int AS d1,
          count(DISTINCT CASE
-           WHEN e.created_at::date = wu.created_at::date + 3
+           WHEN ${DAY('e.created_at')} = ${DAY('wu.created_at')} + 3
            THEN wu.id END)::int AS d3,
          count(DISTINCT CASE
-           WHEN e.created_at::date = wu.created_at::date + 7
+           WHEN ${DAY('e.created_at')} = ${DAY('wu.created_at')} + 7
            THEN wu.id END)::int AS d7
        FROM week_users wu
-       LEFT JOIN events e ON e.user_id = wu.id
+       LEFT JOIN events e ON e.user_id = wu.id AND ${REAL_EVENTS}
        GROUP BY cohort_week
        ORDER BY cohort_week DESC`,
       [weeks],

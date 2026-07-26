@@ -1,18 +1,15 @@
 import { Router } from 'express';
 import { query } from '../../lib/db.js';
 import { REPORTING_TZ } from '../../lib/reporting-tz.js';
+import { UUID_RE, parseSourceFilter, sourceFilterSql } from './filters.js';
 
 export const adminRetentionRouter = Router();
 
-// See admin/users.ts — same UUID guard for the partner_id filter so an
-// invalid value gets a 400 instead of a Postgres 22P02.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * Cohort retention analysis with cost & ROAS overlay.
+ * Cohort retention analysis.
  *
  * Query params:
- *   - weeks:         number of cohorts to analyze (default 8, max 20)
+ *   - weeks:         number of cohorts to analyze (default 14, max 365)
  *   - offsets:       comma-separated day offsets to check (default "1,3,7,14,30")
  *   - group_by:      'day' | 'week' (default 'day')
  *   - source_filter: 'all' | 'paid' | 'organic' (default 'all')
@@ -21,74 +18,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *                    organic traffic in the cohort. Critical once affiliate
  *                    networks (TimeBucks, etc.) start mixing into the funnel.
  *
- * Cost / CPI / ROAS:
- *   When source_filter='paid' we narrow the cohort to users whose
- *   acquisition_source carries an AppsFlyer media_source other
- *   than "Organic" (or a Facebook campaign id from the legacy
- *   Install Referrer path). Cost for that cohort comes from
- *   `ad_costs.spend_micros` summed across cohort_start day(s).
- *   ROAS at offset N = cumulative revenue_cents from events
- *   (event_name in 'ad.revenue', 'econ.offer_completed',
- *   'econ.purchase') up to and including day cohort_start + N,
- *   divided by cost. Returns null when cost_cents=0 to avoid
- *   division by zero (UI renders "—").
+ * The cost / CPI / ROAS overlay that used to live here was removed
+ * together with its UI (commit 9a55001, "remove CPI/ROAS") — the
+ * numbers were unreliable and the per-cohort lookups made the page
+ * O(cohorts × offsets) in SQL round-trips. Everything below is
+ * computed in three set-based queries regardless of cohort count.
  */
-type SourceFilter = 'all' | 'paid' | 'organic';
-
-function parseSourceFilter(raw: unknown): SourceFilter {
-  if (raw === 'paid' || raw === 'organic' || raw === 'all') return raw;
-  return 'all';
-}
-
-/**
- * Predicate for paid users. We treat a user as paid when their
- * acquisition_source carries an AppsFlyer media_source other
- * than "Organic", or a Facebook campaign id (legacy Install
- * Referrer path before AF was wired up). Empty / null
- * acquisition_source = organic.
- *
- * Returns the SQL fragment plus a flag so the caller can decide
- * whether to JOIN at all (saves a sequential scan on the rare
- * "all" path).
- */
-function sourceFilterSql(filter: SourceFilter): string {
-  if (filter === 'paid') {
-    return `AND u.acquisition_source IS NOT NULL
-            AND (
-              (u.acquisition_source ? 'afMediaSource'
-                AND COALESCE(u.acquisition_source ->> 'afMediaSource', '') NOT IN ('', 'Organic'))
-              OR u.acquisition_source ? 'fbCampaignId'
-              OR u.acquisition_source ? 'utmCampaign'
-            )`;
-  }
-  if (filter === 'organic') {
-    return `AND (
-              u.acquisition_source IS NULL
-              OR (
-                NOT (u.acquisition_source ? 'fbCampaignId')
-                AND NOT (u.acquisition_source ? 'utmCampaign')
-                AND COALESCE(u.acquisition_source ->> 'afMediaSource', 'Organic') IN ('', 'Organic')
-              )
-            )`;
-  }
-  return '';
-}
-
 interface CohortRow {
   cohort_start: string;
   cohort_size: number;
-  user_ids: string[];
 }
 
 interface RetentionCell {
   count: number;
   pct: number;
-  rev_cents: number;
-  roas_pct: number | null;
   /**
    * Cumulative ad.requested events from the cohort up to and
-   * including this offset day. Drives the "Theoretical mode"
-   * revenue projection on the client (ads/1000 × CPM input).
+   * including this offset day.
    */
   ads_requested: number;
   /**
@@ -102,8 +48,6 @@ interface RetentionCell {
 interface CohortOut {
   cohort_start: string;
   cohort_size: number;
-  cost_cents: number;
-  cpi_cents: number | null;
   retention: Record<number, RetentionCell | null>;
 }
 
@@ -194,252 +138,160 @@ adminRetentionRouter.get('/cohorts', async (req, res) => {
     // 'YYYY-MM-DD' verbatim instead of parsing it into a JS Date
     // (where `String(d).slice(0,10)` yields garbage like
     // "Thu Apr 23"). Downstream `$::date` casts accept the string.
-    const cohortsQuery = `
-      SELECT
-        date_trunc('${dateTrunc}', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date::text AS cohort_start,
-        count(*)::int AS cohort_size,
-        array_agg(u.id) AS user_ids
-      FROM users u
+    const cohortBucket = `date_trunc('${dateTrunc}', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date`;
+    const cohortWhere = `
       WHERE u.created_at >= now() - ${intervalExpr}
       ${whereUser}
       ${rankFilter}
-      ${sourceFilterFragment}
+      ${sourceFilterFragment}`;
+
+    const cohortsQuery = `
+      SELECT
+        ${cohortBucket}::text AS cohort_start,
+        count(*)::int AS cohort_size
+      FROM users u
+      ${cohortWhere}
       GROUP BY cohort_start
       ORDER BY cohort_start DESC
     `;
 
     const cohorts = await query<CohortRow>(cohortsQuery, [...params, weeks]);
 
-    // ── Cost lookup ───────────────────────────────────────────
-    // Single batched query for ALL cohort dates so the cost overlay
-    // costs one round-trip per page render no matter how many
-    // cohorts. For week grouping we sum the 7 days that make up
-    // the week; date_trunc('week', cost_date) groups them
-    // identically to the cohort bucketing above.
-    //
-    // When source_filter='paid' we don't restrict ad_costs further
-    // — Facebook Ads / googleadwords_int are inherently paid, and
-    // organic spend is $0 by definition, so summing every media
-    // source still gives the right number for paid cohorts.
-    // When source_filter='organic' we report cost=0 (organic
-    // cohorts have no spend attributable).
-    //
-    // Wrapped in try/catch so the retention table continues to
-    // work even when migration 026 (ad_costs) hasn't been applied
-    // yet — the only consequence is empty CPI/ROAS columns. We'd
-    // rather show partial data than 500 the entire page.
-    const costByCohort = new Map<string, number>();
-    if (sourceFilter !== 'organic' && cohorts.length > 0) {
-      try {
-        const cohortDates = cohorts.map((c) => c.cohort_start);
-        const costRows = await query<{ cohort_start: string; spend_micros: string }>(
-          groupBy === 'week'
-            ? `SELECT date_trunc('week', cost_date)::date::text AS cohort_start,
-                      sum(spend_micros)::bigint::text AS spend_micros
-                 FROM ad_costs
-                 WHERE date_trunc('week', cost_date)::date = ANY($1::date[])
-                 GROUP BY cohort_start`
-            : `SELECT cost_date::text AS cohort_start,
-                      sum(spend_micros)::bigint::text AS spend_micros
-                 FROM ad_costs
-                 WHERE cost_date = ANY($1::date[])
-                 GROUP BY cost_date`,
-          [cohortDates],
-        );
-        for (const r of costRows) {
-          // spend_micros (USD micros) → cents: divide by 10_000.
-          costByCohort.set(r.cohort_start, Number(BigInt(r.spend_micros) / 10000n));
-        }
-      } catch (costErr) {
-        const msg = (costErr as Error).message ?? '';
-        if (/relation .*ad_costs.* does not exist/i.test(msg)) {
-          console.warn('[admin/retention/cohorts] ad_costs table missing — apply migration 026. CPI/ROAS will be empty.');
-        } else {
-          console.warn('[admin/retention/cohorts] cost lookup failed:', msg);
-        }
-      }
+    // ── Set-based lookups ─────────────────────────────────────
+    // One query each for retained counts, cumulative ad.requested
+    // and cumulative offer plays — covering EVERY cohort × offset
+    // pair in a single round-trip. The previous implementation
+    // looped per cohort (and per offset for retention); at
+    // weeks=365 × 10 offsets that meant thousands of SQL queries
+    // per page render.
+    const unit = groupBy === 'week' ? 7 : 1;
+    const offsetsParam = `$${pi + 2}::int[]`;
+    const lookupParams = [...params, weeks, offsets];
+    const eventDay = `(e.created_at AT TIME ZONE '${REPORTING_TZ}')::date`;
+    // Sargable timestamp guards: the calendar predicates below are
+    // expressions Postgres can't use an index for, so every join also
+    // carries a raw created_at range (with slop for TZ shift and the
+    // week-bucket floor). Correctness comes from the calendar
+    // predicate; the range only prunes the scan.
+    const lowerSlop = groupBy === 'week' ? `interval '9 days'` : `interval '2 days'`;
+
+    // Calendar-day (or calendar-week) retention: a user is retained on
+    // day/week N if they have any event whose date_trunc matches the
+    // cohort's date_trunc + N units. Using strict >=N*24h / <(N+1)*24h
+    // intervals was wrong — someone who registers at 22:00 and returns
+    // at 09:00 the next morning would be missed entirely despite being
+    // a textbook D1-retained user. Industry standard (GA / Amplitude /
+    // Mixpanel) is calendar-bucket based.
+    const retentionPred = groupBy === 'week'
+      ? `date_trunc('week', e.created_at AT TIME ZONE '${REPORTING_TZ}')::date = ${cohortBucket} + (o.offset_day * 7)`
+      : `${eventDay} = ${cohortBucket} + o.offset_day`;
+
+    // Synthetic events filter (`retention.%`, `system.%`):
+    // server-side rollups emit milestone events on the user's
+    // behalf (analytics-rollup.ts → retention.dN_return). Letting
+    // those count as "real activity" creates a self-fulfilling
+    // loop — a D3 retention event on day register+3 would mark
+    // its own user as D3-retained even when nothing else
+    // happened that day. Filter them out so the heatmap reflects
+    // genuine product engagement only.
+    const retainedByKey = new Map<string, number>();
+    const rowsRetained = await query<{ cohort_start: string; offset_day: number; c: number }>(
+      `SELECT ${cohortBucket}::text AS cohort_start,
+              o.offset_day,
+              count(DISTINCT e.user_id)::int AS c
+         FROM users u
+         CROSS JOIN unnest(${offsetsParam}) AS o(offset_day)
+         JOIN events e
+           ON e.user_id = u.id
+          AND e.event_name NOT LIKE 'retention.%'
+          AND e.event_name NOT LIKE 'system.%'
+          AND e.created_at >= u.created_at - ${lowerSlop}
+          AND e.created_at < u.created_at + (((o.offset_day * ${unit}) + ${unit} + 2) * interval '1 day')
+          AND ${retentionPred}
+        ${cohortWhere}
+        GROUP BY 1, 2`,
+      lookupParams,
+    );
+    for (const r of rowsRetained) retainedByKey.set(`${r.cohort_start}|${r.offset_day}`, r.c);
+
+    // Cumulative ad.requested per (cohort, offset) — "ads through
+    // end of day N", not "ads on day N specifically". INNER JOIN:
+    // pairs with zero ads simply produce no row and default to 0.
+    // Defensive try/catch: a failure here degrades the Ads column
+    // to zeros instead of 500-ing the whole page.
+    const adsByKey = new Map<string, number>();
+    try {
+      const rowsAds = await query<{ cohort_start: string; offset_day: number; ads: number }>(
+        `SELECT ${cohortBucket}::text AS cohort_start,
+                o.offset_day,
+                count(*)::int AS ads
+           FROM users u
+           CROSS JOIN unnest(${offsetsParam}) AS o(offset_day)
+           JOIN events e
+             ON e.user_id = u.id
+            AND e.event_name = 'ad.requested'
+            AND e.created_at >= u.created_at - ${lowerSlop}
+            AND e.created_at < u.created_at + (((o.offset_day * ${unit}) + 2) * interval '1 day')
+            AND ${eventDay} <= ${cohortBucket} + (o.offset_day * ${unit})
+          ${cohortWhere}
+          GROUP BY 1, 2`,
+        lookupParams,
+      );
+      for (const r of rowsAds) adsByKey.set(`${r.cohort_start}|${r.offset_day}`, r.ads);
+    } catch (adsErr) {
+      console.warn('[admin/retention/cohorts] ads lookup failed:', (adsErr as Error).message);
     }
 
-    // ── Per-cohort retention + cumulative revenue ─────────────
-    const result: CohortOut[] = [];
+    // Cumulative DISTINCT (user_id, offer_id) plays per (cohort,
+    // offset) from `offer_completions`. The DISTINCT pair collapses
+    // multiple-milestone completions on the same offer by the same
+    // user into ONE "play". Table comes from migration 012_offers.sql;
+    // if missing (fresh dev DB), the catch logs and the page renders.
+    const playsByKey = new Map<string, number>();
+    try {
+      const rowsPlays = await query<{ cohort_start: string; offset_day: number; plays: number }>(
+        `SELECT ${cohortBucket}::text AS cohort_start,
+                o.offset_day,
+                count(DISTINCT (oc.user_id, oc.offer_id))::int AS plays
+           FROM users u
+           CROSS JOIN unnest(${offsetsParam}) AS o(offset_day)
+           JOIN offer_completions oc
+             ON oc.user_id = u.id
+            AND oc.created_at >= u.created_at - ${lowerSlop}
+            AND oc.created_at < u.created_at + (((o.offset_day * ${unit}) + 2) * interval '1 day')
+            AND (oc.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ${cohortBucket} + (o.offset_day * ${unit})
+          ${cohortWhere}
+          GROUP BY 1, 2`,
+        lookupParams,
+      );
+      for (const r of rowsPlays) playsByKey.set(`${r.cohort_start}|${r.offset_day}`, r.plays);
+    } catch (playsErr) {
+      console.warn('[admin/retention/cohorts] offer plays lookup failed:', (playsErr as Error).message);
+    }
 
-    for (const cohort of cohorts) {
-      const userIds: string[] = cohort.user_ids;
-      // cohort_start is now an ISO 'YYYY-MM-DD' string (cast in
-      // SQL above). Keep the alias for clarity at call sites.
-      const cohortStartIso = String(cohort.cohort_start);
-      const costCents = costByCohort.get(cohortStartIso) ?? 0;
-      const cpiCents = cohort.cohort_size > 0 && costCents > 0
-        ? Math.round(costCents / cohort.cohort_size)
-        : null;
-
+    const result: CohortOut[] = cohorts.map((cohort) => {
       const out: CohortOut = {
         cohort_start: cohort.cohort_start,
         cohort_size: cohort.cohort_size,
-        cost_cents: costCents,
-        cpi_cents: cpiCents,
         retention: {},
       };
-
-      // Pull cumulative revenue for ALL offsets in one query so we
-      // don't fan out N+1 SQL per cohort × per offset. The lateral
-      // unnest builds a virtual offset table, the LEFT JOIN on
-      // events filters by "<= cohort_start + offset_day" so each
-      // row is a cumulative figure (D3 includes everything up to
-      // and including D3, not just D3 events).
-      //
-      // Defensive: any failure here (e.g. unexpected event_name
-      // filter, missing column) falls through to "no revenue
-      // overlay" rather than 500-ing the entire retention page.
-      const revByOffset = new Map<number, number>();
-      try {
-        const revRows = await query<{ offset_day: number; rev_cents: string | null }>(
-          `SELECT o.offset_day,
-                  COALESCE(sum(e.revenue_cents), 0)::bigint::text AS rev_cents
-             FROM unnest($2::int[]) AS o(offset_day)
-             LEFT JOIN events e
-               ON e.user_id = ANY($1::uuid[])
-              AND e.event_name IN ('ad.revenue', 'econ.offer_completed', 'econ.purchase')
-              AND e.revenue_cents IS NOT NULL
-              AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
-             GROUP BY o.offset_day
-             ORDER BY o.offset_day`,
-          [userIds, offsets, cohortStartIso],
-        );
-        for (const r of revRows) {
-          revByOffset.set(r.offset_day, Number(r.rev_cents ?? '0'));
-        }
-      } catch (revErr) {
-        console.warn('[admin/retention/cohorts] revenue lookup failed for cohort', cohortStartIso, ':', (revErr as Error).message);
-      }
-
-      // Cumulative ad.requested events per offset. Drives the
-      // Theoretical mode revenue projection on the client
-      // (ads / 1000 * CPM input). Same lateral-unnest shape as the
-      // revenue query above so D-N is "ads through end of day N",
-      // not "ads on D-N specifically".
-      //
-      // Defensive: a missing column / malformed properties shape
-      // falls back to a zero map so the rest of the page renders.
-      const adsByOffset = new Map<number, number>();
-      try {
-        // COUNT(e.event_name) instead of COUNT(*) — with a
-        // LEFT JOIN over an unnest()'d offset_day virtual table,
-        // unmatched rows still produce one NULL-padded row per
-        // offset, which COUNT(*) would erroneously count as 1.
-        // Counting a non-nullable column from the right side
-        // skips those placeholder rows, returning 0 when no
-        // events match (the truthful answer).
-        const adsRows = await query<{ offset_day: number; ads: number }>(
-          `SELECT o.offset_day,
-                  COUNT(e.event_name)::int AS ads
-             FROM unnest($2::int[]) AS o(offset_day)
-             LEFT JOIN events e
-               ON e.user_id = ANY($1::uuid[])
-              AND e.event_name = 'ad.requested'
-              AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
-             GROUP BY o.offset_day
-             ORDER BY o.offset_day`,
-          [userIds, offsets, cohortStartIso],
-        );
-        for (const r of adsRows) {
-          adsByOffset.set(r.offset_day, r.ads ?? 0);
-        }
-      } catch (adsErr) {
-        console.warn('[admin/retention/cohorts] ads lookup failed for cohort', cohortStartIso, ':', (adsErr as Error).message);
-      }
-
-      // Cumulative DISTINCT (user_id, offer_id) plays per offset
-      // sourced from `offer_completions`. The DISTINCT pair
-      // collapses multiple-milestone completions on the same offer
-      // by the same user into ONE "play" — matching the user's
-      // requested "unique games per cohort" semantics ("не в кол-во
-      // постбеков, а уникальных игр").
-      //
-      // The table is created in migration 012_offers.sql; if it's
-      // missing (e.g. fresh dev DB without the offer system), the
-      // catch logs once and the page still renders.
-      const offerPlaysByOffset = new Map<number, number>();
-      try {
-        const playsRows = await query<{ offset_day: number; plays: number }>(
-          `SELECT o.offset_day,
-                  COUNT(DISTINCT (oc.user_id, oc.offer_id))::int AS plays
-             FROM unnest($2::int[]) AS o(offset_day)
-             LEFT JOIN offer_completions oc
-               ON oc.user_id = ANY($1::uuid[])
-              AND (oc.created_at AT TIME ZONE '${REPORTING_TZ}')::date <= ($3::date + (o.offset_day * ${groupBy === 'week' ? 7 : 1}))
-             GROUP BY o.offset_day
-             ORDER BY o.offset_day`,
-          [userIds, offsets, cohortStartIso],
-        );
-        for (const r of playsRows) {
-          offerPlaysByOffset.set(r.offset_day, r.plays ?? 0);
-        }
-      } catch (playsErr) {
-        console.warn('[admin/retention/cohorts] offer plays lookup failed for cohort', cohortStartIso, ':', (playsErr as Error).message);
-      }
-
       for (const offset of offsets) {
-        // Calendar-day (or calendar-week) retention: a user is retained on
-        // day/week N if they have any event whose date_trunc matches the
-        // cohort's date_trunc + N units. Using strict >=N*24h / <(N+1)*24h
-        // intervals was wrong — someone who registers at 22:00 and returns
-        // at 09:00 the next morning would be missed entirely despite being
-        // a textbook D1-retained user. Industry standard (GA / Amplitude /
-        // Mixpanel) is calendar-bucket based.
-        //
-        // Synthetic events filter (`retention.%`, `system.%`):
-        // server-side rollups emit milestone events on the user's
-        // behalf (analytics-rollup.ts → retention.dN_return). Letting
-        // those count as "real activity" creates a self-fulfilling
-        // loop — a D3 retention event on day register+3 would mark
-        // its own user as D3-retained even when nothing else
-        // happened that day. Filter them out so the heatmap reflects
-        // genuine product engagement only.
-        const retainedRow = await query<{ c: number }>(
-          groupBy === 'week'
-            ? `SELECT count(DISTINCT e.user_id)::int AS c
-               FROM events e
-               JOIN users u ON u.id = e.user_id
-               WHERE e.user_id = ANY($1::uuid[])
-                 AND e.event_name NOT LIKE 'retention.%'
-                 AND e.event_name NOT LIKE 'system.%'
-                 AND date_trunc('week', e.created_at AT TIME ZONE '${REPORTING_TZ}')::date
-                     = date_trunc('week', u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + ($2::int * 7)`
-            : `SELECT count(DISTINCT e.user_id)::int AS c
-               FROM events e
-               JOIN users u ON u.id = e.user_id
-               WHERE e.user_id = ANY($1::uuid[])
-                 AND e.event_name NOT LIKE 'retention.%'
-                 AND e.event_name NOT LIKE 'system.%'
-                 AND (e.created_at AT TIME ZONE '${REPORTING_TZ}')::date
-                     = (u.created_at AT TIME ZONE '${REPORTING_TZ}')::date + $2::int`,
-          [userIds, offset]
-        );
-        const retained = retainedRow[0]?.c || 0;
-        const revCents = revByOffset.get(offset) ?? 0;
-        // ROAS = revenue / cost. Null when cost is missing — UI
-        // renders "—" so analysts don't mistake "no spend data"
-        // for "0% return".
-        const roasPct = costCents > 0 ? Math.round((revCents / costCents) * 1000) / 10 : null;
+        const key = `${cohort.cohort_start}|${offset}`;
+        const retained = retainedByKey.get(key) ?? 0;
         out.retention[offset] = {
           count: retained,
           pct: cohort.cohort_size > 0 ? Math.round((retained / cohort.cohort_size) * 1000) / 10 : 0,
-          rev_cents: revCents,
-          roas_pct: roasPct,
-          ads_requested: adsByOffset.get(offset) ?? 0,
-          offer_plays: offerPlaysByOffset.get(offset) ?? 0,
+          ads_requested: adsByKey.get(key) ?? 0,
+          offer_plays: playsByKey.get(key) ?? 0,
         };
       }
-
-      result.push(out);
-    }
+      return out;
+    });
 
     res.json({
       group_by: groupBy,
       offsets,
       source_filter: sourceFilter,
-      currency: 'USD',
       cohorts: result,
     });
   } catch (err) {
