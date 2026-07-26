@@ -25,6 +25,11 @@ export async function api<T = any>(path: string, opts?: { method?: string; body?
 
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
+    // Avoid browser HTTP caching + conditional GET (If-None-Match). Express
+    // sets weak ETags on JSON; unchanged bodies → 304. For 304, `res.ok` is
+    // false, so our handler below would treat success as failure and break
+    // React Query refetches (e.g. af-cost-pull/status polling every 30s).
+    cache: 'no-store',
     headers: { ...headers, ...(opts?.headers as Record<string, string> || {}) },
     body: opts?.body && typeof opts.body !== 'string' ? JSON.stringify(opts.body) : opts?.body,
   });
@@ -33,6 +38,14 @@ export async function api<T = any>(path: string, opts?: { method?: string; body?
     clearToken();
     window.location.reload();
     throw new Error('Unauthorized');
+  }
+
+  if (res.status === 304) {
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new Error('Not Modified');
+    }
   }
 
   if (!res.ok) {
@@ -47,6 +60,7 @@ export async function apiUpload<T = any>(path: string, formData: FormData): Prom
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
+    cache: 'no-store',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
   });
@@ -55,6 +69,14 @@ export async function apiUpload<T = any>(path: string, formData: FormData): Prom
     clearToken();
     window.location.reload();
     throw new Error('Unauthorized');
+  }
+
+  if (res.status === 304) {
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new Error('Not Modified');
+    }
   }
 
   if (!res.ok) {
