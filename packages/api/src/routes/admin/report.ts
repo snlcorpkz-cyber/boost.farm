@@ -288,7 +288,7 @@ adminReportRouter.get('/overview', async (req, res) => {
         FROM offer_completions oc
         JOIN users u ON u.id = oc.user_id
         ${a.cond}
-        WHERE 1=1 ${period('oc.created_at')}`;
+        WHERE 1=1 ${period('oc.credited_at')}`;
       return { sql, p };
     })();
 
@@ -700,9 +700,26 @@ adminReportRouter.get('/engagement', async (req, res) => {
 adminReportRouter.get('/funnel', async (req, res) => {
   const a = buildAudience(req, res);
   if (!a) return;
+  /**
+   * Right-censoring window. A player who has not reached step N is only
+   * counted as *lost* once they have been silent this long; anyone who
+   * played more recently is still "in progress" and can convert later.
+   * Without this split, "12 players harvested" silently implies everyone
+   * else failed — when most of them are simply still growing.
+   */
+  const churnRaw = parseInt(String(req.query.churn_days ?? '14'), 10);
+  const churnDays = Number.isFinite(churnRaw) ? Math.max(1, Math.min(365, churnRaw)) : 14;
+  const STAGE_STEPS = [2, 3, 4, 5, 6];
   try {
     const funnelQ = (() => {
-      const { p, period } = withParams(a);
+      const { p, add, period } = withParams(a);
+      // Bound before `period()` so the placeholder numbering matches the
+      // order the params are pushed in.
+      const churnPh = add(churnDays);
+      const stageCols = STAGE_STEPS.map((k) => `
+          count(*) FILTER (WHERE eff_stage >= ${k})::int AS stage_${k},
+          count(*) FILTER (WHERE eff_stage < ${k} AND still_active)::int AS stage_${k}_in_progress,
+          count(*) FILTER (WHERE eff_stage < ${k} AND NOT still_active)::int AS stage_${k}_lost`).join(',');
       const sql = `
         WITH scope AS (
           SELECT u.id, u.created_at,
@@ -716,6 +733,7 @@ adminReportRouter.get('/funnel', async (req, res) => {
             bool_or(e.event_name = 'onboarding.tutorial_finished') AS tutorial,
             bool_or(e.event_name = 'farm.water') AS watered,
             bool_or(e.event_name = 'ad.server_granted') AS watched_ad,
+            max(e.created_at) AS last_seen,
             greatest(
               coalesce(max(CASE WHEN e.event_name = 'farm.stage_reached'
                                 THEN (e.properties ->> 'stage')::int END), 1),
@@ -733,35 +751,55 @@ adminReportRouter.get('/funnel', async (req, res) => {
           FROM scope s
           LEFT JOIN events e ON e.user_id = s.id AND ${REAL_EVENTS}
           GROUP BY s.id, s.created_at, s.harvested, s.farm_stage
+        ),
+        flags AS (
+          SELECT *,
+            (harvested OR t_harvest IS NOT NULL) AS did_harvest,
+            -- a harvested farm is by definition past every stage gate
+            CASE WHEN harvested OR t_harvest IS NOT NULL THEN 6 ELSE max_stage END AS eff_stage,
+            -- coalesce: a user with zero events has last_seen = NULL and
+            -- must land in "lost", not vanish from both buckets
+            coalesce(last_seen >= now() - (${churnPh} || ' days')::interval, false) AS still_active
+          FROM agg
         )
         SELECT
           count(*)::int AS registered,
           count(*) FILTER (WHERE tutorial)::int AS tutorial_finished,
           count(*) FILTER (WHERE watered)::int AS first_water,
           count(*) FILTER (WHERE watched_ad)::int AS watched_ad,
-          count(*) FILTER (WHERE max_stage >= 2)::int AS stage_2,
-          count(*) FILTER (WHERE max_stage >= 3)::int AS stage_3,
-          count(*) FILTER (WHERE max_stage >= 4)::int AS stage_4,
-          count(*) FILTER (WHERE max_stage >= 5)::int AS stage_5,
-          count(*) FILTER (WHERE max_stage >= 6)::int AS stage_6,
-          count(*) FILTER (WHERE harvested OR t_harvest IS NOT NULL)::int AS harvested,
+          count(*) FILTER (WHERE still_active)::int AS still_active_total,
+          ${stageCols},
+          count(*) FILTER (WHERE did_harvest)::int AS harvested,
+          count(*) FILTER (WHERE NOT did_harvest AND still_active)::int AS harvested_in_progress,
+          count(*) FILTER (WHERE NOT did_harvest AND NOT still_active)::int AS harvested_lost,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_s3 - created_at) / 86400.0)::float AS med_days_s3,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_s4 - created_at) / 86400.0)::float AS med_days_s4,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_s5 - created_at) / 86400.0)::float AS med_days_s5,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_s6 - created_at) / 86400.0)::float AS med_days_s6,
           percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM t_harvest - created_at) / 86400.0)::float AS med_days_harvest
-        FROM agg`;
+        FROM flags`;
       return { sql, p };
     })();
 
-    // Snapshot: where are active (unharvested) farms right now.
+    // Snapshot: where are active (unharvested) farms right now, and how
+    // many of them belong to a player who is still showing up.
     const stagesQ = (() => {
-      const { p } = withParams(a);
+      const { p, add } = withParams(a);
+      const churnPh = add(churnDays);
       const sql = `
-        SELECT f.current_stage::int AS stage, count(*)::int AS farms
+        SELECT f.current_stage::int AS stage,
+               count(*)::int AS farms,
+               count(*) FILTER (
+                 WHERE ls.last_seen >= now() - (${churnPh} || ' days')::interval
+               )::int AS active_farms
         FROM farms f
         JOIN users u ON u.id = f.user_id
         ${a.cond}
+        LEFT JOIN LATERAL (
+          SELECT max(e.created_at) AS last_seen
+          FROM events e
+          WHERE e.user_id = f.user_id AND ${REAL_EVENTS}
+        ) ls ON true
         WHERE f.harvested = false
         GROUP BY 1
         ORDER BY 1`;
@@ -773,7 +811,12 @@ adminReportRouter.get('/funnel', async (req, res) => {
       query<any>(stagesQ.sql, stagesQ.p),
     ]);
 
-    res.json({ days: a.days, funnel: funnel ?? {}, active_farm_stages: stages ?? [] });
+    res.json({
+      days: a.days,
+      churn_days: churnDays,
+      funnel: funnel ?? {},
+      active_farm_stages: stages ?? [],
+    });
   } catch (err) {
     console.error('[admin/report/funnel]', err);
     res.status(500).json({ error: 'Failed', details: (err as Error).message });
@@ -860,7 +903,7 @@ async function dimensionRollup(a: Audience, dimExpr: string) {
       FROM offer_completions oc
       JOIN users u ON u.id = oc.user_id
       ${a.cond}
-      WHERE 1=1 ${period('oc.created_at')}
+      WHERE 1=1 ${period('oc.credited_at')}
       GROUP BY 1`;
     return { sql, p };
   })();
@@ -1031,7 +1074,7 @@ adminReportRouter.get('/monetization', async (req, res) => {
         JOIN offers o ON o.id = oc.offer_id
         JOIN users u ON u.id = oc.user_id
         ${a.cond}
-        WHERE 1=1 ${period('oc.created_at')}
+        WHERE 1=1 ${period('oc.credited_at')}
         GROUP BY o.id, o.name
         ORDER BY completions DESC
         LIMIT 10`;
@@ -1074,6 +1117,371 @@ adminReportRouter.get('/monetization', async (req, res) => {
     });
   } catch (err) {
     console.error('[admin/report/monetization]', err);
+    res.status(500).json({ error: 'Failed', details: (err as Error).message });
+  }
+});
+
+// ── Ad inventory ────────────────────────────────────────────────
+
+/**
+ * Ad inventory — how much rewarded-video demand the game actually
+ * generated, independent of whether the ad network was up.
+ *
+ * Why this exists: for long stretches the SDK was mis-configured or
+ * disabled, so `ad.revenue` (ILRD) is near-zero while players kept
+ * tapping "watch ad" and kept being served the mock fallback. Judging
+ * monetization by revenue alone therefore understates the product:
+ * the *impression* — real or mock — is the sellable unit, because the
+ * same user action would have produced revenue behind a working
+ * network. This endpoint reports impressions as first-class and keeps
+ * realized revenue next to them without mixing the two.
+ *
+ * Every ad.* event of one user tap carries the same `attempt_id`, so we
+ * count DISTINCT attempts rather than raw rows — a double-fired event
+ * (fast double-tap, re-render) cannot inflate the funnel. Rows predating
+ * the attempt_id stamp fall back to the event id, i.e. one row = one
+ * attempt, which is the old behaviour.
+ */
+adminReportRouter.get('/inventory', async (req, res) => {
+  const a = buildAudience(req, res);
+  if (!a) return;
+  const ATTEMPT = `coalesce(e.properties ->> 'attempt_id', e.id::text)`;
+  const nAttempts = (cond: string) => `count(DISTINCT ${ATTEMPT}) FILTER (WHERE ${cond})::int`;
+  // `ad.no_fill` is also emitted with a NULL placement by the SDK's
+  // pre-cache loop; those are not tied to a user intent, so drop them.
+  const REAL_NO_FILL = `e.event_name = 'ad.no_fill' AND e.placement IS NOT NULL`;
+  try {
+    const totalsQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT
+          ${nAttempts(`e.event_name = 'ad.requested'`)} AS opportunities,
+          ${nAttempts(`e.event_name = 'ad.shown'`)} AS sdk_impressions,
+          ${nAttempts(`e.event_name = 'ad.fallback_shown'`)} AS mock_impressions,
+          ${nAttempts(`e.event_name = 'ad.rewarded'`)} AS completions,
+          ${nAttempts(`e.event_name = 'ad.server_granted'`)} AS rewards_granted,
+          ${nAttempts(REAL_NO_FILL)} AS no_fill,
+          ${nAttempts(`e.event_name = 'ad.failed'`)} AS failed,
+          count(*) FILTER (WHERE e.event_name = 'ad.revenue')::int AS monetized_impressions,
+          coalesce(sum(e.revenue_cents) FILTER (WHERE e.event_name = 'ad.revenue'), 0)::int AS revenue_cents,
+          count(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'ad.requested')::int AS requesting_users,
+          count(DISTINCT e.user_id) FILTER (
+            WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
+          )::int AS viewing_users
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE e.event_name LIKE 'ad.%'
+        ${period('e.created_at')}`;
+      return { sql, p };
+    })();
+
+    // Denominator for "impressions per active player-day". Counted over
+    // all real activity, not just ad events, so it matches the same
+    // figure on the Summary / Engagement sections.
+    const activityQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT count(DISTINCT (e.user_id, ${DAY('e.created_at')}))::int AS active_user_days
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE ${REAL_EVENTS}
+        ${period('e.created_at')}`;
+      return { sql, p };
+    })();
+
+    const dailyQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT ${DAY('e.created_at')}::text AS day,
+          ${nAttempts(`e.event_name = 'ad.requested'`)} AS opportunities,
+          ${nAttempts(`e.event_name = 'ad.shown'`)} AS sdk_impressions,
+          ${nAttempts(`e.event_name = 'ad.fallback_shown'`)} AS mock_impressions,
+          ${nAttempts(`e.event_name = 'ad.server_granted'`)} AS rewards_granted,
+          coalesce(sum(e.revenue_cents) FILTER (WHERE e.event_name = 'ad.revenue'), 0)::int AS revenue_cents
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE e.event_name LIKE 'ad.%'
+        ${period('e.created_at')}
+        GROUP BY 1
+        ORDER BY 1`;
+      return { sql, p };
+    })();
+
+    // Placement is the product surface the ad was attached to:
+    // water_popup / fert_popup / bucket_collect / quest.
+    const placementQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT coalesce(nullif(e.placement, ''), 'unknown') AS placement,
+          ${nAttempts(`e.event_name = 'ad.requested'`)} AS opportunities,
+          ${nAttempts(`e.event_name = 'ad.shown'`)} AS sdk_impressions,
+          ${nAttempts(`e.event_name = 'ad.fallback_shown'`)} AS mock_impressions,
+          ${nAttempts(`e.event_name = 'ad.server_granted'`)} AS rewards_granted,
+          count(*) FILTER (WHERE e.event_name = 'ad.revenue')::int AS monetized_impressions,
+          coalesce(sum(e.revenue_cents) FILTER (WHERE e.event_name = 'ad.revenue'), 0)::int AS revenue_cents,
+          count(DISTINCT e.user_id) FILTER (
+            WHERE e.event_name IN ('ad.shown', 'ad.fallback_shown')
+          )::int AS viewing_users
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE e.event_name LIKE 'ad.%'
+          AND e.placement IS NOT NULL
+        ${period('e.created_at')}
+        GROUP BY 1
+        ORDER BY 2 DESC`;
+      return { sql, p };
+    })();
+
+    const [totals, activity, daily, placements] = await Promise.all([
+      queryOne<any>(totalsQ.sql, totalsQ.p),
+      queryOne<any>(activityQ.sql, activityQ.p),
+      query<any>(dailyQ.sql, dailyQ.p),
+      query<any>(placementQ.sql, placementQ.p),
+    ]);
+
+    const sdk = totals?.sdk_impressions || 0;
+    const mock = totals?.mock_impressions || 0;
+    const impressions = sdk + mock;
+    const monetized = totals?.monetized_impressions || 0;
+    const revenue = totals?.revenue_cents || 0;
+    const activeUserDays = activity?.active_user_days || 0;
+
+    res.json({
+      days: a.days,
+      totals: {
+        opportunities: totals?.opportunities || 0,
+        sdk_impressions: sdk,
+        mock_impressions: mock,
+        impressions,
+        completions: totals?.completions || 0,
+        rewards_granted: totals?.rewards_granted || 0,
+        monetized_impressions: monetized,
+        revenue_cents: revenue,
+        no_fill: totals?.no_fill || 0,
+        failed: totals?.failed || 0,
+        requesting_users: totals?.requesting_users || 0,
+        viewing_users: totals?.viewing_users || 0,
+        active_user_days: activeUserDays,
+        // Share of delivered impressions the network actually paid for.
+        // The gap between this and 100% is the inventory we produced but
+        // could not sell.
+        monetized_pct: impressions > 0 ? Math.round((monetized / impressions) * 1000) / 10 : 0,
+        // Share of taps that ended in an ad the user could watch.
+        delivery_pct: totals?.opportunities > 0
+          ? Math.round((impressions / totals.opportunities) * 1000) / 10
+          : 0,
+        // Realized eCPM over PAID impressions only — the honest input for
+        // any "what would the rest have been worth" estimate. Null when
+        // nothing was ever monetized, so the UI can ask for an assumption
+        // instead of silently extrapolating from zero.
+        observed_ecpm_cents: monetized > 0 ? Math.round((revenue / monetized) * 1000) : null,
+        impressions_per_active_day: activeUserDays > 0
+          ? Math.round((impressions / activeUserDays) * 100) / 100
+          : 0,
+      },
+      daily: (daily ?? []).map((r: any) => ({
+        ...r,
+        impressions: (r.sdk_impressions || 0) + (r.mock_impressions || 0),
+      })),
+      by_placement: (placements ?? []).map((r: any) => ({
+        ...r,
+        impressions: (r.sdk_impressions || 0) + (r.mock_impressions || 0),
+      })),
+    });
+  } catch (err) {
+    console.error('[admin/report/inventory]', err);
+    res.status(500).json({ error: 'Failed', details: (err as Error).message });
+  }
+});
+
+// ── Offerwall / partner games ───────────────────────────────────
+
+/**
+ * Partner games — the second revenue line: studios pay per install, so
+ * the headline is *unique players per game*, not milestone depth.
+ *
+ * Two independent sources, deliberately kept apart:
+ *   - opened   — `econ.offer_clicked`, written server-side when a player
+ *                asks for their tracking link. Top of funnel. Only exists
+ *                from the deploy that added it onward.
+ *   - installed— the FIRST milestone of an offer (lowest sort_order) in
+ *                `offer_completions`. That is the install/first-event in
+ *                the Everflow funnel and is postback-confirmed, i.e. the
+ *                number that can be put in front of a studio.
+ * Anything past the first milestone is depth, reported but not headline.
+ */
+adminReportRouter.get('/offers', async (req, res) => {
+  const a = buildAudience(req, res);
+  if (!a) return;
+  // First milestone per offer = the install event in Everflow's funnel.
+  const FIRST_MILESTONE = `
+    SELECT DISTINCT ON (m.offer_id) m.offer_id, m.id AS milestone_id
+    FROM offer_milestones m
+    ORDER BY m.offer_id, m.sort_order, m.event_name`;
+  try {
+    // Catalog carries no audience/window filter — binding the cloned
+    // audience params here would ship unreferenced values and Postgres
+    // would reject the statement.
+    const catalogQ = {
+      sql: `
+        SELECT o.id, o.name, o.active, o.reward_type, o.icon_url,
+               (SELECT count(*)::int FROM offer_milestones m WHERE m.offer_id = o.id) AS milestone_count
+        FROM offers o
+        ORDER BY o.sort_order, o.created_at`,
+      p: [] as any[],
+    };
+
+    const completionsQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT oc.offer_id,
+               count(*)::int AS completions,
+               count(DISTINCT oc.user_id)::int AS players,
+               count(DISTINCT oc.user_id) FILTER (
+                 WHERE oc.milestone_id = fm.milestone_id
+               )::int AS installs,
+               count(DISTINCT oc.user_id) FILTER (
+                 WHERE oc.milestone_id <> fm.milestone_id
+               )::int AS deeper_players
+        FROM offer_completions oc
+        JOIN users u ON u.id = oc.user_id
+        ${a.cond}
+        JOIN (${FIRST_MILESTONE}) fm ON fm.offer_id = oc.offer_id
+        WHERE 1=1 ${period('oc.credited_at')}
+        GROUP BY 1`;
+      return { sql, p };
+    })();
+
+    const opensQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT e.properties ->> 'offer_id' AS offer_id,
+               count(*)::int AS opens,
+               count(DISTINCT e.user_id)::int AS opening_users
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE e.event_name = 'econ.offer_clicked'
+          AND e.properties ->> 'offer_id' IS NOT NULL
+        ${period('e.created_at')}
+        GROUP BY 1`;
+      return { sql, p };
+    })();
+
+    // Distinct players across ALL games — summing per-offer installs
+    // would double-count anyone who installed two games.
+    const uniqueQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT count(DISTINCT oc.user_id) FILTER (
+                 WHERE oc.milestone_id = fm.milestone_id
+               )::int AS unique_installers,
+               count(DISTINCT oc.user_id)::int AS unique_players
+        FROM offer_completions oc
+        JOIN users u ON u.id = oc.user_id
+        ${a.cond}
+        JOIN (${FIRST_MILESTONE}) fm ON fm.offer_id = oc.offer_id
+        WHERE 1=1 ${period('oc.credited_at')}`;
+      return { sql, p };
+    })();
+
+    const uniqueOpenersQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT count(DISTINCT e.user_id)::int AS unique_openers
+        FROM events e
+        JOIN users u ON u.id = e.user_id
+        ${a.cond}
+        WHERE e.event_name = 'econ.offer_clicked'
+        ${period('e.created_at')}`;
+      return { sql, p };
+    })();
+
+    const dailyQ = (() => {
+      const { p, period } = withParams(a);
+      const sql = `
+        SELECT ${DAY('oc.credited_at')}::text AS day,
+               count(DISTINCT oc.user_id) FILTER (
+                 WHERE oc.milestone_id = fm.milestone_id
+               )::int AS installs,
+               count(*)::int AS completions
+        FROM offer_completions oc
+        JOIN users u ON u.id = oc.user_id
+        ${a.cond}
+        JOIN (${FIRST_MILESTONE}) fm ON fm.offer_id = oc.offer_id
+        WHERE 1=1 ${period('oc.credited_at')}
+        GROUP BY 1
+        ORDER BY 1`;
+      return { sql, p };
+    })();
+
+    const [catalog, completions, opens, uniq, uniqOpeners, daily] = await Promise.all([
+      query<any>(catalogQ.sql, catalogQ.p),
+      query<any>(completionsQ.sql, completionsQ.p),
+      query<any>(opensQ.sql, opensQ.p),
+      queryOne<any>(uniqueQ.sql, uniqueQ.p),
+      queryOne<any>(uniqueOpenersQ.sql, uniqueOpenersQ.p),
+      query<any>(dailyQ.sql, dailyQ.p),
+    ]);
+
+    const byOffer = new Map<string, any>();
+    for (const r of completions ?? []) byOffer.set(String(r.offer_id), r);
+    const byOpens = new Map<string, any>();
+    for (const r of opens ?? []) byOpens.set(String(r.offer_id), r);
+
+    const rows = (catalog ?? []).map((o: any) => {
+      const c = byOffer.get(String(o.id)) ?? {};
+      const op = byOpens.get(String(o.id)) ?? {};
+      const openingUsers = op.opening_users || 0;
+      const installs = c.installs || 0;
+      return {
+        id: o.id,
+        name: o.name,
+        active: o.active,
+        reward_type: o.reward_type,
+        icon_url: o.icon_url,
+        milestone_count: o.milestone_count,
+        opens: op.opens || 0,
+        opening_users: openingUsers,
+        installs,
+        players: c.players || 0,
+        deeper_players: c.deeper_players || 0,
+        completions: c.completions || 0,
+        // Only meaningful once opens are being recorded; null keeps the
+        // UI from printing a fake 0% for the pre-tracking history.
+        open_to_install_pct: openingUsers > 0
+          ? Math.round((installs / openingUsers) * 1000) / 10
+          : null,
+      };
+    });
+
+    const totals = rows.reduce(
+      (acc: any, r: any) => ({
+        opens: acc.opens + r.opens,
+        installs: acc.installs + r.installs,
+        completions: acc.completions + r.completions,
+      }),
+      { opens: 0, installs: 0, completions: 0 },
+    );
+
+    res.json({
+      days: a.days,
+      rows: rows.sort((x: any, y: any) => y.installs - x.installs || y.opening_users - x.opening_users),
+      totals: {
+        ...totals,
+        games_live: rows.filter((r: any) => r.active).length,
+        unique_installers: uniq?.unique_installers || 0,
+        unique_players: uniq?.unique_players || 0,
+        unique_openers: uniqOpeners?.unique_openers || 0,
+      },
+      daily: daily ?? [],
+    });
+  } catch (err) {
+    console.error('[admin/report/offers]', err);
     res.status(500).json({ error: 'Failed', details: (err as Error).message });
   }
 });

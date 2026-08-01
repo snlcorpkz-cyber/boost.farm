@@ -5,6 +5,7 @@ import { sendPush } from '../lib/push.js';
 import { notify } from '../lib/notify.js';
 import { getCurrentPhase } from '@eco-farm/game-engine';
 import { incrementActivityQuest } from './quests.js';
+import { trackEvent } from '../lib/analytics.js';
 
 export const offersRouter = Router();
 
@@ -237,7 +238,7 @@ offersRouter.get('/:id/link', requireAuth, async (req: Request, res: Response) =
   const offerId = req.params.id;
 
   const offer = await queryOne(
-    `SELECT id, tracking_link_template FROM offers WHERE id = $1 AND active = true`,
+    `SELECT id, name, reward_type, tracking_link_template FROM offers WHERE id = $1 AND active = true`,
     [offerId]
   );
 
@@ -249,6 +250,20 @@ offersRouter.get('/:id/link', requireAuth, async (req: Request, res: Response) =
   let link = offer.tracking_link_template;
   const separator = link.includes('?') ? '&' : '?';
   link = `${link}${separator}sub1=${encodeURIComponent(userId)}`;
+
+  // Top of the partner-game funnel. Recorded server-side (not from the
+  // client) because this is the exact moment we hand out a tracking link
+  // — it cannot be lost to an ad blocker or a killed webview, and it is
+  // the only counterpart we have to Everflow's postback-confirmed
+  // installs. Read by /admin/report/offers.
+  trackEvent(
+    userId,
+    'econ.offer_clicked',
+    { offer_id: offer.id, offer_name: offer.name, reward_type: offer.reward_type },
+    req,
+    req.user?.sessionId,
+    { placement: 'offerwall' },
+  ).catch(() => { /* analytics must never block the link */ });
 
   // H-1: opening an offer counts as a real "view_product" action.
   const tzOffset = parseInt(req.headers['x-timezone-offset'] as string) || 0;

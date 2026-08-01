@@ -173,8 +173,9 @@ export const EVENT_REGISTRY: readonly EventSpec[] = [
   {
     name: 'econ.offer_clicked',
     category: 'economy',
-    description: 'User tapped an offer card.',
-    props: ['offer_id', 'placement'],
+    description:
+      'User opened a partner game — written server-side by GET /offers/:id/link, the moment a personal tracking link is handed out. Top of the offerwall funnel; the postback-confirmed first milestone in `offer_completions` is the install that follows.',
+    props: ['offer_id', 'offer_name', 'reward_type', 'placement'],
   },
 
   // ── Session ─────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { usePersistedState } from '@/hooks/usePersistedState';
@@ -119,8 +119,18 @@ const NAV = [
   ['funnel', 'Progression'],
   ['geo', 'Geography'],
   ['sources', 'Sources'],
+  ['inventory', 'Ad inventory'],
+  ['offers', 'Partner games'],
   ['monetization', 'Monetization'],
 ] as const;
+
+/**
+ * Fallback eCPM (cents) for the "what was this inventory worth" estimate
+ * when the network never paid us anything in the window, so there is no
+ * observed rate to anchor on. Conservative rewarded-video ballpark; the
+ * operator overrides it in the UI.
+ */
+const DEFAULT_ECPM_CENTS = 300;
 
 export function ReportPage() {
   const [days, setDays] = usePersistedState<number>('report.days', 30);
@@ -128,6 +138,11 @@ export function ReportPage() {
   const [platform, setPlatform] = usePersistedState<string>('report.platform', '');
   const [source, setSource] = usePersistedState<string>('report.source', 'all');
   const [partnerId, setPartnerId] = usePersistedState<string>('report.partner', '');
+  // Days of silence after which a player who has not reached a step is
+  // treated as lost rather than still on their way there.
+  const [churnDays, setChurnDays] = usePersistedState<number>('report.churnDays', 14);
+  // null = follow the observed eCPM; a number pins the assumption.
+  const [ecpmOverride, setEcpmOverride] = usePersistedState<number | null>('report.ecpmCents', null);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -139,13 +154,19 @@ export function ReportPage() {
     return p.toString();
   }, [days, country, platform, source, partnerId]);
 
+  // Only the funnel cares about the churn window — keep it out of the
+  // shared string so changing it doesn't invalidate every other section.
+  const qsFunnel = useMemo(() => `${qs}&churn_days=${churnDays}`, [qs, churnDays]);
+
   const overview = useReport('overview', qs);
   const growth = useReport('growth', qs);
   const retention = useReport('retention', qs);
   const engagement = useReport('engagement', qs);
-  const funnel = useReport('funnel', qs);
+  const funnel = useReport('funnel', qsFunnel);
   const geo = useReport('geo', qs);
   const sources = useReport('sources', qs);
+  const inventory = useReport('inventory', qs);
+  const offers = useReport('offers', qs);
   const monetization = useReport('monetization', qs);
 
   // Country dropdown options come from an unfiltered-by-country geo
@@ -253,20 +274,27 @@ export function ReportPage() {
         </div>
       </div>
 
-      <SummarySection q={overview} />
+      <SummarySection q={overview} inv={inventory} />
       <GrowthSection q={growth} />
       <RetentionSection q={retention} />
       <EngagementSection q={engagement} />
-      <FunnelSection q={funnel} />
+      <FunnelSection q={funnel} churnDays={churnDays} onChurnDays={setChurnDays} />
       <GeoSection q={geo} />
       <SourcesSection q={sources} />
+      <InventorySection q={inventory} ecpmOverride={ecpmOverride} onEcpm={setEcpmOverride} />
+      <OffersSection q={offers} />
       <MonetizationSection q={monetization} />
 
       <p className="mt-10 border-t border-gray-200 pt-4 text-xs text-gray-400">
         Methodology: calendar days are bucketed in the reporting timezone (matches Retention page,
         AppsFlyer and FB Ads Manager). A session = a burst of activity with no gap over 30 minutes.
-        Synthetic server-side events are excluded everywhere. Rewarded-ad "rewards paid" is the
-        server-authoritative number; mock (fallback) impressions carry no revenue.
+        Synthetic server-side events are excluded everywhere. Ad impressions count one per user tap
+        (deduplicated by attempt id) and include mock fallback impressions, which are delivered
+        inventory but carry no revenue — realized revenue is reported separately and never mixed
+        with the eCPM-based estimate. Partner-game installs are postback-confirmed first milestones;
+        game opens are only recorded from the release that added that tracking. Progression steps
+        separate players who are still growing from those who went silent, so a low harvest count is
+        not read as a failure when most cohorts are simply not finished.
       </p>
     </div>
   );
@@ -274,11 +302,14 @@ export function ReportPage() {
 
 // ── 01 Summary ──────────────────────────────────────────────────
 
-function SummarySection({ q }: { q: ReportQuery }) {
+function SummarySection({ q, inv }: { q: ReportQuery; inv: ReportQuery }) {
   if (q.isPending) return <Section id="sec-summary" num="01" title="Executive summary"><Loading /></Section>;
   if (q.isError || !q.data) return <Section id="sec-summary" num="01" title="Executive summary"><LoadError msg={(q.error as Error)?.message} /></Section>;
   const d = q.data;
   const ret = d.retention ?? {};
+  // Inventory loads on its own clock — an empty object just renders zeros
+  // for one paint rather than blocking the whole summary.
+  const ad = inv.data?.totals ?? {};
   return (
     <Section id="sec-summary" num="01" title="Executive summary"
              subtitle="The headline numbers for the selected window and audience.">
@@ -304,8 +335,20 @@ function SummarySection({ q }: { q: ReportQuery }) {
         <Kpi label="Waterings per active day" value={d.economy.waterings_per_active_day} sub={`${fmtCompact(d.economy.waterings)} total`} />
       </div>
       <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Ad revenue (window)" value={fmtMoney(d.economy.ad_revenue_cents)} sub={`eCPM ${fmtMoney(d.economy.ecpm_cents)}`} />
-        <Kpi label="ARPDAU" value={fmtMoney(d.economy.arpdau_cents)} sub={`${fmtCompact(d.economy.ads_rewarded)} rewarded ads`} />
+        {/* Impressions lead the money tiles on purpose: while the ad
+            network was misconfigured, delivered inventory is the honest
+            measure of what the game produced, and realized revenue only
+            reflects how much of it could be sold. */}
+        <Kpi
+          label="Ad impressions (real + mock)"
+          value={fmtInt(ad.impressions ?? 0)}
+          sub={`${fmtInt(ad.sdk_impressions ?? 0)} real · ${fmtInt(ad.mock_impressions ?? 0)} mock · ${ad.impressions_per_active_day ?? 0}/active day`}
+        />
+        <Kpi
+          label="Ad revenue (realized)"
+          value={fmtMoney(d.economy.ad_revenue_cents)}
+          sub={`ARPDAU ${fmtMoney(d.economy.arpdau_cents)} · ${fmtInt(ad.monetized_impressions ?? 0)} paid impressions`}
+        />
         <Kpi label="Offer plays" value={fmtInt(d.economy.offer_completions)} sub={`${fmtInt(d.economy.offer_players)} unique players`} />
         <Kpi label="Harvests → coupons" value={fmtInt(d.totals.harvest_users)}
              sub={`${fmtInt(d.totals.coupons_issued)} coupons · ${fmtMoney(d.totals.coupons_value_cents)} liability · ${fmtInt(d.totals.coupons_redeemed)} redeemed`} />
@@ -556,7 +599,13 @@ function EngagementSection({ q }: { q: ReportQuery }) {
 
 // ── 05 Progression funnel ───────────────────────────────────────
 
-function FunnelSection({ q }: { q: ReportQuery }) {
+const CHURN_OPTIONS = [7, 14, 30] as const;
+
+function FunnelSection({
+  q, churnDays, onChurnDays,
+}: {
+  q: ReportQuery; churnDays: number; onChurnDays: (v: number) => void;
+}) {
   if (q.isPending) return <Section id="sec-funnel" num="05" title="Progression"><Loading /></Section>;
   if (q.isError || !q.data) return <Section id="sec-funnel" num="05" title="Progression"><LoadError msg={(q.error as Error)?.message} /></Section>;
   const f = q.data.funnel ?? {};
@@ -573,31 +622,133 @@ function FunnelSection({ q }: { q: ReportQuery }) {
     { label: 'Stage 6', value: f.stage_6 ?? 0, note: medNote(f.med_days_s6) },
     { label: '🥕 Harvest', value: f.harvested ?? 0, note: medNote(f.med_days_harvest) },
   ];
+
+  /**
+   * Censoring-aware view of the same funnel. "Reached" is a fact.
+   * Everyone who has not reached a step splits into players who are
+   * still showing up (they can still get there) and players who went
+   * quiet (they never will). The raw rate divides by everybody; the
+   * settled rate divides only by players whose run is over, which is
+   * the number that answers "of the people who finished playing, what
+   * share made it here".
+   */
+  const rows = [
+    { label: 'Stage 2', reached: f.stage_2, inProgress: f.stage_2_in_progress, lost: f.stage_2_lost },
+    { label: 'Stage 3', reached: f.stage_3, inProgress: f.stage_3_in_progress, lost: f.stage_3_lost },
+    { label: 'Stage 4', reached: f.stage_4, inProgress: f.stage_4_in_progress, lost: f.stage_4_lost },
+    { label: 'Stage 5', reached: f.stage_5, inProgress: f.stage_5_in_progress, lost: f.stage_5_lost },
+    { label: 'Stage 6', reached: f.stage_6, inProgress: f.stage_6_in_progress, lost: f.stage_6_lost },
+    { label: '🥕 Harvest', reached: f.harvested, inProgress: f.harvested_in_progress, lost: f.harvested_lost },
+  ].map((r) => {
+    const reached = r.reached ?? 0;
+    const lost = r.lost ?? 0;
+    const inProgress = r.inProgress ?? 0;
+    const settledBase = reached + lost;
+    return {
+      ...r, reached, lost, inProgress,
+      rawPct: f.registered > 0 ? Math.round((reached / f.registered) * 1000) / 10 : 0,
+      settledPct: settledBase > 0 ? Math.round((reached / settledBase) * 1000) / 10 : null,
+    };
+  });
+  const harvest = rows[rows.length - 1];
+
   return (
     <Section id="sec-funnel" num="05" title="Progression to the vegetables"
-             subtitle="How far players get on the way to a real harvest, and where they stall.">
+             subtitle="How far players get on the way to a real harvest, who is still on the way, and where the rest stall.">
+      <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="🥕 Harvested" value={fmtInt(harvest.reached)}
+             sub={harvest.rawPct + '% of everyone registered in the window'} />
+        <Kpi label="Still growing" value={fmtInt(harvest.inProgress)}
+             sub={`played within the last ${churnDays}d, no harvest yet`} />
+        <Kpi label="Gave up before harvest" value={fmtInt(harvest.lost)}
+             sub={`silent for over ${churnDays}d`} />
+        <Kpi label="Harvest rate, settled players"
+             value={harvest.settledPct != null ? `${harvest.settledPct}%` : '—'}
+             sub={`of ${fmtInt(harvest.reached + harvest.lost)} whose run is over`} />
+      </div>
       <div className="grid gap-3 lg:grid-cols-5">
         <Card className="lg:col-span-3">
           <h3 className="mb-3 text-sm font-semibold text-gray-700">Lifetime funnel (players registered in window)</h3>
           <FunnelBars steps={steps} />
           <p className="mt-2 text-xs text-gray-400">
             {fmtInt(f.watched_ad ?? 0)} players ({f.registered ? Math.round(((f.watched_ad ?? 0) / f.registered) * 1000) / 10 : 0}%)
-            watched at least one rewarded ad.
+            watched at least one rewarded ad. {fmtInt(f.still_active_total ?? 0)} of {fmtInt(f.registered ?? 0)} are still active.
           </p>
         </Card>
         <Card className="lg:col-span-2">
           <h3 className="mb-2 text-sm font-semibold text-gray-700">Active farms right now, by stage</h3>
           <ColumnChart
-            data={Array.from({ length: 6 }, (_, i) => ({
-              label: `S${i + 1}`,
-              parts: [stages.find((s) => s.stage === i + 1)?.farms ?? 0],
-            }))}
-            names={['Farms']} colors={[SERIES[0]]}
+            data={Array.from({ length: 6 }, (_, i) => {
+              const row = stages.find((s) => s.stage === i + 1);
+              const total = row?.farms ?? 0;
+              const stillPlaying = row?.active_farms ?? 0;
+              // stacked: engaged farms first, dormant remainder on top
+              return { label: `S${i + 1}`, parts: [stillPlaying, Math.max(0, total - stillPlaying)] };
+            })}
+            names={[`Played in last ${churnDays}d`, 'Dormant']}
+            colors={[SERIES[0], '#d4d4d8']}
             xLabel={(l) => l}
           />
           <p className="mt-1 text-xs text-gray-400">Snapshot of unharvested farms (audience filters apply; time window does not).</p>
         </Card>
       </div>
+      <Card className="mt-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-gray-700">Who is still on their way vs who dropped out</h3>
+          <div className="no-print flex items-center gap-1.5">
+            <span className="text-xs text-gray-500">Consider a player lost after</span>
+            <div className="flex rounded-lg border border-gray-200 p-0.5">
+              {CHURN_OPTIONS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => onChurnDays(c)}
+                  className={[
+                    'rounded-md px-2 py-0.5 text-xs font-medium transition',
+                    churnDays === c ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100',
+                  ].join(' ')}
+                >
+                  {c}d
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-gray-500">of silence</span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-2.5 py-2 font-semibold">Step</th>
+                <th className="px-2.5 py-2 text-right font-semibold">Reached</th>
+                <th className="px-2.5 py-2 text-right font-semibold">Still on the way</th>
+                <th className="px-2.5 py-2 text-right font-semibold">Dropped out</th>
+                <th className="px-2.5 py-2 text-right font-semibold">% of all</th>
+                <th className="px-2.5 py-2 text-right font-semibold">% of settled</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.label} className="border-b border-gray-100">
+                  <td className="px-2.5 py-1.5 font-medium text-gray-700">{r.label}</td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums">{fmtInt(r.reached)}</td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums text-blue-700">{fmtInt(r.inProgress)}</td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums text-gray-500">{fmtInt(r.lost)}</td>
+                  <td className="px-2.5 py-1.5 text-right tabular-nums text-gray-500">{r.rawPct}%</td>
+                  <td className="px-2.5 py-1.5 text-right font-semibold tabular-nums">
+                    {r.settledPct != null ? `${r.settledPct}%` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          "% of all" divides by everyone registered in the window, including players who only started
+          yesterday — it always understates the step. "% of settled" divides by reached + dropped out
+          only, so it estimates where a cohort lands once it has finished playing. The two converge as
+          cohorts mature.
+        </p>
+      </Card>
     </Section>
   );
 }
@@ -663,43 +814,271 @@ function SourcesSection({ q }: { q: ReportQuery }) {
   );
 }
 
-// ── 08 Monetization ─────────────────────────────────────────────
+// ── 08 Ad inventory ─────────────────────────────────────────────
 
-function MonetizationSection({ q }: { q: ReportQuery }) {
-  if (q.isPending) return <Section id="sec-monetization" num="08" title="Monetization"><Loading /></Section>;
-  if (q.isError || !q.data) return <Section id="sec-monetization" num="08" title="Monetization"><LoadError msg={(q.error as Error)?.message} /></Section>;
-  const d = q.data;
-  const daily = fillDays<any>(d.daily ?? [], { revenue_cents: 0, paid_impressions: 0, rewards_paid: 0 });
-  const af = d.ad_funnel ?? {};
-  const adSteps: FunnelStep[] = [
-    { label: 'Ad requested', value: af.attempts ?? 0 },
-    { label: 'SDK impression', value: af.sdk_impressions ?? 0 },
-    { label: 'Completed', value: af.completions ?? 0 },
-    { label: 'Reward paid (server)', value: af.rewards_paid ?? 0 },
-  ];
+/**
+ * Editable eCPM assumption. Kept in local text state so typing "2.5"
+ * isn't fought by a re-format on every keystroke; the value commits on
+ * blur or Enter.
+ */
+function EcpmInput({ cents, onCommit }: { cents: number; onCommit: (c: number | null) => void }) {
+  const [text, setText] = useState((cents / 100).toFixed(2));
+  useEffect(() => { setText((cents / 100).toFixed(2)); }, [cents]);
+  const commit = () => {
+    const v = parseFloat(text.replace(',', '.'));
+    onCommit(Number.isFinite(v) && v >= 0 ? Math.round(v * 100) : null);
+  };
   return (
-    <Section id="sec-monetization" num="08" title="Monetization"
-             subtitle="Where the money comes from: rewarded video (ILRD) and offerwall plays; what we owe in coupons.">
-      <div className="grid gap-3 lg:grid-cols-2">
+    <span className="inline-flex items-center gap-1">
+      <span className="text-gray-500">$</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm tabular-nums text-gray-900"
+      />
+    </span>
+  );
+}
+
+function InventorySection({
+  q, ecpmOverride, onEcpm,
+}: {
+  q: ReportQuery; ecpmOverride: number | null; onEcpm: (c: number | null) => void;
+}) {
+  if (q.isPending) return <Section id="sec-inventory" num="08" title="Ad inventory"><Loading /></Section>;
+  if (q.isError || !q.data) return <Section id="sec-inventory" num="08" title="Ad inventory"><LoadError msg={(q.error as Error)?.message} /></Section>;
+  const t = q.data.totals ?? {};
+  const daily = fillDays<any>(q.data.daily ?? [], {
+    opportunities: 0, sdk_impressions: 0, mock_impressions: 0, rewards_granted: 0, revenue_cents: 0, impressions: 0,
+  });
+  const observed: number | null = t.observed_ecpm_cents ?? null;
+  const effectiveEcpm = ecpmOverride ?? observed ?? DEFAULT_ECPM_CENTS;
+  const valueOf = (impressions: number) => (impressions * effectiveEcpm) / 1000;
+  const potential = valueOf(t.impressions ?? 0);
+  const realized = t.revenue_cents ?? 0;
+
+  // Derive the estimate as a real column so the table can sort on it —
+  // two columns sharing one key would collide on both sort and React key.
+  const placements: any[] = (q.data.by_placement ?? []).map((r: any) => ({
+    ...r,
+    est_value_cents: valueOf(r.impressions ?? 0),
+  }));
+
+  const steps: FunnelStep[] = [
+    { label: 'Ad opportunity (tap)', value: t.opportunities ?? 0 },
+    { label: 'Impression delivered', value: t.impressions ?? 0, note: `${fmtInt(t.sdk_impressions ?? 0)} real + ${fmtInt(t.mock_impressions ?? 0)} mock` },
+    { label: 'Watched to the end', value: t.completions ?? 0 },
+    { label: 'Reward paid (server)', value: t.rewards_granted ?? 0 },
+    { label: 'Paid by network', value: t.monetized_impressions ?? 0 },
+  ];
+
+  const placementCols: Col<any>[] = [
+    { key: 'placement', label: 'Placement', align: 'left' },
+    { key: 'opportunities', label: 'Taps', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'impressions', label: 'Impressions', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'sdk_impressions', label: 'Real', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'mock_impressions', label: 'Mock', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'viewing_users', label: 'Players', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'rewards_granted', label: 'Rewards', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'revenue_cents', label: 'Realized', align: 'right', fmt: (v) => fmtMoney(v) },
+    {
+      key: 'est_value_cents', label: 'Est. value', align: 'right',
+      fmt: (v) => <span className="text-gray-500">{fmtMoney(v)}</span>,
+    },
+  ];
+
+  return (
+    <Section id="sec-inventory" num="08" title="Ad inventory"
+             subtitle="Every rewarded ad the game actually delivered — real or mock — because the user action is the same either way.">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="Ad opportunities" value={fmtInt(t.opportunities ?? 0)}
+             sub={`${fmtInt(t.requesting_users ?? 0)} players tapped "watch ad"`} />
+        <Kpi label="Impressions delivered" value={fmtInt(t.impressions ?? 0)}
+             sub={`${t.delivery_pct ?? 0}% of taps · ${fmtInt(t.viewing_users ?? 0)} players`} />
+        <Kpi label="Real vs mock"
+             value={`${fmtInt(t.sdk_impressions ?? 0)} / ${fmtInt(t.mock_impressions ?? 0)}`}
+             sub={`${fmtInt(t.no_fill ?? 0)} no-fills · ${fmtInt(t.failed ?? 0)} SDK errors`} />
+        <Kpi label="Impressions the network paid for"
+             value={`${t.monetized_pct ?? 0}%`}
+             sub={`${fmtInt(t.monetized_impressions ?? 0)} of ${fmtInt(t.impressions ?? 0)}`} />
+      </div>
+
+      {/* The estimate is deliberately fenced off from realized revenue:
+          it is an assumption about inventory that was never sold, not a
+          number the network reported. */}
+      <Card className="mt-3 border-dashed bg-amber-50/40">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700">What this inventory was worth</h3>
+            <p className="mt-1 max-w-2xl text-xs text-gray-500">
+              Players performed {fmtInt(t.impressions ?? 0)} ad views in this window. Only{' '}
+              {fmtInt(t.monetized_impressions ?? 0)} were monetized — the rest were mock fallbacks or
+              real shows the network never reported, because the SDK was disabled or misconfigured.
+              The same player behaviour behind a working network would have earned roughly:
+            </p>
+          </div>
+          <div className="no-print flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Assumed eCPM</span>
+            <EcpmInput cents={effectiveEcpm} onCommit={onEcpm} />
+            {ecpmOverride != null && (
+              <button onClick={() => onEcpm(null)} className="text-xs text-blue-600 hover:underline">
+                reset
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Kpi label="Potential ad revenue" value={fmtMoney(potential)}
+               sub={`${fmtInt(t.impressions ?? 0)} impressions × $${(effectiveEcpm / 100).toFixed(2)} eCPM`} />
+          <Kpi label="Realized (actually paid)" value={fmtMoney(realized)} />
+          <Kpi label="Left on the table" value={fmtMoney(Math.max(0, potential - realized))}
+               sub="potential minus realized" />
+          <Kpi label="Impressions per active day" value={t.impressions_per_active_day ?? 0}
+               sub={`over ${fmtInt(t.active_user_days ?? 0)} active player-days`} />
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          eCPM source: {observed != null
+            ? <>observed {fmtMoney(observed)} from {fmtInt(t.monetized_impressions ?? 0)} paid impressions in this window</>
+            : <>no paid impressions in this window — falling back to a {fmtMoney(DEFAULT_ECPM_CENTS)} placeholder</>}
+          {ecpmOverride != null && ' · currently overridden manually'}. This figure is an estimate and
+          is never added to realized revenue anywhere else in this report.
+        </p>
+      </Card>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <Card>
-          <h3 className="mb-2 text-sm font-semibold text-gray-700">Ad revenue per day (USD)</h3>
-          <LineChart
-            labels={daily.map((r) => r.day)} area
-            series={[{
-              name: 'Revenue', color: SERIES[0],
-              values: daily.map((r) => Math.round(r.revenue_cents) / 100),
-              fmt: (v) => `$${v.toFixed(2)}`,
-            }]}
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">Impressions per day — real vs mock</h3>
+          <ColumnChart
+            data={daily.map((r) => ({ label: r.day, parts: [r.sdk_impressions, r.mock_impressions] }))}
+            names={['Real (SDK)', 'Mock fallback']}
+            colors={[SERIES[0], SERIES[1]]}
           />
+          <p className="mt-1 text-xs text-gray-400">
+            Stretches that are all-orange are periods when the network served nothing and players were
+            shown the fallback — demand existed, supply did not.
+          </p>
         </Card>
         <Card>
-          <h3 className="mb-3 text-sm font-semibold text-gray-700">Rewarded video funnel (window)</h3>
-          <FunnelBars steps={adSteps} />
+          <h3 className="mb-3 text-sm font-semibold text-gray-700">From tap to payout (window)</h3>
+          <FunnelBars steps={steps} />
           <p className="mt-2 text-xs text-gray-400">
-            + {fmtInt(af.mock_impressions ?? 0)} fallback (mock) impressions with no revenue · {fmtInt(af.no_fill ?? 0)} no-fills.
+            The drop from "Impression delivered" to "Paid by network" is lost revenue, not lost
+            engagement — those players watched an ad and got their reward either way.
           </p>
         </Card>
       </div>
+
+      <Card className="mt-3">
+        <h3 className="mb-2 text-sm font-semibold text-gray-700">By placement</h3>
+        <SortableTable columns={placementCols} rows={placements}
+                       initialSort="impressions" rowKey={(r) => r.placement} />
+        <p className="mt-2 text-xs text-gray-400">
+          water_popup / fert_popup = extra water and fertilizer. bucket_collect = the bucket tap
+          (the first two collects each day are free, so only the rest generate an ad opportunity).
+          quest = the watch-an-ad daily quest.
+        </p>
+      </Card>
+    </Section>
+  );
+}
+
+// ── 09 Partner games ────────────────────────────────────────────
+
+function OffersSection({ q }: { q: ReportQuery }) {
+  if (q.isPending) return <Section id="sec-offers" num="09" title="Partner games"><Loading /></Section>;
+  if (q.isError || !q.data) return <Section id="sec-offers" num="09" title="Partner games"><LoadError msg={(q.error as Error)?.message} /></Section>;
+  const t = q.data.totals ?? {};
+  const rows: any[] = q.data.rows ?? [];
+  const daily = fillDays<any>(q.data.daily ?? [], { installs: 0, completions: 0 });
+  const anyOpens = rows.some((r) => r.opens > 0);
+
+  const cols: Col<any>[] = [
+    {
+      key: 'name', label: 'Game', align: 'left',
+      fmt: (v, r) => (
+        <span className={r.active ? '' : 'text-gray-400'}>
+          {v}{!r.active && <span className="ml-1 text-xs">(off)</span>}
+        </span>
+      ),
+    },
+    { key: 'opening_users', label: 'Opened by', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'installs', label: 'Installs (unique)', align: 'right', fmt: (v) => <span className="font-semibold">{fmtInt(v)}</span> },
+    {
+      key: 'open_to_install_pct', label: 'Open → install', align: 'right',
+      fmt: (v) => (v == null ? <span className="text-gray-300">—</span> : `${v}%`),
+    },
+    { key: 'deeper_players', label: 'Went deeper', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'completions', label: 'Milestones hit', align: 'right', fmt: (v) => fmtInt(v) },
+    { key: 'milestone_count', label: 'Milestones defined', align: 'right', fmt: (v) => fmtInt(v) },
+  ];
+
+  return (
+    <Section id="sec-offers" num="09" title="Partner games"
+             subtitle="The second revenue line: studios pay per install, so unique installing players is the number that matters — not how deep they got.">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="Installs (billable)" value={fmtInt(t.installs ?? 0)}
+             sub={`${fmtInt(t.unique_installers ?? 0)} distinct players across all games`} />
+        <Kpi label="Games live" value={fmtInt(t.games_live ?? 0)} />
+        <Kpi label="Players who opened a game" value={fmtInt(t.unique_openers ?? 0)}
+             sub={`${fmtInt(t.opens ?? 0)} opens total`} />
+        <Kpi label="Milestones credited" value={fmtInt(t.completions ?? 0)}
+             sub={`${fmtInt(t.unique_players ?? 0)} players earned at least one reward`} />
+      </div>
+
+      <Card className="mt-3">
+        <h3 className="mb-2 text-sm font-semibold text-gray-700">Installs per game</h3>
+        <SortableTable columns={cols} rows={rows} initialSort="installs" rowKey={(r) => r.id} />
+        <p className="mt-2 text-xs text-gray-400">
+          An install is the first milestone of an offer confirmed by an Everflow postback — the same
+          definition the partner bills against. "Installs (unique)" counts distinct players per game,
+          so the column does not sum to the distinct-players figure above when someone installs more
+          than one game.
+          {!anyOpens && ' Game opens are only recorded from the release that added that tracking, so this window shows none.'}
+        </p>
+      </Card>
+
+      {daily.length > 1 && (
+        <Card className="mt-3">
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">Installs per day</h3>
+          <ColumnChart
+            data={daily.map((r) => ({ label: r.day, parts: [r.installs] }))}
+            names={['Installs']} colors={[SERIES[2]]}
+          />
+        </Card>
+      )}
+    </Section>
+  );
+}
+
+// ── 10 Monetization ─────────────────────────────────────────────
+
+function MonetizationSection({ q }: { q: ReportQuery }) {
+  if (q.isPending) return <Section id="sec-monetization" num="10" title="Monetization"><Loading /></Section>;
+  if (q.isError || !q.data) return <Section id="sec-monetization" num="10" title="Monetization"><LoadError msg={(q.error as Error)?.message} /></Section>;
+  const d = q.data;
+  const daily = fillDays<any>(d.daily ?? [], { revenue_cents: 0, paid_impressions: 0, rewards_paid: 0 });
+  return (
+    <Section id="sec-monetization" num="10" title="Monetization"
+             subtitle="Money that actually landed: rewarded-video revenue reported by the network, and what we owe in coupons.">
+      <Card>
+        <h3 className="mb-2 text-sm font-semibold text-gray-700">Ad revenue per day (USD, realized)</h3>
+        <LineChart
+          labels={daily.map((r) => r.day)} area
+          series={[{
+            name: 'Revenue', color: SERIES[0],
+            values: daily.map((r) => Math.round(r.revenue_cents) / 100),
+            fmt: (v) => `$${v.toFixed(2)}`,
+          }]}
+        />
+        <p className="mt-1 text-xs text-gray-400">
+          Only impressions the network reported through ILRD. Delivered inventory — including every
+          mock impression — is in <a href="#sec-inventory" className="text-blue-600 hover:underline">Ad inventory</a>.
+        </p>
+      </Card>
       <div className="mt-3 grid gap-3 lg:grid-cols-3">
         <Card>
           <h3 className="mb-2 text-sm font-semibold text-gray-700">Revenue by network</h3>
@@ -736,19 +1115,6 @@ function MonetizationSection({ q }: { q: ReportQuery }) {
           />
         </Card>
       </div>
-      {(d.top_offers ?? []).length > 0 && (
-        <Card className="mt-3">
-          <h3 className="mb-2 text-sm font-semibold text-gray-700">Top offerwall games</h3>
-          <SortableTable
-            columns={[
-              { key: 'name', label: 'Offer', align: 'left' },
-              { key: 'completions', label: 'Milestone completions', align: 'right', fmt: (v) => fmtInt(v) },
-              { key: 'players', label: 'Unique players', align: 'right', fmt: (v) => fmtInt(v) },
-            ]}
-            rows={d.top_offers} initialSort="completions" rowKey={(r) => r.id}
-          />
-        </Card>
-      )}
     </Section>
   );
 }
